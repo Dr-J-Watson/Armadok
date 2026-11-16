@@ -13,7 +13,8 @@ SHELL := /bin/bash
 .SILENT:
 .DEFAULT_GOAL := help
 
-IMAGE ?= ghcr.io/dr-j-watson/armadok:latest
+IMAGE_REPO ?= ghcr.io/dr-j-watson/armadok
+IMAGE ?= $(IMAGE_REPO):latest
 # Service du hub dans docker-compose.yml
 HUB_SVC ?= armadok
 export IMAGE
@@ -231,6 +232,18 @@ ask() { local v="" pre="$${3:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then
 asks() { local v="" pre="$${2:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$1" >&2; else read -rs -p "  $${C}➜$${Z} $$1 : " v || true; echo >&2; fi; printf '%s' "$$v"; }
 yes() { local v=""; read -r -p "  $${C}➜$${Z} $$1 $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
 confirm() { local v=""; read -r -p "  $${C}➜$${Z} $$1 $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
+image_ref() { case "$$1" in "") echo "$(IMAGE)";; */*|*:*) echo "$$1";; *) echo "$(IMAGE_REPO):$$1";; esac; }
+# pick_image VARIABLE_À_REMPLIR : demande « latest » ou un numéro de version précis (ex. 1.0.0) ; sauté si IMAGE a été fourni (IMAGE=… ou variable d'environnement)
+pick_image() {
+  local ans=""
+  if [ -n "$(if $(filter file,$(origin IMAGE)),,1)" ]; then ans="$(IMAGE)"; printf '  %s✓%s Image : %s\n' "$$G" "$$Z" "$$ans" >&2
+  else
+    hint "Quelle version installer ? « latest » est la plus récente publiée ; un numéro précis (ex. 1.0.0) fige la version. Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
+    read -r -p "  $${C}➜$${Z} Version d'Armadok $${D}[latest]$${Z} : " ans || true
+    ans="$$(image_ref "$${ans:-latest}")"
+  fi
+  printf -v "$$1" '%s' "$$ans"
+}
 as_root() { if [ "$$(id -u)" = 0 ]; then "$$@"; else sudo "$$@"; fi; }
 need_docker() {
   command -v docker >/dev/null || die "Docker est requis."
@@ -453,7 +466,7 @@ ask_admin() {
     elif [ $${#PW} -lt 12 ]; then fail "Trop court : 12 caractères minimum."
     else break; fi
   done
-  HASH=$$(printf '%s' "$$PW" | docker run --rm -i "$(IMAGE)" python -c "import sys,bcrypt;print(bcrypt.hashpw(sys.stdin.read().encode()[:72],bcrypt.gensalt(12)).decode())")
+  HASH=$$(printf '%s' "$$PW" | docker run --rm -i "$${IMG_HUB:-$(IMAGE)}" python -c "import sys,bcrypt;print(bcrypt.hashpw(sys.stdin.read().encode()[:72],bcrypt.gensalt(12)).decode())")
   good "Mot de passe pris en compte (haché)."
 }
 ask_ovh() {
@@ -469,7 +482,7 @@ ask_ovh() {
     read -rs -p "  $${C}➜$${Z} Application secret : " AS; echo
     read -rs -p "  $${C}➜$${Z} Consumer key $${D}(vide = la générer)$${Z} : " CK; echo
     if [ -z "$$CK" ]; then
-      OUT=$$(docker run --rm -e OVH_ENDPOINT="$$OEND" -e OVH_APPLICATION_KEY="$$AK" -e OVH_APPLICATION_SECRET="$$AS" "$(IMAGE)" python -m app.tools.ovh_consumer_key)
+      OUT=$$(docker run --rm -e OVH_ENDPOINT="$$OEND" -e OVH_APPLICATION_KEY="$$AK" -e OVH_APPLICATION_SECRET="$$AS" "$${IMG_HUB:-$(IMAGE)}" python -m app.tools.ovh_consumer_key)
       echo "$$OUT" | sed -n '1,2p' | sed 's/^/  /'
       read -r -p "  $${C}➜$${Z} Appuyez sur Entrée une fois la clé validée sur cette page… " _
       CK=$$(echo "$$OUT" | sed -n 's/.*OVH_CONSUMER_KEY=//p')
@@ -548,9 +561,10 @@ install_hub() {
     warnl "Un conteneur nommé « armadok » existe déjà sur cette machine. Pour lancer cette nouvelle installation, il faudra"
     hint "d'abord l'arrêter et le supprimer (docker rm -f armadok), ou changer « container_name » dans docker-compose.yml."
   fi
-  echo; hint "Récupération de l'image $(IMAGE)…"
-  docker pull "$(IMAGE)" >/dev/null 2>&1 || docker image inspect "$(IMAGE)" >/dev/null 2>&1 || die "Image $(IMAGE) introuvable."
-  UTIL_IMAGE="$(IMAGE)"
+  echo; pick_image IMG_HUB
+  hint "Récupération de l'image $$IMG_HUB…"
+  docker pull "$$IMG_HUB" >/dev/null 2>&1 || docker image inspect "$$IMG_HUB" >/dev/null 2>&1 || die "Image $$IMG_HUB introuvable (version inexistante ? voir github.com/Dr-J-Watson/Armadok/releases)."
+  UTIL_IMAGE="$$IMG_HUB"
   step "1/5 · Traefik"
   ask_traefik
   step "2/5 · Compte administrateur"
@@ -590,7 +604,7 @@ install_hub() {
       echo "OVH_APPLICATION_SECRET=$$AS"
       echo "OVH_CONSUMER_KEY=$$CK"
       echo; echo "# ── [COMPOSE] chemins, réseau, utilisateur (construisent les montages de la pile)"
-      echo "ARMADOK_IMAGE=$(IMAGE)"
+      echo "ARMADOK_IMAGE=$$IMG_HUB"
       echo "TRAEFIK_DYNAMIC_PATH=$$DYN"
       echo "PUID=$${OWNER%%:*}"
       echo "PGID=$${OWNER##*:}"
@@ -643,7 +657,7 @@ install_hub() {
       echo "OVH_APPLICATION_SECRET=$$AS"
       echo "OVH_CONSUMER_KEY=$$CK"
       echo; echo "# ── [COMPOSE] chemins, réseau, utilisateur (lus par Docker Compose pour construire les montages)"
-      echo "ARMADOK_IMAGE=$(IMAGE)"
+      echo "ARMADOK_IMAGE=$$IMG_HUB"
       echo "TRAEFIK_DYNAMIC_PATH=$$DYN"
       echo "UID=$${OWNER%%:*}"
       echo "GID=$${OWNER##*:}"
@@ -692,7 +706,7 @@ install_worker() {
   hint "Le jeton (valable 15 minutes, une seule fois) est demandé en DERNIER : ne le créez qu'au moment de l'étape 3."
   hint "Raccourci : « Nouveau nœud » dans l'interface du hub affiche une commande toute prête, avec l'adresse et le jeton déjà dedans."
   step "1/4 · Cette machine"
-  UTIL_IMAGE="$${WORKER_IMAGE:-$(IMAGE)}"
+  UTIL_IMAGE="$$(image_ref "$${WORKER_IMAGE:-}")"
   sub "Que doit gérer ce worker ?"
   hint "1) Traefik + DNS : les sites, protections et certificats du Traefik de cette machine (le DNS reste géré par le hub)."
   hint "2) Docker seul : les conteneurs et projets docker compose de cette machine, sans Traefik."
@@ -758,8 +772,9 @@ install_worker() {
   fi
   sub "Image du worker"
   hint "Utilisez la même version que le hub : le protocole entre les deux évolue avec les versions."
+  hint "« latest » est la plus récente ; sinon un numéro précis (ex. 1.0.0) ou une image complète."
   echo
-  IMG=$$(ask "Image du worker" "$(IMAGE)" WORKER_IMAGE)
+  IMG=$$(ask "Version ou image du worker" "latest" WORKER_IMAGE); IMG=$$(image_ref "$$IMG")
   step "2/4 · Le hub"
   sub "Adresse du hub"
   hint "L'adresse (HTTPS) par laquelle l'interface du hub est joignable depuis cette machine."

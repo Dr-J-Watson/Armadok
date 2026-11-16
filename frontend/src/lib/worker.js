@@ -9,7 +9,7 @@ export const WORKER_TYPES = [{ id: 'traefik', label: 'Traefik + DNS', hint: 'Les
 export const rootsOf = (s) => String(s || '').split(',').map((x) => x.trim()).filter(Boolean)
 
 // Image du worker : la MÊME version que le hub (le protocole entre les deux évolue avec les versions)
-export const imageFor = (version) => `ghcr.io/dr-j-watson/armadok:${/^v?\d/.test(version || '') ? version.replace(/^v/, '') : 'dev'}`
+export const imageFor = (version) => `ghcr.io/dr-j-watson/armadok:${/^v?\d/.test(version || '') ? version.replace(/^v/, '') : 'latest'}`
 
 export function composeFor({ hub, token, version, ...o }) {
   o = { ...WORKER_DEFAULTS, ...o }
