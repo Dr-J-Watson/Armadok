@@ -22,7 +22,7 @@ export default function ProjectImages({ id, perms }) {
     <div className="col">
       <div className="card col" style={{ gap: 8 }}>
         <div className="row wrap" style={{ gap: 8 }}><b className="grow">Images du projet</b>
-          {perms.git && <Btn busy={check.isPending} onClick={() => check.mutate()}><RefreshCw size={14} /> Vérifier maintenant</Btn>}
+          {perms.git && <Btn title="Cherche, pour chaque image du projet, une version plus récente sur son registre (sans rien télécharger)" busy={check.isPending} onClick={() => check.mutate()}><RefreshCw size={14} /> Vérifier maintenant</Btn>}
           {perms.deploy && <Btn busy={act.isPending} onClick={() => act.mutate({ action: 'pull' })} title="Télécharge les nouvelles versions (sans redéployer)"><Download size={14} /> Télécharger</Btn>}
           {perms.deploy && <Btn kind={pending ? 'primary' : undefined} busy={act.isPending} onClick={() => act.mutate({ action: 'up' })} title="Recrée les conteneurs dont l'image a changé"><Rocket size={14} /> Redéployer</Btn>}</div>
         {perms.git && d.hours > 0 && <div className="row" style={{ gap: 10 }}><Switch value={d.track} busy={track.isPending} onChange={() => track.mutate(!d.track)} title="Vérification quotidienne" /><span className="small"><BellRing size={13} style={{ verticalAlign: -2 }} /> Vérifier chaque jour{d.track ? ' (activé)' : ''}</span>

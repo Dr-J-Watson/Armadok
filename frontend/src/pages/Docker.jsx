@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Box, Container, HardDrive, Image as ImageIcon, Network as NetIcon, Play, RotateCw, Sparkles, Trash2 } from 'lucide-react'
+import { Box, Container, HardDrive, Image as ImageIcon, Network as NetIcon, Play, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Copyable, Empty, Loading, SearchBox, Tabs, useSort, useUi } from '../components/ui.jsx'
 import ContainerModal from '../components/ContainerModal.jsx'
+import { ImageModal, NetworkModal, NewNetworkModal, VolumeModal } from '../components/DockerDetail.jsx'
 import { MiniBar } from '../components/DockerBits.jsx'
 import { enc, fmtSize, portLabel, PROTECTED, stateOf } from '../lib/docker.js'
 import { ago } from '../lib/features.js'
@@ -33,7 +34,7 @@ export default function Docker() {
         <SearchBox value={q} onChange={setQ} placeholder="Rechercher un nom, une image, un projet, un port, un site…" />
       </div>
       {tab === 'containers' && <Containers q={q} onOpen={openC} can={can} linked={hasModule('traefik')} />}
-      {tab === 'images' && <Images q={q} can={can} />}
+      {tab === 'images' && <Images q={q} can={can} onOpenContainer={openC} />}
       {tab === 'networks' && <Networks q={q} can={can} onOpen={openC} />}
       {tab === 'volumes' && <Volumes q={q} can={can} onOpen={openC} />}
       {open && <ContainerModal key={open} name={open} tab={params.get('ct') || undefined} onClose={closeC} />}
@@ -67,7 +68,7 @@ function Containers({ q, onOpen, can, linked }) {
     <div className="col">
       <div className="row wrap" style={{ gap: 6 }}>
         {FILTERS.filter(([k]) => linked || k !== 'linked').map(([k, l]) => <button key={k} className={'dk-flt ' + (flt === k ? 'on' : '')} onClick={() => setFlt(k)}>{l}</button>)}
-        {can('docker.remove') && <Btn small kind="ghost" className="right" onClick={() => prune(false, 'Les conteneurs arrêtés sont supprimés définitivement.')}><Sparkles size={13} /> Nettoyer</Btn>}
+        {can('docker.remove') && <Btn small kind="ghost" className="right" title="Supprimer tous les conteneurs arrêtés (les volumes et les images ne sont pas touchés)" onClick={() => prune(false, 'Les conteneurs arrêtés sont supprimés définitivement.')}><Sparkles size={13} /> Nettoyer</Btn>}
       </div>
       {sorted.length === 0 ? <div className="card"><Empty><Box size={28} /><div>Aucun conteneur ne correspond.</div></Empty></div> : (
         <div className="card flush"><table className="t"><thead><tr>{T('state', 'État')}{T('name', 'Nom')}<th>Projet</th>{linked && <th>Sites Traefik</th>}{T('cpu', 'CPU')}{T('mem', 'Mémoire')}<th>Ports</th><th /></tr></thead><tbody>
@@ -101,7 +102,8 @@ function useRemove(url, listKey, label) {
   return async (id, message) => { if (await confirm({ title: `Supprimer « ${id} » ?`, message, confirmLabel: 'Supprimer' })) m.mutate({ id }) }
 }
 
-function Images({ q, can }) {
+function Images({ q, can, onOpenContainer }) {
+  const [detail, setDetail] = useState(null)
   const list = useQuery({ queryKey: ['docker-images'], queryFn: () => api.get('/docker/images') })
   const remove = useRemove('images', 'docker-images', 'Image'); const prune = usePrune('images', 'images inutilisées')
   const needle = q.trim().toLowerCase()
@@ -114,15 +116,17 @@ function Images({ q, can }) {
   return (
     <div className="col">
       <div className="row"><span className="muted grow">{rows.length} image{rows.length > 1 ? 's' : ''} · {fmtSize(total)}</span>
-        {can('docker.remove') && <><Btn small kind="ghost" onClick={() => prune(false, 'Les images sans nom (« dangling ») sont supprimées.')}><Sparkles size={13} /> Sans nom</Btn><Btn small kind="ghost" onClick={() => prune(true, 'Toutes les images qu\'aucun conteneur n\'utilise sont supprimées (elles seront retéléchargées au besoin).')}><Sparkles size={13} /> Toutes les inutilisées</Btn></>}</div>
+        {can('docker.remove') && <><Btn small kind="ghost" title="Supprimer les images orphelines, sans nom ni conteneur (« dangling »)" onClick={() => prune(false, 'Les images sans nom (« dangling ») sont supprimées.')}><Sparkles size={13} /> Sans nom</Btn><Btn small kind="ghost" title="Supprimer toutes les images qu'aucun conteneur n'utilise, même nommées : elles seront retéléchargées au besoin" onClick={() => prune(true, 'Toutes les images qu\'aucun conteneur n\'utilise sont supprimées (elles seront retéléchargées au besoin).')}><Sparkles size={13} /> Toutes les inutilisées</Btn></>}</div>
       <div className="card flush"><table className="t"><thead><tr>{T('name', 'Image')}{T('size', 'Taille')}<th>Utilisée par</th>{T('created', 'Créée')}<th /></tr></thead><tbody>
-        {sorted.map((i) => <tr key={i.fullId}><td>{i.tags.length ? i.tags.map((t) => <div key={t}><Copyable text={t}><b>{t}</b></Copyable></div>) : <span className="muted">sans nom</span>}<div className="muted small mono">{i.id}</div></td><td>{fmtSize(i.size)}</td><td><UsedBy names={i.usedBy} /></td><td className="muted small">{ago(i.created)}</td>
-          <td className="actions">{can('docker.remove') && !i.usedBy.length && <Btn small kind="ghost" onClick={() => remove(i.tags[0] || i.id, 'L\'image est supprimée de cette machine (elle sera retéléchargée au besoin).')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+        {sorted.map((i) => <tr key={i.fullId} style={{ cursor: 'pointer' }} title="Voir le détail de l'image" onClick={() => setDetail(i.fullId)}><td>{i.tags.length ? i.tags.map((t) => <div key={t}><Copyable text={t}><b>{t}</b></Copyable></div>) : <span className="muted">sans nom</span>}<div className="muted small mono">{i.id}</div></td><td>{fmtSize(i.size)}</td><td><UsedBy names={i.usedBy} /></td><td className="muted small">{ago(i.created)}</td>
+          <td className="actions" onClick={(e) => e.stopPropagation()}>{can('docker.remove') && !i.usedBy.length && <Btn small kind="ghost" title="Supprimer cette image de la machine" onClick={() => remove(i.tags[0] || i.id, 'L\'image est supprimée de cette machine (elle sera retéléchargée au besoin).')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+      {detail && <ImageModal id={detail} onClose={() => setDetail(null)} onOpenContainer={(n) => { setDetail(null); onOpenContainer?.(n) }} />}
     </div>
   )
 }
 
 function Networks({ q, can, onOpen }) {
+  const [detail, setDetail] = useState(null); const [adding, setAdding] = useState(false)
   const list = useQuery({ queryKey: ['docker-networks'], queryFn: () => api.get('/docker/networks') })
   const remove = useRemove('networks', 'docker-networks', 'Réseau'); const prune = usePrune('networks', 'réseaux inutilisés')
   const needle = q.trim().toLowerCase()
@@ -131,15 +135,18 @@ function Networks({ q, can, onOpen }) {
   if (list.error) return <div className="banner err">{list.error.message}</div>
   return (
     <div className="col">
-      <div className="row"><span className="muted grow">{rows.length} réseau{rows.length > 1 ? 'x' : ''}</span>{can('docker.remove') && <Btn small kind="ghost" onClick={() => prune(false, 'Les réseaux que plus aucun conteneur n\'utilise sont supprimés.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
+      <div className="row"><span className="muted grow">{rows.length} réseau{rows.length > 1 ? 'x' : ''}</span>{can('docker.control') && <Btn small onClick={() => setAdding(true)} title="Créer un réseau Docker (bridge)"><Plus size={13} /> Nouveau réseau</Btn>}{can('docker.remove') && <Btn small kind="ghost" title="Supprimer les réseaux que plus aucun conteneur n'utilise" onClick={() => prune(false, 'Les réseaux que plus aucun conteneur n\'utilise sont supprimés.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
       <div className="card flush"><table className="t"><thead><tr><th>Nom</th><th>Pilote</th><th>Sous-réseau</th><th>Conteneurs</th><th /></tr></thead><tbody>
-        {rows.map((n) => <tr key={n.id}><td><b>{n.name}</b>{n.builtin && <Badge style={{ marginLeft: 6 }}>intégré</Badge>}{n.internal && <Badge style={{ marginLeft: 6 }} kind="warn">interne</Badge>}</td><td>{n.driver}</td><td className="mono small">{n.subnets.join(', ') || '—'}</td><td><UsedBy names={n.usedBy} onOpen={onOpen} /></td>
-          <td className="actions">{can('docker.remove') && !n.builtin && !n.usedBy.length && <Btn small kind="ghost" onClick={() => remove(n.name, 'Le réseau est supprimé.')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+        {rows.map((n) => <tr key={n.id} style={{ cursor: 'pointer' }} title="Voir le détail du réseau" onClick={() => setDetail(n.name)}><td><b>{n.name}</b>{n.builtin && <Badge style={{ marginLeft: 6 }}>intégré</Badge>}{n.internal && <Badge style={{ marginLeft: 6 }} kind="warn">interne</Badge>}</td><td>{n.driver}</td><td className="mono small">{n.subnets.join(', ') || '—'}</td><td><UsedBy names={n.usedBy} onOpen={onOpen} /></td>
+          <td className="actions" onClick={(e) => e.stopPropagation()}>{can('docker.remove') && !n.builtin && !n.usedBy.length && <Btn small kind="ghost" title="Supprimer ce réseau (aucun conteneur ne l'utilise)" onClick={() => remove(n.name, 'Le réseau est supprimé.')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+      {detail && <NetworkModal name={detail} onClose={() => setDetail(null)} onOpenContainer={(n) => { setDetail(null); onOpen(n) }} />}
+      {adding && <NewNetworkModal onClose={() => setAdding(false)} />}
     </div>
   )
 }
 
 function Volumes({ q, can, onOpen }) {
+  const [detail, setDetail] = useState(null)
   const list = useQuery({ queryKey: ['docker-volumes'], queryFn: () => api.get('/docker/volumes') })
   const remove = useRemove('volumes', 'docker-volumes', 'Volume'); const prune = usePrune('volumes', 'volumes inutilisés')
   const needle = q.trim().toLowerCase()
@@ -148,10 +155,11 @@ function Volumes({ q, can, onOpen }) {
   if (list.error) return <div className="banner err">{list.error.message}</div>
   return (
     <div className="col">
-      <div className="row"><span className="muted grow">{rows.length} volume{rows.length > 1 ? 's' : ''}</span>{can('docker.remove') && <Btn small kind="ghost" onClick={() => prune(false, 'Tous les volumes qu\'aucun conteneur n\'utilise sont supprimés AVEC LEURS DONNÉES. Irréversible.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
+      <div className="row"><span className="muted grow">{rows.length} volume{rows.length > 1 ? 's' : ''}</span>{can('docker.remove') && <Btn small kind="ghost" title="Supprimer les volumes qu'aucun conteneur n'utilise : leurs DONNÉES sont perdues" onClick={() => prune(false, 'Tous les volumes qu\'aucun conteneur n\'utilise sont supprimés AVEC LEURS DONNÉES. Irréversible.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
       <div className="card flush"><table className="t"><thead><tr><th>Nom</th><th>Projet</th><th>Utilisé par</th><th>Créé</th><th /></tr></thead><tbody>
-        {rows.map((v) => <tr key={v.name}><td><Copyable text={v.name}><b className="mono small">{v.name.length > 40 ? v.name.slice(0, 38) + '…' : v.name}</b></Copyable></td><td>{v.labels['com.docker.compose.project'] ? <Badge>{v.labels['com.docker.compose.project']}</Badge> : <span className="muted">—</span>}</td><td><UsedBy names={v.usedBy} onOpen={onOpen} /></td><td className="muted small">{v.created ? v.created.slice(0, 10) : '—'}</td>
-          <td className="actions">{can('docker.remove') && !v.usedBy.length && <Btn small kind="ghost" onClick={() => remove(v.name, 'Le volume est supprimé AVEC SES DONNÉES. Irréversible.')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+        {rows.map((v) => <tr key={v.name} style={{ cursor: 'pointer' }} title="Voir le détail du volume et son contenu" onClick={() => setDetail(v.name)}><td><Copyable text={v.name}><b className="mono small">{v.name.length > 40 ? v.name.slice(0, 38) + '…' : v.name}</b></Copyable></td><td>{v.labels['com.docker.compose.project'] ? <Badge>{v.labels['com.docker.compose.project']}</Badge> : <span className="muted">—</span>}</td><td><UsedBy names={v.usedBy} onOpen={onOpen} /></td><td className="muted small">{v.created ? v.created.slice(0, 10) : '—'}</td>
+          <td className="actions" onClick={(e) => e.stopPropagation()}>{can('docker.remove') && !v.usedBy.length && <Btn small kind="ghost" title="Supprimer ce volume et ses données" onClick={() => remove(v.name, 'Le volume est supprimé AVEC SES DONNÉES. Irréversible.')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+      {detail && <VolumeModal name={detail} onClose={() => setDetail(null)} onOpenContainer={(n) => { setDetail(null); onOpen(n) }} />}
     </div>
   )
 }

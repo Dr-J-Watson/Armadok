@@ -5,7 +5,7 @@ import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Copyable, Empty, Loading, Modal, Tabs, useUi } from './ui.jsx'
 import { LogViewer, NameConfirm } from './DockerBits.jsx'
-import PublishModal from './PublishModal.jsx'
+import { publishNow } from '../lib/publish.js'
 import TerminalModal from './TerminalModal.jsx'
 import { enc, fmtSize, portLabel, PROTECTED, stateOf } from '../lib/docker.js'
 import { ago, fmtNum } from '../lib/features.js'
@@ -17,7 +17,7 @@ const Row = ({ k, children }) => <div className="kv"><span className="muted">{k}
 // La fiche d'un conteneur : ce qu'il est (Aperçu), quelles règles Traefik mènent à lui (Traefik), qui y accède (Accès), ses journaux (Logs).
 export default function ContainerModal({ name, tab: first, onClose }) {
   const { toast, confirm } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode } = useNode()
-  const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [pub, setPub] = useState(false); const [term, setTerm] = useState(false)
+  const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [term, setTerm] = useState(false)
   const q = useQuery({ queryKey: ['docker-c', name], queryFn: () => api.get(`/docker/containers/${enc(name)}`), refetchInterval: 10000 })
   const refresh = () => { qc.invalidateQueries({ queryKey: ['docker-c'] }); qc.invalidateQueries({ queryKey: ['docker-list'] }); qc.invalidateQueries({ queryKey: ['docker-stats'] }) }
   const act = useMutation({
@@ -39,10 +39,10 @@ export default function ContainerModal({ name, tab: first, onClose }) {
   return (
     <Modal wide title={<span className="row" style={{ gap: 8 }}>{c.name}<Badge kind={stKind}>{stLabel}</Badge>{c.protected && <Badge kind="warn" title="Un arrêt ou une suppression demande de retaper le nom"><ShieldAlert size={11} /> {PROTECTED[c.protected]}</Badge>}</span>} onClose={onClose}
       footer={<>{c.canControl && (running
-        ? <><Btn busy={act.isPending} onClick={() => act.mutate({ action: 'restart' })}><RotateCw size={14} /> Redémarrer</Btn>{c.protected !== 'self' && <Btn busy={act.isPending} onClick={() => act.mutate({ action: 'stop' })}><Square size={14} /> Arrêter</Btn>}</>
-        : <Btn kind="primary" busy={act.isPending} onClick={() => act.mutate({ action: 'start' })}><Play size={14} /> Démarrer</Btn>)}
+        ? <><Btn title="Arrête puis relance le conteneur" busy={act.isPending} onClick={() => act.mutate({ action: 'restart' })}><RotateCw size={14} /> Redémarrer</Btn>{c.protected !== 'self' && <Btn title="Arrête le conteneur (il reste en place et se redémarre d'un clic)" busy={act.isPending} onClick={() => act.mutate({ action: 'stop' })}><Square size={14} /> Arrêter</Btn>}</>
+        : <Btn title="Démarre le conteneur" kind="primary" busy={act.isPending} onClick={() => act.mutate({ action: 'start' })}><Play size={14} /> Démarrer</Btn>)}
       {c.canExec && running && c.execAvailable && <Btn onClick={() => setTerm(true)} title="Un shell dans le conteneur"><SquareTerminal size={14} /> Terminal</Btn>}
-      {c.canRemove && c.protected !== 'self' && <Btn kind="danger" onClick={remove}><Trash2 size={14} /> Supprimer</Btn>}<Btn onClick={onClose}>Fermer</Btn></>}>
+      {c.canRemove && c.protected !== 'self' && <Btn title="Supprime ce conteneur (ses volumes ne sont retirés que si vous le demandez)" kind="danger" onClick={remove}><Trash2 size={14} /> Supprimer</Btn>}<Btn onClick={onClose}>Fermer</Btn></>}>
       <div className="col">
         <div className="muted small">{c.image}{c.project && <> · projet <b>{c.project}</b></>}{c.service && <> · service <b>{c.service}</b></>}</div>
         <Tabs tabs={tabs} value={tabs.some((t) => t.id === tab) ? tab : 'overview'} onChange={setTab} />
@@ -73,7 +73,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
               <div className="col" style={{ gap: 2, marginTop: 8 }}>{Object.entries(c.labels).sort().map(([k, v]) => <div key={k} className="small mono" style={{ wordBreak: 'break-all' }}><span className="muted">{k}</span> = {v}</div>)}</div></details>
           </div>)}
         {tab === 'traefik' && (c.links.length === 0
-          ? <div className="card"><Empty><Workflow size={28} /><div>Aucune règle Traefik ne mène à ce conteneur.<br /><span className="muted small">On cherche ses labels <code>traefik.http.routers.*</code> et les services d'un fichier dont l'adresse est le nom de ce conteneur.</span>{can('sites.create') && <div style={{ marginTop: 10 }}><Btn kind="primary" onClick={() => setPub(true)}><Globe size={14} /> Publier sur Traefik</Btn></div>}</div></Empty></div>
+          ? <div className="card"><Empty><Workflow size={28} /><div>Aucune règle Traefik ne mène à ce conteneur.<br /><span className="muted small">On cherche ses labels <code>traefik.http.routers.*</code> et les services d'un fichier dont l'adresse est le nom de ce conteneur.</span>{can('sites.create') && <div style={{ marginTop: 10 }}><Btn title="Ouvre l'assistant de site, déjà rempli pour ce conteneur" kind="primary" onClick={() => publishNow(c.name, toast).then(onClose)}><Globe size={14} /> Publier sur Traefik</Btn></div>}</div></Empty></div>
           : <div className="col">{c.links.map((l) => (
             <div key={l.router} className="card col" style={{ gap: 6 }}>
               <div className="row" style={{ gap: 8 }}><b className="mono">{l.router}</b><Badge kind={l.sure ? 'ok' : 'warn'} title={l.sure ? 'Lien certain' : 'Lien probable : le nom ou le port ne correspond pas exactement'}>{l.sure ? 'certain' : 'probable'}</Badge><Badge>{l.provider === 'docker' ? 'labels du conteneur' : 'fichier YAML'}</Badge>{l.node && <Badge kind="info" title="Ce site est servi par le Traefik d'un autre nœud, qui vise l'adresse et le port publié de ce conteneur">sur le nœud « {l.node.name} »</Badge>}
@@ -85,7 +85,6 @@ export default function ContainerModal({ name, tab: first, onClose }) {
         {tab === 'logs' && <LogViewer name={c.name} />}
       </div>
       {term && <TerminalModal container={c.name} onClose={() => setTerm(false)} />}
-      {pub && <PublishModal container={c.name} onClose={() => setPub(false)} onGo={() => { setPub(false); onClose() }} />}
       {ask && <NameConfirm name={c.name} what={{ stop: 'Arrêter', restart: 'Redémarrer', remove: 'Supprimer' }[ask.action]} onCancel={() => setAsk(null)}
         onConfirm={(v) => { const a = ask.action; setAsk(null); if (a === 'remove') del.mutate({ volumes: false, confirm: v }); else act.mutate({ action: a, confirm: v }) }} />}
     </Modal>

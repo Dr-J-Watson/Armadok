@@ -78,9 +78,10 @@ def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]
         run_n = sum(1 for c in mine if c["state"] == "running")
         state = "absent" if not mine else "running" if run_n == len(mine) else "partial" if run_n else "stopped"
         lk = [l for c in mine for l in links.get(c["name"], [])]
-        services.append({**s, "state": state, "containers": [_slim(c) for c in mine], "links": lk, "hosts": linkage.hosts_of(lk)})
+        done = bool(mine) and not run_n and all(str(c.get("status") or "").startswith("Exited (0)") for c in mine)   # service « init » / ponctuel terminé normalement : arrêté exprès
+        services.append({**s, "state": state, "done": done, "containers": [_slim(c) for c in mine], "links": lk, "hosts": linkage.hosts_of(lk)})
     extra = [c for c in cs if c["id"] not in seen]
-    expected = [s for s in services if not s["profiles"]]
+    expected = [s for s in services if not s["profiles"] and not s["done"]]
     running = sum(1 for s in expected if s["state"] == "running")
     status = "absent" if not cs else "running" if expected and running == len(expected) else "stopped" if not any(c["state"] == "running" for c in cs) else "partial"
     alerts = []
@@ -89,7 +90,7 @@ def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]
     for s in services:
         if any(c["health"] == "unhealthy" for c in s["containers"]):
             alerts.append({"level": "err", "text": f"Le service « {s['name']} » est défaillant"})
-        elif status == "partial" and s["state"] in ("stopped", "absent") and not s["profiles"]:
+        elif status == "partial" and s["state"] in ("stopped", "absent") and not s["profiles"] and not s["done"]:
             alerts.append({"level": "warn", "text": f"Le service « {s['name']} » ne tourne pas"})
     hosts = sorted({h for s in services for h in s["hosts"]} | {h for c in extra for l in links.get(c["name"], []) for h in l["hosts"]})
     return {"id": row["id"] if row else None, "path": e["path"], "name": e["name"], "composeProject": e["composeProject"], "file": e["file"], "error": e["error"],
@@ -148,6 +149,25 @@ def _mark(ctx: NodeCtx, body: PathsBody, state: str) -> dict:
     if done:
         ctx.audit(f"project.{'import' if state == 'managed' else 'ignore'}", ", ".join(done))
     return {"done": done, "skipped": skipped}
+
+
+class CreateBody(BaseModel):
+    name: str = Field(min_length=1, max_length=61)
+    files: dict[str, str] = Field(min_length=1, max_length=30)
+    tags: str = Field(default="", max_length=200)
+
+
+@router.post("/create")
+def create_project(body: CreateBody, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Crée un projet neuf (dossier + fichiers de départ, par exemple une pile Traefik) dans la racine des projets et l'ajoute à la liste."""
+    ctx.need("projects.edit")
+    if any(project_ops.is_env(r) for r in body.files):
+        ctx.need("projects.env")
+    made = run(ctx, "p_create", {"name": body.name, "files": body.files})
+    ctx.audit("project.create", made["name"])
+    r = _mark(ctx, PathsBody(paths=[made["path"]], tags=body.tags), "managed")
+    row = db.one("SELECT id FROM projects WHERE node_id=? AND path=?", (ctx.id, made["path"]))
+    return {**made, **r, "id": row["id"] if row else None}
 
 
 @router.post("/import")

@@ -218,18 +218,17 @@ export default function App() {
   return (
     <div className="shell">
       <aside className={'side ' + (sheet ? 'open' : '')}>
-        <div className="brand"><div className="logo"><b style={{ fontSize: 17, lineHeight: 1 }}>A</b></div>Armadok</div>
         <NodeSwitcher />
         <button className="nav" data-tip="Aller directement à un site, un domaine ou une page (raccourci : Ctrl K)." onClick={() => setPalette(true)}><Search size={17} /><span className="lbl">Rechercher</span><span className="kbd" style={{ marginLeft: 'auto' }}>Ctrl K</span></button>
         {tf && can('sites.create') && <button className="nav" data-tip="Assistant : adresse du site, protections, application de destination, et l'enregistrement DNS si besoin." onClick={() => openWizard({})} style={{ color: 'var(--accent)' }}><Plus size={17} /><span className="lbl">Nouveau site</span></button>}
         <div className="sep" />
         {link('/', <LayoutDashboard size={17} />, 'Accueil', 'Vue d\'ensemble : vos sites, vos domaines, les problèmes à régler et l\'activité récente.')}
-        {(hasTraefik || (tf && can('middlewares.view'))) && <div className="side-g">Sites</div>}
-        {hasTraefik && link('/sites', <Workflow size={17} />, 'Sites', 'Vos sites : chacun relie une adresse, des protections et l\'application qui répond.')}
-        {tf && can('middlewares.view') && link('/middlewares', <Layers size={17} />, 'Middlewares', 'Les protections et transformations appliquées avant d\'envoyer la requête à l\'application : créez-les, coupez-les, voyez qui les utilise.')}
         {dk && <div className="side-g">Docker</div>}
         {pj && link('/projects', <FolderGit2 size={17} />, 'Projets', 'Vos dossiers docker compose : état, services, sites et visiteurs de chacun, fichiers et déploiement.')}
         {dk && link('/docker', <Container size={17} />, 'Docker', 'Les conteneurs, images, réseaux et volumes de ce nœud, avec les règles Traefik et les visiteurs de chacun.')}
+        {(hasTraefik || (tf && can('middlewares.view'))) && <div className="side-g">Sites</div>}
+        {hasTraefik && link('/sites', <Workflow size={17} />, 'Sites', 'Vos sites : chacun relie une adresse, des protections et l\'application qui répond.')}
+        {tf && can('middlewares.view') && link('/middlewares', <Layers size={17} />, 'Middlewares', 'Les protections et transformations appliquées avant d\'envoyer la requête à l\'application : créez-les, coupez-les, voyez qui les utilise.')}
         <div className="side-g">DNS</div>
         {link('/dns', <Globe size={17} />, 'Domaines', 'Vos domaines et leur DNS (OVH, DuckDNS ou DNS local) : enregistrements, adresse, partage d\'accès, aide certificats.')}
         {(user.canAddDomains || can('node.domains.link')) && link('/accounts', <Cloud size={17} />, 'Comptes DNS', 'Vos fournisseurs DNS (OVH, DuckDNS) et vos domaines en DNS local : où se trouve le DNS de chaque domaine.')}
@@ -248,7 +247,7 @@ export default function App() {
         <button className="nav" onClick={() => setProfile(true)}><UserCog size={17} /><span className="lbl">{user.username}</span></button>
         <button className="nav" onClick={logout}><LogOut size={17} /><span className="lbl">Déconnexion</span></button>
         <LiveDot />
-        {meta.data?.version && <div className="muted small lbl" style={{ padding: '6px 10px' }}>{/^v?\d/.test(meta.data.version) ? 'v' + meta.data.version.replace(/^v/, '') : meta.data.version}</div>}
+        <a className="side-foot" href="https://github.com/Dr-J-Watson/Armadok" target="_blank" rel="noreferrer" data-tip="Code source d'Armadok sur GitHub."><b>Armadok</b>{meta.data?.version && <span className="lbl">{/^v?\d/.test(meta.data.version) ? 'v' + meta.data.version.replace(/^v/, '') : meta.data.version}</span>}</a>
       </aside>
       <nav className="mobilebar" aria-label="Navigation">
         <NavLink to="/" end className={({ isActive }) => 'mb ' + (isActive ? 'active' : '')}><LayoutDashboard size={20} /><span>Accueil</span></NavLink>

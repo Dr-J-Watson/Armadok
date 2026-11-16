@@ -8,7 +8,7 @@ import { fmtDate } from '../lib/util.js'
 import { liveState, onLive } from '../lib/live.js'
 
 // Installation d'un worker, dans l'ordre : le jeton (toujours visible), UNE commande prête à coller, puis la détection de la connexion.
-export default function WorkerSetup({ node, token, expires, onOnline }) {
+export default function WorkerSetup({ node, token, expires, onOnline, modules }) {
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get('/meta'), staleTime: 60000 })
   const status = useQuery({ queryKey: ['node-conn', node.id, token], queryFn: () => api.get(`/nodes/${node.id}`), refetchInterval: (q) => (q.state.data?.connection === 'online' ? false : liveState() === 'live' ? 10000 : 2500) })
   const online = status.data?.connection === 'online'
@@ -18,7 +18,7 @@ export default function WorkerSetup({ node, token, expires, onOnline }) {
   }), [node.id]) // eslint-disable-line react-hooks/exhaustive-deps
   const hub = window.location.origin
   const [mode0, setMode] = useState('make')
-  const [o, setO] = useState(WORKER_DEFAULTS)
+  const [o, setO] = useState({ ...WORKER_DEFAULTS, ...(modules ? { modules } : {}) })
   const set = (k) => (e) => setO((x) => ({ ...x, [k]: e.target.value }))
   const mode = mode0
   const tr = o.modules !== 'docker'; const dk = o.modules !== 'traefik'

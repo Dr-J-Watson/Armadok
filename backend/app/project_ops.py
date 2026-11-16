@@ -690,7 +690,38 @@ def p_git_clone(a: dict) -> dict:
     return _spawn(base, [_gitbin(), *args], "git clone " + _strip_url(url), "git-clone", env=_git_env(None, str(a.get("token") or ""), str(a.get("user") or ""), str(a.get("sshKey") or "")), cwd=base, key=str(target))
 
 
-OPS = {"p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
+def p_create(a: dict) -> dict:
+    """Crée un NOUVEAU dossier de projet (dans la première racine autorisée) avec ses fichiers de départ. Refuse un dossier qui existe déjà."""
+    name = str(a.get("name") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,60}", name):
+        raise StoreError("Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)", 422)
+    rs = roots()
+    if not rs:
+        raise StoreError("Aucun dossier de projets configuré sur ce nœud (PROJECT_ROOTS)", 409)
+    files = a.get("files")
+    if not isinstance(files, dict) or not files or len(files) > 30:
+        raise StoreError("Fichiers de départ invalides", 422)
+    d = rs[0] / name
+    if d.exists() or d.is_symlink():
+        raise StoreError(f"Un dossier « {name} » existe déjà dans {rs[0]}", 409)
+    d.mkdir(mode=0o755)
+    try:
+        for rel, content in files.items():
+            rel = safe_rel(rel)
+            if not isinstance(content, str) or len(content.encode()) > MAX_FILE:
+                raise StoreError("Contenu invalide ou trop gros", 413)
+            f = d / rel
+            f.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if is_env(rel) else 0o644)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content.encode())
+    except Exception:
+        shutil.rmtree(d, ignore_errors=True)   # rien de demi-créé
+        raise
+    return {"path": str(d), "name": name}
+
+
+OPS = {"p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
        "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy,
        "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
 

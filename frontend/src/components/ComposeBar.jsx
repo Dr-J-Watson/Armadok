@@ -18,10 +18,10 @@ export default function ComposeBar({ id, perms, onDone }) {
     <>
       <div className="row wrap" style={{ gap: 6, position: 'relative' }}>
         <Btn kind="primary" busy={run.isPending} onClick={() => go({ action: 'up' })} title="docker compose up -d : crée ou met à jour les conteneurs d'après les fichiers"><Play size={14} /> Déployer</Btn>
-        <Btn busy={run.isPending} onClick={() => go({ action: 'restart' })}><RotateCw size={14} /> Redémarrer</Btn>
+        <Btn title="Redémarre les conteneurs du projet (sans recréer ni changer leur configuration)" busy={run.isPending} onClick={() => go({ action: 'restart' })}><RotateCw size={14} /> Redémarrer</Btn>
         <Btn busy={run.isPending} onClick={() => go({ action: 'pull' })} title="Télécharge les nouvelles versions des images (sans redéployer)"><Download size={14} /> Pull</Btn>
-        <Btn busy={run.isPending} onClick={() => ask('Arrêter le projet ?', 'Les conteneurs sont arrêtés mais gardés ; « Démarrer » ou « Déployer » les relance.', { action: 'stop' }, 'Arrêter')}><Square size={14} /> Arrêter</Btn>
-        <Btn busy={run.isPending} onClick={() => ask('Down : supprimer les conteneurs ?', 'Les conteneurs et les réseaux du projet sont supprimés. Les volumes (les données) sont conservés.', { action: 'down' }, 'Down')}><Power size={14} /> Down</Btn>
+        <Btn title="Arrête les conteneurs du projet : ils restent en place et se redémarrent d'un clic" busy={run.isPending} onClick={() => ask('Arrêter le projet ?', 'Les conteneurs sont arrêtés mais gardés ; « Démarrer » ou « Déployer » les relance.', { action: 'stop' }, 'Arrêter')}><Square size={14} /> Arrêter</Btn>
+        <Btn title="Down : supprime les conteneurs et les réseaux du projet (les volumes et les fichiers restent)" busy={run.isPending} onClick={() => ask('Down : supprimer les conteneurs ?', 'Les conteneurs et les réseaux du projet sont supprimés. Les volumes (les données) sont conservés.', { action: 'down' }, 'Down')}><Power size={14} /> Down</Btn>
         <Btn kind="ghost" onClick={() => setMenu((v) => !v)} aria-label="Plus d'actions"><MoreHorizontal size={16} /></Btn>
         {menu && <div className="pop-menu" onMouseLeave={() => setMenu(false)}>
           <button type="button" onClick={() => go({ action: 'start' })}>Démarrer</button>

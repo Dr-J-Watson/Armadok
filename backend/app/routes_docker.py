@@ -180,3 +180,86 @@ def prune(body: PruneBody, ctx: NodeCtx = Depends(docker_cap("docker.remove"))):
     r = run(ctx, "d_prune", {"what": body.what, "all": body.all})
     ctx.audit("docker.prune", f"{body.what}{' (toutes)' if body.all else ''} : {r['deleted']} supprimé(s)")
     return r
+
+
+# ── détail des images, réseaux et volumes ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/images/{iid}/detail")
+def image_detail(iid: str, ctx: NodeCtx = Depends(docker_cap("docker.view"))):
+    return run(ctx, "d_image", {"id": iid})
+
+
+@router.get("/networks/{nid}/detail")
+def network_detail(nid: str, ctx: NodeCtx = Depends(docker_cap("docker.view"))):
+    d = run(ctx, "d_network", {"id": nid})
+    d["canControl"] = ctx.can("docker.control")
+    return d
+
+
+class NetworkNew(BaseModel):
+    name: str = Field(min_length=1, max_length=63)
+    subnet: str = Field(default="", max_length=64)
+    internal: bool = False
+
+
+@router.post("/networks")
+def network_create(body: NetworkNew, ctx: NodeCtx = Depends(docker_cap("docker.control"))):
+    r = run(ctx, "d_network_create", body.model_dump())
+    ctx.audit("docker.network.create", body.name)
+    return r
+
+
+class NetworkLink(BaseModel):
+    container: str = Field(min_length=1, max_length=200)
+    aliases: list[str] = Field(default_factory=list, max_length=10)
+    force: bool = False
+
+
+@router.post("/networks/{nid}/connect")
+def network_connect(nid: str, body: NetworkLink, ctx: NodeCtx = Depends(docker_cap("docker.control"))):
+    r = run(ctx, "d_network_connect", {"network": nid, "container": body.container, "aliases": body.aliases})
+    ctx.audit("docker.network.connect", f"{body.container} → {nid}")
+    return r
+
+
+@router.post("/networks/{nid}/disconnect")
+def network_disconnect(nid: str, body: NetworkLink, ctx: NodeCtx = Depends(docker_cap("docker.control"))):
+    r = run(ctx, "d_network_disconnect", {"network": nid, "container": body.container, "force": body.force})
+    ctx.audit("docker.network.disconnect", f"{body.container} ✕ {nid}")
+    return r
+
+
+@router.get("/volumes/{name}/detail")
+def volume_detail(name: str, ctx: NodeCtx = Depends(docker_cap("docker.view"))):
+    d = run(ctx, "d_volume", {"id": name})
+    d["canBrowse"] = ctx.can("docker.exec") and (ctx.node["kind"] != "remote" or bool(worker_link.feature(ctx.id, "exec")))
+    return d
+
+
+def _browse_ok(ctx: NodeCtx) -> None:
+    if ctx.node["kind"] == "remote" and not worker_link.feature(ctx.id, "exec"):
+        raise HTTPException(409, "Ce worker n'autorise pas l'accès aux conteneurs (WORKER_ALLOW_EXEC=true)")
+
+
+@router.get("/volumes/{name}/files")
+def volume_files(name: str, path: str = "", ctx: NodeCtx = Depends(docker_cap("docker.exec"))):
+    _browse_ok(ctx)
+    r = run(ctx, "d_exec_volls", {"id": name, "path": path})
+    ctx.audit("docker.volume.browse", f"{name}:{path or '/'}")
+    return r
+
+
+@router.get("/volumes/{name}/file")
+def volume_file(name: str, path: str, ctx: NodeCtx = Depends(docker_cap("docker.exec"))):
+    _browse_ok(ctx)
+    r = run(ctx, "d_exec_volread", {"id": name, "path": path})
+    ctx.audit("docker.volume.read", f"{name}:{path}")
+    return r
+
+
+@router.get("/traefik-status")
+def traefik_status(ctx: NodeCtx = Depends(docker_cap("docker.view"))):
+    """Traefik tourne-t-il sur cette machine ? (sert à proposer d'en installer un quand il manque)"""
+    lst = run(ctx, "d_containers", {"all": True})["containers"]
+    prov = docker_link.traefik_provider(ctx, lst)
+    return {"found": bool(prov.get("found")), "local": ctx.node["kind"] != "remote"}

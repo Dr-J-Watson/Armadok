@@ -10,6 +10,7 @@ import { fmtSize } from '../lib/docker.js'
 import { fmtNum } from '../lib/features.js'
 import { usePersist } from '../lib/persist.js'
 import { useGo } from '../lib/nav.js'
+import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
 
 export const STATUS = { running: ['En marche', 'ok'], partial: ['Partiel', 'warn'], stopped: ['Arrêté', ''], absent: ['Non démarré', ''] }
 export const SVC_DOT = { running: 'var(--ok)', partial: 'var(--warn)', stopped: 'var(--muted)', absent: 'var(--border)' }
@@ -24,7 +25,7 @@ export default function Projects() {
   const go = useGo(); const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(''); const [view, setView] = usePersist('projects-view', 'cards'); const [sel, setSel] = useState([]); const [ask, setAsk] = useState(null); const [clone, setClone] = useState(false)
   const list = useQuery({ queryKey: ['projects'], queryFn: () => api.get('/projects'), refetchInterval: 20000 })
-  const stat = useProjectStats()
+  const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false)
   const { toast } = useUi(); const qc = useQueryClient()
   const tab = ['managed', 'discovered', 'ignored'].includes(params.get('tab')) ? params.get('tab') : 'managed'
   const done = (r, verb) => { qc.invalidateQueries({ queryKey: ['projects'] }); setSel([]); setAsk(null); toast(r.done.length ? `${r.done.length} projet${r.done.length > 1 ? 's' : ''} ${verb}` : 'Rien à faire') }
@@ -39,14 +40,16 @@ export default function Projects() {
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <div className="grow"><h1 style={{ margin: 0 }}>Projets</h1><div className="muted">Les dossiers docker compose de ce nœud : leur état, leurs sites et leurs visiteurs.</div></div>
-        {d.canGit && <Btn onClick={() => setClone(true)}><GitFork size={14} /> Cloner un dépôt</Btn>}
+        {offer.missing && d.canImport && !offer.show && <Btn title="Aucun Traefik n'est détecté sur cette machine : Armadok peut en créer un (projet compose prêt à démarrer)" onClick={() => setTsetup(true)}>Créer un projet Traefik</Btn>}
+        {d.canGit && <Btn title="Récupérer un dépôt Git (HTTPS ou SSH) dans un dossier de projets" onClick={() => setClone(true)}><GitFork size={14} /> Cloner un dépôt</Btn>}
       </div>
       <div className="row wrap" style={{ gap: 10, marginBottom: 14 }}>
         <Tabs value={tab} onChange={(t) => { setParams({ tab: t }); setSel([]) }} tabs={[{ id: 'managed', label: 'Gérés', count: d.managed.length }, { id: 'discovered', label: 'Découverts', count: d.discovered.length }, { id: 'ignored', label: 'Ignorés', count: d.ignored.length }]} />
         <SearchBox value={q} onChange={setQ} placeholder="Rechercher un projet, un service, un site, une étiquette…" />
         {tab === 'managed' && <span className="right"><Seg options={[{ id: 'cards', label: <LayoutGrid size={14} />, hint: 'Cartes' }, { id: 'list', label: <List size={14} />, hint: 'Liste compacte' }]} value={view} onChange={setView} /></span>}
-        {tab === 'discovered' && d.canImport && <span className="right row" style={{ gap: 6 }}><Btn small kind="primary" disabled={!sel.length} onClick={() => setAsk(sel)}><Download size={13} /> Importer ({sel.length})</Btn><Btn small kind="ghost" disabled={!sel.length} onClick={() => ignore.mutate(sel)}><EyeOff size={13} /> Ignorer</Btn></span>}
+        {tab === 'discovered' && d.canImport && <span className="right row" style={{ gap: 6 }}><Btn title="Ajouter les projets cochés à la liste : l'interface pourra les démarrer, les arrêter et éditer leurs fichiers" small kind="primary" disabled={!sel.length} onClick={() => setAsk(sel)}><Download size={13} /> Importer ({sel.length})</Btn><Btn title="Ne plus proposer les projets cochés (ils restent sur le disque, intacts)" small kind="ghost" disabled={!sel.length} onClick={() => ignore.mutate(sel)}><EyeOff size={13} /> Ignorer</Btn></span>}
       </div>
+      {offer.show && <TraefikOffer onOpen={() => setTsetup(true)} onDismiss={() => { offer.dismiss(); toast('D\'accord. Plus tard : Aide → « Installer Traefik avec Armadok », ou le bouton « Créer un projet Traefik » de cette page.') }} />}
       {d.roots.length === 0 && <div className="banner warn"><FolderOpen size={16} /> Aucun dossier de projets n'est configuré sur ce nœud. Indiquez-les avec la variable <code>PROJECT_ROOTS</code> (chemins absolus, montés à l'identique dans le conteneur).</div>}
       {d.truncated && <div className="banner warn">Beaucoup de projets : la liste est tronquée.</div>}
       {rows.length === 0 ? <div className="card"><Empty><FolderGit2 size={28} /><div>{tab === 'managed' ? <>Aucun projet géré.<br /><span className="muted small">Importez-en depuis l'onglet « Découverts ».</span></> : tab === 'discovered' ? 'Aucun nouveau projet trouvé dans vos dossiers.' : 'Aucun projet ignoré.'}</div></Empty></div>
@@ -55,9 +58,10 @@ export default function Projects() {
             {rows.map((p) => <tr key={p.path}>{tab === 'discovered' && d.canImport && <td><input type="checkbox" checked={sel.includes(p.path)} onChange={(e) => setSel((s) => (e.target.checked ? [...s, p.path] : s.filter((x) => x !== p.path)))} /></td>}
               <td><b>{p.name}</b>{p.hasEnv && <Badge style={{ marginLeft: 6 }}>.env</Badge>}{p.build && <Badge style={{ marginLeft: 6 }}>build</Badge>}{p.hasGit && <Badge style={{ marginLeft: 6 }}>git</Badge>}<div className="muted small mono">{p.path}</div>{p.error && <div className="small" style={{ color: 'var(--err)' }}>{p.error}</div>}</td>
               <td className="small">{p.services.map((s) => s.name).join(', ') || '—'}</td><td>{p.status === 'absent' ? <span className="muted">—</span> : <Badge kind={STATUS[p.status][1]}>{STATUS[p.status][0]}</Badge>}</td>
-              <td className="actions">{d.canImport && (tab === 'discovered' ? <Btn small onClick={() => setAsk([p.path])}><Download size={13} /> Importer</Btn> : <Btn small kind="ghost" onClick={() => unimport.mutate(p.id)}><Undo2 size={13} /> Restaurer</Btn>)}</td></tr>)}</tbody></table></div>}
+              <td className="actions">{d.canImport && (tab === 'discovered' ? <Btn title="Ajouter ce projet à la liste" small onClick={() => setAsk([p.path])}><Download size={13} /> Importer</Btn> : <Btn title="Retire ce projet de la liste : ni ses fichiers ni ses conteneurs ne sont touchés" small kind="ghost" onClick={() => unimport.mutate(p.id)}><Undo2 size={13} /> Restaurer</Btn>)}</td></tr>)}</tbody></table></div>}
       {clone && <CloneModal onClose={() => setClone(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); setParams({ tab: 'discovered' }) }} />}
       {ask && <ImportModal paths={ask} onClose={() => setAsk(null)} onDone={(r) => done(r, 'importé(s)')} />}
+      {tsetup && <TraefikSetup onClose={() => setTsetup(false)} />}
     </>
   )
 }

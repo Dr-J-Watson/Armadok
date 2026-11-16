@@ -654,11 +654,13 @@ Un onglet **Projets** et une page **Docker** s'ajoutent aux nœuds qui gèrent D
 
 | Où | Ce qu'on fait |
 |---|---|
-| **Docker** | conteneurs (démarrer, arrêter, redémarrer, journaux en direct, statistiques, terminal), images, réseaux, volumes, nettoyage |
+| **Docker** | conteneurs (démarrer, arrêter, redémarrer, journaux en direct, statistiques, terminal), **images** (détail : couches, ports, utilisateurs), **réseaux** (détail, créer, relier ou détacher un conteneur), **volumes** (détail et contenu en lecture seule, droit `docker.exec`), nettoyage |
 | **Projets** (cartes, 3 par ligne) | les dossiers `docker compose` : état, services, sites, CPU, mémoire, requêtes, erreurs, visiteurs |
 | fiche d'un projet | vue d'ensemble · services · **fichiers** (explorateur coloré par type — compose, `.env`, Makefile, Dockerfile en évidence —, créer / renommer / déplacer / supprimer des fichiers et des dossiers, éditeur, diff, historique, `.env` protégé) · **déploiement** (up, down, pull, build…) · journaux · **accès et IP** · sites · **Git** · **images** |
 | **Labels ⇄ fichier** | convertit les labels `traefik.*` d'un compose en fichier YAML de Traefik (et l'inverse), avec contrôles croisés |
-| **Publier sur Traefik** | depuis un conteneur : l'assistant de site s'ouvre prérempli, après vérification que Traefik atteint le conteneur |
+| **Publier sur Traefik** | depuis un conteneur : l'assistant de site s'ouvre directement, prérempli (une alerte rappelle si Traefik ne peut pas atteindre le conteneur) |
+| **Installer Traefik** | si le hub n'en détecte aucun, la page Projets propose de créer un projet Traefik (e-mail Let's Encrypt, réseau, HTTPS automatique, protections, journal d'accès…) sans rien démarrer avant relecture |
+| **Services « init »** | un service qui s'est arrêté normalement (code 0) est marqué « Terminé » et ne déclenche plus d'alerte |
 
 ### Activer (hub)
 

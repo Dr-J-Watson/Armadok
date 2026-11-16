@@ -76,6 +76,12 @@ function Tree({ entries, sel, cur, onPick, onDir, collapsed, toggle, dirty, perm
   )
 }
 
+// Chemin d'un fichier : le NOM reste toujours lisible, c'est le début du chemin (dossiers) qui se tronque, en tête.
+function PathLabel({ path }) {
+  const i = path.lastIndexOf('/'); const dir = i >= 0 ? path.slice(0, i + 1) : ''; const base = i >= 0 ? path.slice(i + 1) : path
+  return <span className="pf-path mono small" title={path}>{dir && <span className="pf-dir"><bdi>{dir}</bdi></span>}<b className="pf-base">{base}</b></span>
+}
+
 export default function ProjectFiles({ id, perms, canTraefik, onChanged }) {
   const { toast, confirm } = useUi(); const qc = useQueryClient()
   const tree = useQuery({ queryKey: ['project-tree', id], queryFn: () => api.get(`/projects/${id}/tree`) })
@@ -140,7 +146,7 @@ export default function ProjectFiles({ id, perms, canTraefik, onChanged }) {
           <Btn small kind="ghost" title="Actualiser la liste" onClick={() => tree.refetch()}><RefreshCw size={14} /></Btn>
         </div>
         <div className="pf-body">
-          {keyFiles.length > 0 && <div className="ft-keys">{keyFiles.map((e) => { const kk = kindOf(e.path); return <button key={e.path} type="button" className={'ft-chip ' + (sel === e.path ? 'on' : '')} title={e.path} onClick={() => load(e.path)}><FileMark path={e.path} size={13} /><span className="ellipsis">{e.path.includes('/') ? e.path : baseName(e.path)}</span><span className={'ft-tag fk-bg-' + kk.id}>{kk.label}</span></button> })}</div>}
+          {keyFiles.length > 0 && <div className="ft-keys">{keyFiles.map((e) => { const kk = kindOf(e.path); return <button key={e.path} type="button" className={'ft-chip ' + (sel === e.path ? 'on' : '')} title={e.path} onClick={() => load(e.path)}><FileMark path={e.path} size={13} /><PathLabel path={e.path} /><span className={'ft-tag fk-bg-' + kk.id}>{kk.label}</span></button> })}</div>}
           <Tree entries={entries} sel={sel} cur={cur} onPick={load} onDir={setCur} collapsed={collapsed} toggle={toggle} dirty={dirty} perms={perms} onAction={act} />
           {tree.data?.truncated && <div className="muted small">Liste tronquée.</div>}
         </div>
@@ -149,13 +155,13 @@ export default function ProjectFiles({ id, perms, canTraefik, onChanged }) {
         {!sel ? <div className="muted">Choisissez un fichier{perms.edit ? ', ou créez-en un.' : '.'}</div> : <>
           <div className="row wrap" style={{ gap: 6, marginBottom: 8 }}>
             <FileMark path={sel} size={17} />
-            <b className="mono small grow ellipsis" title={sel}>{sel}</b>
+            <PathLabel path={sel} />
             <Badge className={'fk-bg-' + k.id} title={k.hint}>{k.label}</Badge>
-            {isCompose(sel) && <><Btn small onClick={validate}><CheckCircle2 size={13} /> Valider</Btn>{canTraefik && perms.files && <Btn small onClick={() => setModal({ type: 'labels' })}><Tags size={13} /> Labels Traefik</Btn>}</>}
-            {!k.binary && <Btn small kind="ghost" onClick={() => setModal({ type: 'history' })}><History size={13} /> Historique</Btn>}
+            {isCompose(sel) && <><Btn title="Vérifie le fichier avec « docker compose config » sans rien démarrer" small onClick={validate}><CheckCircle2 size={13} /> Valider</Btn>{canTraefik && perms.files && <Btn title="Ajoute ou règle les labels Traefik d'un service (routeur, port, protections) sans écrire le YAML" small onClick={() => setModal({ type: 'labels' })}><Tags size={13} /> Labels Traefik</Btn>}</>}
+            {!k.binary && <Btn title="Les versions précédentes de ce fichier : comparer, restaurer" small kind="ghost" onClick={() => setModal({ type: 'history' })}><History size={13} /> Historique</Btn>}
             {canEdit && !protectedFile && <Btn small kind="ghost" title="Renommer / déplacer" onClick={() => setModal({ type: 'move', src: sel, kind: 'file' })}><Pencil size={13} /></Btn>}
             {canEdit && !protectedFile && <Btn small kind="ghost" title="Supprimer" onClick={() => askDelete(sel, 'file')}><Trash2 size={13} /></Btn>}
-            {canEdit && !k.binary && <Btn small kind="primary" disabled={!dirty} onClick={() => setModal({ type: 'diff' })}><Save size={13} /> Enregistrer</Btn>}
+            {canEdit && !k.binary && <Btn title="Voir les changements avant de les enregistrer" small kind="primary" disabled={!dirty} onClick={() => setModal({ type: 'diff' })}><Save size={13} /> Enregistrer</Btn>}
           </div>
           {err ? <div className="banner err">{err}</div> : <>
             {check && <div className={'banner ' + (check.ok ? 'ok' : 'err')} style={{ whiteSpace: 'pre-wrap' }}>{check.ok ? <CheckCircle2 size={14} /> : null} {check.message}</div>}

@@ -256,6 +256,8 @@ def d_prune(a: dict) -> dict:
 OPS = {"d_info": d_info, "d_containers": d_containers, "d_container": d_container, "d_action": d_action, "d_remove_container": d_remove_container,
        "d_logs": d_logs, "d_stats": d_stats, "d_images": d_images, "d_networks": d_networks, "d_volumes": d_volumes,
        "d_remove_image": d_remove_image, "d_remove_network": d_remove_network, "d_remove_volume": d_remove_volume, "d_prune": d_prune, **docker_exec.OPS}
+from . import docker_inspect  # noqa: E402  (importe docker_ops : après la définition de ses fonctions)
+OPS.update(docker_inspect.OPS)
 
 
 def handle(op: str, a: dict):

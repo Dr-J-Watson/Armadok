@@ -29,14 +29,14 @@ export default function ProjectGit({ id, perms }) {
         {st.head && <div className="small"><GitCommit size={13} style={{ verticalAlign: -2 }} /> <b>{st.head.subject}</b> <span className="muted">· {st.head.sha} · {st.head.author} · {ago(st.head.time)}</span></div>}
         {fetched?.fetchError && <div className="banner err">{fetched.fetchError}</div>}
         <div className="row wrap" style={{ gap: 6 }}>
-          <Btn busy={fetchM.isPending} onClick={() => fetchM.mutate()}><RefreshCw size={14} /> Vérifier les mises à jour</Btn>
+          <Btn title="Interroge le dépôt distant pour voir ce qui a changé, sans toucher aux fichiers" busy={fetchM.isPending} onClick={() => fetchM.mutate()}><RefreshCw size={14} /> Vérifier les mises à jour</Btn>
           <Btn kind={st.behind > 0 ? 'primary' : undefined} busy={run.isPending} onClick={() => pull(false)} title="git pull --ff-only : n'écrase jamais vos modifications locales"><Download size={14} /> Récupérer</Btn>
           {perms.deploy && <Btn busy={run.isPending} onClick={() => pull(true)} title="Récupère puis redéploie en reconstruisant les images"><Rocket size={14} /> Récupérer et déployer</Btn>}
           {st.detached && <Btn busy={run.isPending} onClick={() => run.mutate({ action: 'checkout', ref: 'main' })} title="Repasser sur la branche (essaie « main » ; sinon utilisez la liste)"><Undo2 size={14} /> Repasser sur main</Btn>}
         </div>
       </div>
       <div className="card flush"><div style={{ padding: '12px 16px' }}><b>Dernières versions</b></div><table className="t"><tbody>
-        {q.data.commits.map((c, i) => <tr key={c.sha}><td className="mono small" style={{ width: 110 }}>{c.sha}</td><td>{c.subject}</td><td className="muted small">{c.author}</td><td className="muted small">{ago(c.time)}</td><td className="actions">{i > 0 && <Btn small kind="ghost" onClick={() => back(c)}><Undo2 size={13} /> Revenir ici</Btn>}{i === 0 && <Badge>actuelle</Badge>}</td></tr>)}</tbody></table></div>
+        {q.data.commits.map((c, i) => <tr key={c.sha}><td className="mono small" style={{ width: 110 }}>{c.sha}</td><td>{c.subject}</td><td className="muted small">{c.author}</td><td className="muted small">{ago(c.time)}</td><td className="actions">{i > 0 && <Btn title="Revenir à ce commit (l'état actuel reste dans l'historique de Git)" small kind="ghost" onClick={() => back(c)}><Undo2 size={13} /> Revenir ici</Btn>}{i === 0 && <Badge>actuelle</Badge>}</td></tr>)}</tbody></table></div>
       <Credentials id={id} info={q.data} />
       <SshKey id={id} info={q.data} />
       <Hook id={id} info={q.data} perms={perms} />
