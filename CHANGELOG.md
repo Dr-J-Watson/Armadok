@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.0.0...v1.1.0) (2026-11-16)
+
+
+### Nouveautés
+
+* Docker — détail des images, réseaux (créer, relier, détacher) et volumes (contenu en lecture seule), installation guidée de Traefik, services « terminés » sans alerte, Publier ouvre directement l'assistant de site, terminal dans les logs d'un projet, nouveau nœud selon le type, chemins longs lisibles, infobulles, Docker au-dessus de Sites, nom Armadok en bas du menu ([1f10d5e](https://github.com/Dr-J-Watson/Armadok/commit/1f10d5e5d025900c565f46ffea52cba718ef46b0))
+
+
+### Corrections
+
+* l'installation demande la version d'Armadok (latest ou un numéro précis) au lieu d'imposer une image ; une version de développement retombe sur latest dans la commande du worker ([3087189](https://github.com/Dr-J-Watson/Armadok/commit/3087189a5d113a8fc22022eca4a6abc4d35e48dc))
+
 ## 1.0.0 (2026-11-16)
 
 
