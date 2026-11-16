@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "release-as": "1.0.0",
+      "changelog-path": "CHANGELOG.md",
+      "include-v-in-tag": true,
+      "pull-request-title-pattern": "Armadok ${version}",
+      "pull-request-header": "## Notes de version",
+      "pull-request-footer": "Fusionner cette demande publie la version, ses notes et l'image Docker.",
+      "changelog-sections": [
+        { "type": "feat", "section": "Nouveautés" },
+        { "type": "fix", "section": "Corrections" },
+        { "type": "perf", "section": "Performances" },
+        { "type": "docs", "section": "Documentation", "hidden": false }
+      ]
+    }
+  }
+}

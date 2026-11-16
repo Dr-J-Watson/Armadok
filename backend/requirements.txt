@@ -1,0 +1,12 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.7,<3
+ruamel.yaml>=0.18,<0.19
+ovh>=1.1,<2
+PyJWT>=2.8,<3
+bcrypt>=4.1,<5
+cryptography>=42
+pyotp>=2.9,<3
+segno>=1.6,<2
+websockets>=13,<16
+maxminddb>=2.6,<3

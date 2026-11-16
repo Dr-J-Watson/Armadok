@@ -1,0 +1,15 @@
+# À copier dans votre dossier dynamique Traefik (adaptez le domaine, le resolver et le middleware).
+http:
+  routers:
+    armadok:
+      rule: "Host(`armadok.exemple.fr`)"
+      entryPoints: ["websecure"]
+      service: armadok
+      tls:
+        certResolver: letsencrypt
+      # middlewares: [mon-middleware-prive]   # recommandé : limiter l'accès (IP, SSO…)
+  services:
+    armadok:
+      loadBalancer:
+        servers:
+          - url: "http://armadok:8000"

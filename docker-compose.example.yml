@@ -1,0 +1,78 @@
+# ══════════════════════════════════════════════════════════════════════════════════════
+#  Armadok — docker-compose.example.yml
+#  Copiez ce fichier en « docker-compose.yml » et créez le « .env » à partir de .env.example.
+#
+#  Les ${VARIABLES} ci-dessous viennent du .env (voir .env.example : chaque variable y est expliquée).
+#  Tout ce qui est commenté (#) est FACULTATIF : décommentez le bloc pour activer la fonction.
+#  Plus d'aide : « make doctor » (vérifie l'installation) · « make help » (toutes les commandes).
+# ══════════════════════════════════════════════════════════════════════════════════════
+
+services:
+  armadok:
+    image: ghcr.io/dr-j-watson/armadok:latest   # tags : latest · 1 · 1.2 · 1.2.3 (figer) · edge (développement)
+    container_name: armadok
+    restart: unless-stopped
+
+    # ── Utilisateur ─────────────────────────────────────────────────────────────────
+    # Doit pouvoir ÉCRIRE dans le dossier Traefik : mettez l'UID/GID de son propriétaire (id -u ; id -g) dans le .env.
+    user: "${UID:-1000}:${GID:-1000}"
+
+    # ── Variables lues par l'application ─────────────────────────────────────────────
+    # Les secrets, le compte propriétaire, OVH… : tout le .env est transmis au conteneur.
+    env_file: .env
+    environment:
+      # Chemins DANS le conteneur : ne les changez pas (ce sont les montages « volumes » ci-dessous qui comptent).
+      TRAEFIK_DYNAMIC_DIR: /traefik-dynamic
+      DATA_DIR: /data
+      # Facultatif — journal d'accès (adresses IP, attaques, bannissement) : décommentez, ainsi que son volume plus bas.
+      # TRAEFIK_ACCESS_LOG: /traefik-logs/access.log
+      # Facultatif — certificats (voir, supprimer, renouveler) : décommentez, ainsi que leur volume et « group_add » plus bas.
+      # TRAEFIK_CERTS_FILE: /traefik-certs/acme.json
+      # TRAEFIK_CONTAINER: traefik                    # nom du conteneur de Traefik : il est relancé à la suppression / au renouvellement
+
+    # ── Dossiers montés ──────────────────────────────────────────────────────────────
+    volumes:
+      # Obligatoire : la configuration dynamique de Traefik (l'interface y écrit, Traefik relit tout seul).
+      - ${TRAEFIK_DYNAMIC_PATH}:/traefik-dynamic
+      # Obligatoire : base (comptes, clés chiffrées), sauvegardes des fichiers Traefik, journal d'audit. SAUVEGARDEZ-LE.
+      - ./data:/data
+      # Facultatif — journal d'accès de Traefik, en LECTURE SEULE (renseignez TRAEFIK_ACCESS_LOG_PATH dans .env) :
+      # - ${TRAEFIK_ACCESS_LOG_PATH}:/traefik-logs:ro
+      # Facultatif — certificats : le DOSSIER qui contient acme.json (renseignez CERTS_PATH dans .env) :
+      # - ${CERTS_PATH}:/traefik-certs
+      # Facultatif — seulement pour SUPPRIMER / RENOUVELER un certificat (relance de Traefik). ⚠ Donne la main sur Docker :
+      # protégez l'interface, ou préférez un proxy de socket (voir le README, « socket Docker »).
+      # - /var/run/docker.sock:/var/run/docker.sock
+    # Facultatif — avec le socket Docker : le groupe « docker » de la machine (getent group docker | cut -d: -f3, dans .env : DOCKER_GID)
+    # group_add: ["${DOCKER_GID}"]
+    # Facultatif — GÉRER DOCKER depuis l'interface (conteneurs, projets compose, Git, images). ⚠ Accès équivalent à ROOT : voir le README, « Gérer Docker ».
+    # Il faut le socket (ci-dessus) + group_add + DOCKER_MANAGE=true et PROJECT_ROOTS dans .env + les dossiers des projets montés AVEC LE MÊME CHEMIN :
+    # volumes:
+    #   - /opt/stacks:/opt/stacks
+
+    # ── Durcissement (à laisser tel quel) ────────────────────────────────────────────
+    read_only: true                                 # système de fichiers en lecture seule (seuls /data, /traefik-dynamic et /tmp s'écrivent)
+    tmpfs: [/tmp]
+    cap_drop: [ALL]                                 # aucune capability Linux
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 200
+
+    # ── Réseau ───────────────────────────────────────────────────────────────────────
+    # Le réseau partagé avec Traefik : Traefik joint l'interface par ce réseau (http://armadok:8000).
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true                                  # créé en dehors de ce fichier (docker network ls)
+    name: ${TRAEFIK_NETWORK:-proxy}
+
+# ── Volumes Docker à la place de dossiers (facultatif) ───────────────────────────────
+# Chacun des trois dossiers (configuration dynamique, journal d'accès, certificats) peut être un VOLUME Docker existant au lieu d'un chemin.
+# Mettez son nom dans le .env (TRAEFIK_DYNAMIC_PATH / TRAEFIK_ACCESS_LOG_PATH / CERTS_PATH), remplacez le montage par « nom_court:/chemin »,
+# et déclarez le volume ici. « make install » le fait tout seul. Exemple pour la configuration dynamique :
+#   - dynamic:/traefik-dynamic          (au lieu de - ${TRAEFIK_DYNAMIC_PATH}:/traefik-dynamic)
+# volumes:
+#   dynamic:
+#     external: true
+#     name: ${TRAEFIK_DYNAMIC_PATH}

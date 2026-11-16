@@ -1,0 +1,52 @@
+services:
+  # Relais des certificats : seul à lire acme.json (clés privées). Root, sans réseau, lecture seule ; n'écrit que les noms et dates.
+  certs:
+    build: .
+    image: armadok
+    container_name: traefik-certs-relay
+    command: ["python", "-m", "app.certsync"]
+    restart: unless-stopped
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [DAC_READ_SEARCH]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    healthcheck: { disable: true }
+    environment:
+      CERTSYNC_IN: /certs-in/${ACME_FILE:-acme.json}
+    volumes:
+      - ${CERTS_PATH:-../traefik/traefik_letsencrypt}:/certs-in:ro   # le dossier qui contient acme.json
+      - certs_meta:/certs-out
+
+  armadok:
+    build: .
+    image: armadok
+    container_name: armadok
+    restart: unless-stopped
+    user: "${UID:-1000}:${GID:-1000}"
+    env_file: .env
+    environment:
+      TRAEFIK_DYNAMIC_DIR: /traefik-dynamic
+      DATA_DIR: /data
+      TRAEFIK_CERTS_FILE: /traefik-certs/certs.json
+    volumes:
+      - ${TRAEFIK_DYNAMIC_PATH:-../traefik/traefik-dynamic}:/traefik-dynamic   # seul dossier de l'hôte accessible en écriture
+      - ./data:/data                                   # sauvegardes + journal d'audit
+      - certs_meta:/traefik-certs:ro                   # relevé des certificats (sans clés), écrit par « certs »
+    # --- durcissement ---
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    pids_limit: 200
+    networks: [proxy]
+
+volumes:
+  certs_meta:
+
+networks:
+  proxy:
+    external: true

@@ -1,0 +1,17 @@
+{
+  "name": "Armadok",
+  "short_name": "Armadok",
+  "description": "Pilotez vos domaines DNS, Traefik et Docker, à distance, depuis un ordinateur ou un téléphone.",
+  "lang": "fr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1018",
+  "theme_color": "#5b5bf0",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

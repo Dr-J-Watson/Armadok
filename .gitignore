@@ -1,0 +1,11 @@
+.env
+data/
+node_modules/
+dist/
+__pycache__/
+
+# graphify (graphe de connaissances généré)
+graphify-out/
+.graphifyignore
+CLAUDE.md
+.claude
