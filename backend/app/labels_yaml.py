@@ -6,6 +6,10 @@ Les deux disent la même chose : les labels sont la configuration aplatie en cl�
  - dans un fichier compose, un « $ » s'écrit « $$ » (mots de passe bcrypt de basicAuth).
 Tout ce qui n'est pas convertible sans perte est signalé dans `warnings`, jamais ignoré en silence. Fonctions pures."""
 import re
+from io import StringIO
+
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedSeq
 
 CAMEL = {k.lower(): k for k in (
     "entryPoints", "certResolver", "loadBalancer", "passHostHeader", "sourceRange", "basicAuth", "ipAllowList", "stripPrefix", "stripPrefixRegex", "addPrefix", "replacePath",
@@ -185,3 +189,118 @@ def check_labels(declared: dict[str, dict], items: list[dict]) -> list[dict]:
         if routers and not any(i["kind"] == "services" for i in conv["items"]):
             out.append({"level": "warn", "service": svc, "text": "Aucun port de service (loadbalancer.server.port) : Traefik prendra le seul port exposé par l'image, s'il n'y en a qu'un"})
     return out
+
+
+# ------------------------------------------------------------------ écrire dans / lire un compose, en gardant sa mise en forme
+def _rt() -> YAML:
+    y = YAML()
+    y.preserve_quotes = True
+    y.width = 4096
+    y.indent(mapping=2, sequence=4, offset=2)
+    return y
+
+
+def _service(data, service: str):
+    sv = data.get("services") if isinstance(data, dict) else None
+    if not isinstance(sv, dict) or service not in sv or not isinstance(sv[service], dict):
+        raise ValueError(f"Service « {service} » introuvable dans ce fichier")
+    return sv[service]
+
+
+def _kv(item) -> tuple[str, str]:
+    k, _, v = str(item).partition("=")
+    return k.strip(), v
+
+
+def set_service_labels(text: str, service: str, labels: dict, overwrite: bool = False) -> tuple[str, list[str], list[str]]:
+    """Ajoute des labels au service d'un compose. Renvoie (nouveau texte, clés écrites, clés en conflit laissées telles quelles).
+    Une clé qui existe déjà avec une AUTRE valeur n'est remplacée que si `overwrite`. Le style existant (liste « k=v » ou dictionnaire) est conservé."""
+    y = _rt()
+    data = y.load(text)
+    svc = _service(data, service)
+    cur = svc.get("labels")
+    added, conflicts = [], []
+    if isinstance(cur, dict):
+        for k, v in labels.items():
+            if k in cur and str(cur[k]) != str(v) and not overwrite:
+                conflicts.append(k)
+                continue
+            if k not in cur or str(cur[k]) != str(v):
+                added.append(k)
+            cur[k] = str(v)
+    elif cur is None or isinstance(cur, list):
+        seq = cur if cur is not None else CommentedSeq()
+        idx = {_kv(x)[0]: i for i, x in enumerate(seq)}
+        for k, v in labels.items():
+            line = f"{k}={v}"
+            if k in idx:
+                if _kv(seq[idx[k]])[1] == str(v):
+                    continue
+                if not overwrite:
+                    conflicts.append(k)
+                    continue
+                seq[idx[k]] = line
+            else:
+                seq.append(line)
+            added.append(k)
+        if cur is None and seq:
+            svc["labels"] = seq
+    else:
+        raise ValueError("Les labels de ce service ont une forme inattendue")
+    buf = StringIO()
+    y.dump(data, buf)
+    return buf.getvalue(), added, conflicts
+
+
+def remove_traefik_labels(text: str, service: str) -> tuple[str, list[str]]:
+    """Retire les labels « traefik.* » d'un service (les autres labels restent). Renvoie (nouveau texte, clés retirées)."""
+    y = _rt()
+    data = y.load(text)
+    svc = _service(data, service)
+    cur = svc.get("labels")
+    removed: list[str] = []
+    if isinstance(cur, dict):
+        for k in [k for k in cur if str(k).startswith("traefik.")]:
+            removed.append(str(k))
+            del cur[k]
+    elif isinstance(cur, list):
+        for i in range(len(cur) - 1, -1, -1):
+            if _kv(cur[i])[0].startswith("traefik."):
+                removed.insert(0, _kv(cur[i])[0])
+                del cur[i]
+    if cur is not None and len(cur) == 0:
+        del svc["labels"]
+    buf = StringIO()
+    y.dump(data, buf)
+    return buf.getvalue(), removed
+
+
+def suggest_service(urls: list[str], services: list[dict]) -> list[dict]:
+    """Classe les services d'un compose ({file, service, containerName, image, ports}) selon leur ressemblance avec la cible d'un site :
+    l'hôte et le port de son URL. 100 = l'hôte est le nom du conteneur, 90 = le nom du service ; moins : un nom voisin ou l'image."""
+    hosts, ports = [], set()
+    for u in urls:
+        m = re.match(r"^https?://([^/:]+)(?::(\d+))?", str(u or ""))
+        if m:
+            hosts.append(m.group(1).lower())
+            if m.group(2):
+                ports.add(m.group(2))
+    out = []
+    for sv in services:
+        cname, sname, image = (sv.get("containerName") or "").lower(), (sv.get("service") or "").lower(), (sv.get("image") or "").lower()
+        score, why = 0, ""
+        for h in hosts:
+            if cname and h == cname:
+                score, why = max(score, 100), f"la cible du site vise « {h} », le nom de ce conteneur"
+            elif h == sname:
+                if score < 90:
+                    score, why = 90, f"la cible du site vise « {h} », le nom de ce service"
+            elif score < 50 and any(n and (h.startswith(n + "-") or h.startswith(n + "_") or n.startswith(h + "-")) for n in (cname, sname)):
+                score, why = 50, f"« {h} » ressemble au nom de ce service"
+            elif score < 30 and image and h in image:
+                score, why = 30, f"« {h} » apparaît dans le nom de l'image"
+        if ports and any(re.search(r"(^|:)(" + "|".join(map(re.escape, ports)) + r")(/\w+)?$", str(pt)) for pt in sv.get("ports") or []) and score:
+            score += 10
+            why += f", et il publie le port {sorted(ports)[0]}"
+        out.append({**sv, "score": score, "reason": why})
+    return sorted(out, key=lambda x: (-x["score"], x["service"]))

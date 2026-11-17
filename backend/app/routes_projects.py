@@ -489,12 +489,20 @@ def labels(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
             for svc, labels in declared.items():
                 if str(labels.get("traefik.enable", "")).lower() != "true":
                     checks.append({"level": "warn", "service": svc, "text": "Traefik n'expose pas les conteneurs par défaut : sans « traefik.enable=true », ce service est ignoré"})
-    return {"services": out, "checks": checks, "traefik": "traefik" in (ctx.node.get("modules") or []),
-            "canApply": ctx.can("sites.create") and ctx.can("traefik.all")}
+    tfiles = []
+    if "traefik" in (ctx.node.get("modules") or []):
+        try:
+            tfiles = sorted(f["path"] for f in ctx.store.list_files() if not f["disabled"])
+        except Exception:  # noqa: BLE001
+            tfiles = []
+    return {"services": out, "checks": checks, "traefik": "traefik" in (ctx.node.get("modules") or []), "traefikFiles": tfiles,
+            "canApply": ctx.can("sites.create") and ctx.can("traefik.all"), "canEditCompose": ctx.can("projects.edit")}
 
 
 class ApplyBody(BaseModel):
     service: str = Field(max_length=100)
+    file: str = Field(default="", max_length=200)      # fichier de Traefik où écrire ; vide = un fichier « zz-<projet>-<service>.yml »
+    removeLabels: bool = False                          # retire ensuite les labels traefik.* du compose (sinon la règle existerait deux fois)
 
 
 @router.post("/{pid}/labels/apply")
@@ -514,14 +522,20 @@ def labels_apply(pid: int, body: ApplyBody, ctx: NodeCtx = Depends(proj_cap("pro
     clash = [f"{i['kind']}/{i['name']}" for i in conv["items"] if (i["kind"], i["name"]) in existing]
     if clash:
         raise HTTPException(409, "Existe déjà dans Traefik : " + ", ".join(clash))
-    fname = re.sub(r"[^a-zA-Z0-9_.-]", "-", f"zz-{row['name']}-{svc['name']}.yml")
+    fname = body.file.strip() or re.sub(r"[^a-zA-Z0-9_.-]", "-", f"zz-{row['name']}-{svc['name']}.yml")
+    if body.file.strip() and not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_./ -]{0,150}\.ya?ml", fname):
+        raise HTTPException(422, "Nom de fichier invalide (un chemin relatif se terminant par .yml ou .yaml)")
     try:
         for i in conv["items"]:
             ctx.store.upsert("http", i["kind"], i["name"], i["spec"], fname)
     except StoreError as ex:
         raise HTTPException(ex.status, str(ex))
-    ctx.audit("project.labels.apply", f"{row['name']}/{svc['name']} → {fname}")
-    return {"file": fname, "items": [f"{i['kind']}/{i['name']}" for i in conv["items"]]}
+    removed: list[str] = []
+    if body.removeLabels:
+        ctx.need("projects.edit")
+        removed = _edit_compose_service(ctx, d, e, svc["name"], lambda t: labels_yaml.remove_traefik_labels(t, svc["name"]))
+    ctx.audit("project.labels.apply", f"{row['name']}/{svc['name']} → {fname}{' (labels retirés du compose)' if removed else ''}")
+    return {"file": fname, "items": [f"{i['kind']}/{i['name']}" for i in conv["items"]], "removedLabels": removed}
 
 
 class FromSiteBody(BaseModel):
@@ -545,6 +559,121 @@ def labels_from_site(body: FromSiteBody, ctx: NodeCtx = Depends(proj_cap("projec
     conv = labels_yaml.items_to_labels(pick, compose=True)
     lines = [f"{k}={v}" for k, v in conv["labels"].items()]
     return {"labels": conv["labels"], "text": _yaml({"labels": lines}), "warnings": conv["warnings"], "router": body.router}
+
+
+def _compose_services(ctx: NodeCtx, d: str, e: dict) -> list[dict]:
+    """Les services de TOUS les fichiers compose du dossier : [{file, service, containerName, image, ports, hasTraefik}]."""
+    out = []
+    for f in e.get("composeFiles") or []:
+        try:
+            txt = run(ctx, "p_read", {"dir": d, "rel": f})["content"]
+        except HTTPException:
+            continue
+        for sv in project_ops.parse_compose(txt)["services"]:
+            out.append({"file": f, "service": sv["name"], "containerName": sv["containerName"], "image": sv["image"], "ports": sv["ports"], "hasTraefik": bool(sv["traefik"])})
+    return out
+
+
+def _edit_compose_service(ctx: NodeCtx, d: str, e: dict, service: str, edit) -> list[str]:
+    """Applique `edit(texte) -> (nouveau texte, clés)` au fichier compose qui définit ce service (l'historique du fichier est gardé par p_write)."""
+    f = next((x["file"] for x in _compose_services(ctx, d, e) if x["service"] == service and x["hasTraefik"]), None) or \
+        next((x["file"] for x in _compose_services(ctx, d, e) if x["service"] == service), None)
+    if not f:
+        raise HTTPException(404, "Service introuvable dans les fichiers compose")
+    cur = run(ctx, "p_read", {"dir": d, "rel": f})
+    try:
+        new, keys = edit(cur["content"])
+    except ValueError as ex:
+        raise HTTPException(422, str(ex))
+    if new != cur["content"]:
+        run(ctx, "p_write", {"dir": d, "rel": f, "content": new, "baseHash": cur["hash"]})
+    return keys
+
+
+def _pick_site(ctx: NodeCtx, router: str) -> tuple[list[dict], dict]:
+    ctx.need("sites.view")
+    from .traefik_scope import scope_items
+    items = scope_items(ctx.p, _traefik_items(ctx))
+    http = [i for i in items if i["proto"] == "http"]
+    r = next((i for i in http if i["kind"] == "routers" and i["name"] == router), None)
+    if not r:
+        raise HTTPException(404, "Site introuvable")
+    pick = [r]
+    sname = str((r["spec"] or {}).get("service") or "").split("@")[0]
+    svc = next((i for i in http if i["kind"] == "services" and i["name"] == sname), None)
+    if svc:
+        pick.append(svc)
+    pick += [i for i in http if i["kind"] == "middlewares" and i["name"] in {str(m).split("@")[0] for m in (r["spec"] or {}).get("middlewares") or []}]
+    return pick, r
+
+
+class SitePlanBody(BaseModel):
+    router: str = Field(max_length=200)
+
+
+@router.post("/{pid}/labels/from-site/plan")
+def labels_from_site_plan(pid: int, body: SitePlanBody, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
+    """Un site de Traefik (fichier) → des labels dans CE projet : quels labels, dans quel fichier compose et quel service (suggestion argumentée), et ce qu'il faut savoir avant."""
+    d, row = _dir(ctx, pid)
+    pick, r = _pick_site(ctx, body.router)
+    conv = labels_yaml.items_to_labels(pick, compose=True)
+    labels = {"traefik.enable": "true", **conv["labels"]}
+    urls = [str(sv.get("url")) for i in pick if i["kind"] == "services" for sv in ((i["spec"] or {}).get("loadBalancer") or {}).get("servers") or [] if isinstance(sv, dict) and sv.get("url")]
+    e = run(ctx, "p_project", {"dir": d})
+    ranked = labels_yaml.suggest_service(urls, _compose_services(ctx, d, e))
+    checks = []
+    if "traefik" in (ctx.node.get("modules") or []):
+        prov = docker_link.traefik_provider(ctx, run(ctx, "d_containers", {"all": True})["containers"])
+        if prov["docker"] is False:
+            checks.append({"level": "err", "text": "Traefik ne lit pas les labels Docker (--providers.docker=true absent de sa configuration) : ces labels ne serviraient à rien tant qu'il n'est pas activé."})
+        if prov["found"] and prov["networks"]:
+            checks.append({"level": "info", "text": f"Le service doit être sur un réseau que Traefik partage ({', '.join(prov['networks'])}) : sinon Traefik ne pourra pas l'atteindre."})
+    if not urls:
+        checks.append({"level": "warn", "text": "Ce site n'a pas d'adresse de cible lisible : choisissez le service vous-même."})
+    elif not any(c["score"] for c in ranked):
+        checks.append({"level": "warn", "text": f"Aucun service de ce projet ne ressemble à la cible du site ({urls[0]}) : choisissez le bon, ou publiez depuis le conteneur."})
+    return {"router": body.router, "rule": str((r["spec"] or {}).get("rule") or ""), "targets": urls, "labels": labels, "warnings": conv["warnings"], "checks": checks,
+            "candidates": ranked[:60], "suggest": ranked[0] if ranked and ranked[0]["score"] else None, "files": e.get("composeFiles") or [],
+            "canApply": ctx.can("projects.edit"), "canDisable": ctx.can("sites.toggle")}
+
+
+class SiteApplyBody(BaseModel):
+    router: str = Field(max_length=200)
+    service: str = Field(max_length=100)
+    file: str = Field(max_length=200)           # fichier compose choisi (parmi ceux du dossier)
+    overwrite: bool = False                     # remplace un label déjà présent avec une autre valeur
+    disableSite: bool = False                   # met le site en pause dans Traefik (sinon il serait servi deux fois) ; réversible
+
+
+@router.post("/{pid}/labels/from-site/apply")
+def labels_from_site_apply(pid: int, body: SiteApplyBody, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    d, row = _dir(ctx, pid)
+    if body.disableSite:
+        ctx.need("sites.toggle")
+    pick, r = _pick_site(ctx, body.router)
+    e = run(ctx, "p_project", {"dir": d})
+    if body.file not in (e.get("composeFiles") or []):
+        raise HTTPException(422, "Ce fichier compose n'est pas dans le projet")
+    conv = labels_yaml.items_to_labels(pick, compose=True)
+    labels = {"traefik.enable": "true", **conv["labels"]}
+    cur = run(ctx, "p_read", {"dir": d, "rel": body.file})
+    try:
+        new, added, conflicts = labels_yaml.set_service_labels(cur["content"], body.service, labels, body.overwrite)
+    except ValueError as ex:
+        raise HTTPException(422, str(ex))
+    if conflicts and not body.overwrite:
+        raise HTTPException(409, "Ces labels existent déjà avec une autre valeur : " + ", ".join(conflicts[:6]) + (" …" if len(conflicts) > 6 else "") + ". Cochez « remplacer » pour les écraser.")
+    if new != cur["content"]:
+        run(ctx, "p_write", {"dir": d, "rel": body.file, "content": new, "baseHash": cur["hash"]})
+    disabled = False
+    if body.disableSite:
+        try:
+            ctx.store.toggle([r["id"]], [], False)
+            disabled = True
+        except StoreError as ex:
+            raise HTTPException(ex.status, f"Labels écrits, mais le site n'a pas pu être mis en pause : {ex}")
+    ctx.audit("project.labels.from_site", f"{row['name']}/{body.service} ({body.file}) ← {body.router}{' ; site en pause' if disabled else ''}")
+    return {"file": body.file, "service": body.service, "added": added, "disabled": disabled, "note": "Redéployez le projet pour que les labels soient pris en compte."}
 
 
 # ------------------------------------------------------------------ Git
