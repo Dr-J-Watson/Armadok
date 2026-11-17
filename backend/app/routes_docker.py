@@ -274,3 +274,28 @@ def traefik_status(ctx: NodeCtx = Depends(docker_cap("docker.view"))):
     lst = run(ctx, "d_containers", {"all": True})["containers"]
     prov = docker_link.traefik_provider(ctx, lst)
     return {"found": bool(prov.get("found")), "local": ctx.node["kind"] != "remote"}
+
+
+@router.get("/via-sites")
+def via_sites(ctx: NodeCtx = Depends(docker_cap("docker.view"))):
+    """Pour un nœud dont les sites passent par le Traefik d'un autre nœud : les sites de ce Traefik qui mènent aux conteneurs de CETTE machine."""
+    via = ctx.node.get("traefikVia") or ""
+    lst = run(ctx, "d_containers", {"all": True})["containers"]
+    links = docker_link.link_containers(ctx, lst)
+    agg: dict[tuple, dict] = {}
+    for c in lst:
+        for lk in links.get(c["name"], []):
+            if not lk.get("node"):
+                continue
+            key = (lk["node"]["id"], lk["router"])
+            a = agg.setdefault(key, {"router": lk["router"], "rule": lk.get("rule") or "", "hosts": lk.get("hosts") or [], "sure": bool(lk.get("sure")), "provider": lk.get("provider") or "",
+                                     "node": lk["node"], "containers": []})
+            a["sure"] = a["sure"] or bool(lk.get("sure"))
+            if c["name"] not in a["containers"]:
+                a["containers"].append(c["name"])
+    other = None
+    if via:
+        from .nodes import accessible_nodes
+        o = next((x for x in accessible_nodes(ctx.p) if x.id == via), None)
+        other = {"id": via, "name": o.node["name"], "canCreate": o.can("sites.create")} if o else None
+    return {"via": other, "addresses": docker_link.machine_addresses(ctx.node), "sites": sorted(agg.values(), key=lambda a: (not a["sure"], a["router"]))}
