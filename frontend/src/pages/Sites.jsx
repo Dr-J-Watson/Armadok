@@ -20,11 +20,35 @@ import { humanOf, techName } from '../traefik/human.js'
 // Les routeurs que l'interface écrit elle-même (bannissements : zz-webui-…) ne sont pas des sites
 export const isManaged = (i) => /(^|\/)zz-webui-/.test(i.file || '')
 
+// Où mène un routeur : le nœud dont l'adresse est visée par l'URL de son service (ou le nœud du Traefik lui-même pour un conteneur du même réseau,
+// localhost…). Une adresse qu'aucun nœud ne porte (une box, un NAS…) est « externe » : on affiche l'adresse.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', 'host.docker.internal'])
+function targetOf(r, all, nodes) {
+  const svc = String(r.spec?.service || '').split('@')[0]
+  const prov = String(r.spec?.service || '').split('@')[1] || r.provider
+  if (!svc) return null
+  const s = all.find((x) => x.kind === 'services' && x.name === svc && x._node.id === r._node.id && (!prov || !x.provider || x.provider === prov)) || all.find((x) => x.kind === 'services' && x.name === svc && x._node.id === r._node.id)
+  const urls = (s?.spec?.loadBalancer?.servers || []).map((v) => v?.url).filter(Boolean)
+  if (!urls.length) return prov === 'docker' ? { node: r._node } : null
+  const out = []
+  for (const u of urls) {
+    let host = ''
+    try { host = new URL(u).hostname.toLowerCase().replace(/^\[|\]$/g, '') } catch { continue }
+    const hit = nodes.find((n) => [...(n.addresses || []), ...(n.addressesSeen || [])].some((a) => a.toLowerCase() === host))
+    if (hit) out.push({ node: hit })
+    else if (LOCAL_HOSTS.has(host) || !/[.:]/.test(host)) out.push({ node: r._node })
+    else out.push({ host })
+  }
+  const seen = new Set()
+  return out.filter((t) => { const k = t.node ? 'n' + t.node.id : 'h' + t.host; if (seen.has(k)) return false; seen.add(k); return true })
+}
+
 // Affichage complet : les sites de TOUS les nœuds qui portent Traefik. Cliquer sur une ligne ouvre le site sur son nœud (les actions restent propres à un nœud).
 function AllSites() {
-  const { node, setNode, setFullView } = useNode(); const go = useGo(); const [q, setQ] = useState('')
+  const { node, nodes, setNode, setFullView } = useNode(); const go = useGo(); const [q, setQ] = useState('')
   const list = useNodeList('overview', '/traefik/overview', (d) => d.items, { eligible: (n) => (n.modules || []).includes('traefik') && (n.caps || []).includes('sites.view') })
-  const rows = list.rows.filter((i) => i.kind === 'routers' && i.proto === 'http' && !isManaged(i) && (!q || (i.name + (i.spec?.rule || '') + i._node.name).toLowerCase().includes(q.toLowerCase())))
+  const rows = list.rows.filter((i) => i.kind === 'routers' && i.proto === 'http' && !isManaged(i)).map((i) => ({ ...i, _targets: targetOf(i, list.rows, nodes) }))
+    .filter((i) => !q || (i.name + (i.spec?.rule || '') + i._node.name + (i._targets || []).map((t) => t.node?.name || t.host).join(' ')).toLowerCase().includes(q.toLowerCase()))
     .sort((a, b) => a._node.name.localeCompare(b._node.name) || a.name.localeCompare(b.name))
   const open = (r) => { setFullView(false); if (r._node.id !== node.id) setNode(r._node.id); go(`/sites?open=${encodeURIComponent(r.name)}`) }
   if (list.isLoading) return <Loading />
@@ -34,9 +58,10 @@ function AllSites() {
       {list.errors.map((e) => <div key={e.node.id} className="banner warn">« {e.node.name} » ne répond pas : {e.error.message}</div>)}
       <div className="row" style={{ marginBottom: 10 }}><SearchBox value={q} onChange={setQ} placeholder="Rechercher un site, une règle, un nœud…" /></div>
       {rows.length === 0 ? <div className="card"><Empty><Globe size={28} /><div>Aucun site.</div></Empty></div> : (
-        <div className="card flush"><table className="t"><thead><tr><th>Nœud</th><th>Site</th><th>Règle</th><th>État</th></tr></thead><tbody>
+        <div className="card flush"><table className="t"><thead><tr><th title="Le nœud dont le Traefik porte ce site">Traefik</th><th>Site</th><th>Règle</th><th title="Le nœud (ou l'adresse) vers lequel le site mène">Mène vers</th><th>État</th></tr></thead><tbody>
           {rows.map((r) => <tr key={r._node.id + ':' + r.id} style={{ cursor: 'pointer' }} onClick={() => open(r)}>
             <td><NodeChip node={r._node} /></td><td><b>{r.name}</b></td><td className="mono small" style={{ wordBreak: 'break-all' }}>{r.spec?.rule}</td>
+            <td>{!r._targets ? <span className="muted">—</span> : r._targets.map((t) => t.node ? <NodeChip key={t.node.id} node={t.node} /> : <span key={t.host} className="small mono muted" title="Aucun de vos nœuds n'a cette adresse (box, autre machine…)">{t.host}</span>)}</td>
             <td>{r.disabled ? <Badge kind="warn">en pause</Badge> : <Badge kind="ok">actif</Badge>}</td></tr>)}</tbody></table></div>)}
     </>
   )
