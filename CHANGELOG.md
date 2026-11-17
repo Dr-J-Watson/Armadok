@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.4.0...v1.4.1) (2026-11-17)
+
+
+### Corrections
+
+* relancer depuis l'interface le projet qui contient Armadok lui-même (worker ou hub) ne laisse plus le conteneur arrêté — la commande compose est confiée à un conteneur auxiliaire éphémère ; le worker s'arrête tout de suite sur SIGTERM au lieu d'attendre 10 s ([753a919](https://github.com/Dr-J-Watson/Armadok/commit/753a91974794a6fe85cac813cda8ca91c5f61493))
+
 ## [1.4.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.3.0...v1.4.0) (2026-11-17)
 
 
