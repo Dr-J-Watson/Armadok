@@ -8,6 +8,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -16,6 +17,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
+from . import docker_api as dapi
 from . import gitssh
 from .config import settings
 from .traefik_store import StoreError
@@ -560,6 +562,105 @@ def _spawn(d: Path, argv: list[str], label: str, action: str, env: dict | None =
     return {"job": jid, "label": label}
 
 
+# ------------------------------------------------------------------ un projet qui contient Armadok lui-même
+# « docker compose up/down/restart » lancé PAR le conteneur d'Armadok (hub ou worker) sur SON PROPRE projet s'arrête au milieu : Docker stoppe ce conteneur,
+# la commande meurt avec lui, et le nouveau conteneur reste « Created », jamais démarré. La commande est donc confiée à un conteneur auxiliaire éphémère,
+# qui survit au redémarrage et termine le travail.
+SELF_ACTIONS = ("up", "recreate", "down", "stop", "start", "restart")
+
+
+def _self_container() -> dict | None:
+    """Le conteneur qui exécute ce processus (son nom d'hôte est son identifiant), ou None hors Docker."""
+    h = socket.gethostname()
+    if not re.fullmatch(r"[0-9a-f]{12,64}", h):
+        return None
+    try:
+        return dapi.request("GET", f"/containers/{h}/json")
+    except Exception:  # noqa: BLE001 - pas de socket Docker, conteneur introuvable : on se comporte comme avant
+        return None
+
+
+def _touches_self(d: Path) -> dict | None:
+    me = _self_container()
+    wd = (((me or {}).get("Config") or {}).get("Labels") or {}).get("com.docker.compose.project.working_dir")
+    return me if me and wd and os.path.normpath(wd) == os.path.normpath(str(d)) else None
+
+
+def _sweep_helpers() -> None:
+    """Retire les conteneurs auxiliaires terminés (ceux dont le lanceur a disparu avant de pouvoir le faire)."""
+    try:
+        old = dapi.request("GET", "/containers/json", {"all": 1, "filters": json.dumps({"label": ["armadok.helper=compose"], "status": ["exited", "created", "dead"]})}) or []
+        for c in old:
+            dapi.request("DELETE", f"/containers/{c['Id']}", {"force": 1})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_helper_job(job: dict, cid: str) -> None:
+    def add(line: str) -> None:
+        if len(job["lines"]) < MAX_JOB_LINES:
+            job["lines"].append(line[:2000])
+    seen = 0
+    started = time.time()
+    try:
+        dapi.request("POST", f"/containers/{cid}/start")
+        while True:
+            time.sleep(1)
+            try:
+                text = "".join(t for _, t in dapi.demux(dapi.request("GET", f"/containers/{cid}/logs", {"stdout": 1, "stderr": 1}, raw=True) or b""))
+                info = dapi.request("GET", f"/containers/{cid}/json") or {}
+            except dapi.DockerError:
+                break
+            lines = text.splitlines()
+            for line in lines[seen:]:
+                add(line)
+            seen = len(lines)
+            st = info.get("State") or {}
+            if not st.get("Running"):
+                job["code"] = st.get("ExitCode", 0)
+                break
+            if time.time() - started > JOB_TIMEOUT:
+                job["code"] = 124
+                add("Délai dépassé")
+                break
+    except dapi.DockerError as e:
+        add(f"Impossible de lancer la commande : {e}")
+        job["code"] = 127
+    try:
+        dapi.request("DELETE", f"/containers/{cid}", {"force": 1})
+    except dapi.DockerError:
+        pass
+    job["ended"], job["done"] = time.time(), True
+
+
+def _spawn_detached(me: dict, d: Path, argv: list[str], label: str, action: str) -> dict:
+    with _jobs_lock:
+        if any(j["dir"] == str(d) and not j["done"] for j in _jobs.values()):
+            raise StoreError("Une commande est déjà en cours sur ce projet : attendez qu'elle se termine", 409)
+        jid = secrets.token_hex(6)
+        job = {"id": jid, "dir": str(d), "label": label, "action": action, "lines": [], "done": False, "code": None, "started": time.time(), "ended": None, "env": None}
+        _jobs[jid] = job
+    _sweep_helpers()
+    sock = next((m.get("Source") for m in me.get("Mounts") or [] if m.get("Destination") == settings.docker_socket), None) or settings.docker_socket
+    groups = sorted({str(g) for g in os.getgroups()} | {str(g) for g in (me.get("HostConfig") or {}).get("GroupAdd") or []})
+    body = {
+        "Image": (me.get("Config") or {}).get("Image") or me.get("Image"), "Entrypoint": [argv[0]], "Cmd": argv[1:], "WorkingDir": str(d), "User": f"{os.getuid()}:{os.getgid()}",
+        "Env": ["HOME=/tmp", "DOCKER_CONFIG=/tmp/.docker", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROGRESS=plain", "COMPOSE_ANSI=never", "NO_COLOR=1"],
+        "Labels": {"armadok.helper": "compose"}, "NetworkDisabled": True,
+        "HostConfig": {"Binds": [f"{sock}:/var/run/docker.sock", f"{d}:{d}:ro"], "GroupAdd": groups, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"], "NetworkMode": "none",
+                       "ReadonlyRootfs": True, "Tmpfs": {"/tmp": "rw,size=64m"}, "Memory": 256 * 1024 * 1024, "PidsLimit": 128}}
+    try:
+        cid = (dapi.request("POST", "/containers/create", {"name": f"armadok-helper-{jid}"}, body=body) or {}).get("Id")
+    except dapi.DockerError as e:
+        job["done"], job["code"], job["ended"] = True, 127, time.time()
+        job["lines"].append(f"Impossible de lancer la commande : {e}")
+        return {"job": jid, "label": label}
+    job["lines"].append("Ce projet contient Armadok lui-même : la commande est lancée par un conteneur auxiliaire, pour qu'elle survive au redémarrage.")
+    job["lines"].append("L'interface (ou le worker) va redémarrer quelques secondes : la page se reconnecte toute seule.")
+    threading.Thread(target=_run_helper_job, args=(job, cid), name=f"helper-{jid}", daemon=True).start()
+    return {"job": jid, "label": label}
+
+
 def p_compose(a: dict) -> dict:
     d = safe_dir(a.get("dir"))
     action = str(a.get("action"))
@@ -585,6 +686,10 @@ def p_compose(a: dict) -> dict:
     fargs = [x for n in files for x in ("-f", str(d / n))]
     argv = [_cli(), "compose", "--project-directory", str(d), *fargs, *args, *svcs]
     label = " ".join(["compose", *(["-f " + " -f ".join(files)] if len(files) > 1 else []), *args, *svcs])
+    if action in SELF_ACTIONS:
+        me = _touches_self(d)
+        if me:
+            return _spawn_detached(me, d, argv, label, action)
     return _spawn(d, argv, label, action)
 
 

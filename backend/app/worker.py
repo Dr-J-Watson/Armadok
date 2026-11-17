@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import random
+import signal
 import sys
 import time
 import urllib.error
@@ -373,6 +374,8 @@ def main() -> None:
     if "traefik" in worker_modules():
         log(f"journal d'accès : {'lu et envoyé au hub (' + settings.access_log + ')' if worker_log.available() else 'non branché (TRAEFIK_ACCESS_LOG absent ou illisible) : pas de statistiques de visiteurs pour ce nœud'}")
     log(f"nœud {ident.node_id} · modules {','.join(worker_modules())} · dossier {settings.dynamic_dir} · hub {hub}")
+    # PID 1 d'un conteneur ignore SIGTERM sans gestionnaire : « docker restart » attendait 10 s puis tuait le worker. On s'arrête tout de suite, proprement.
+    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
     try:
         asyncio.run(serve(hub, ident, store, api_url))
     except KeyboardInterrupt:

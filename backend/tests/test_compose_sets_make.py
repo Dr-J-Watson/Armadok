@@ -107,3 +107,41 @@ def test_make_run_only_accepts_targets_of_the_file(pj, monkeypatch):
         with pytest.raises(StoreError):
             project_ops.p_exec_make_run({"dir": str(d), "target": bad})
     (d / "Makefile").unlink()
+
+
+def test_compose_on_the_project_that_contains_armadok_runs_in_a_helper_container(pj, monkeypatch):
+    """Lancé par le conteneur d'Armadok sur SON projet, `compose up` mourait avec lui (nouveau conteneur « Created », jamais démarré) : un conteneur auxiliaire le fait."""
+    d = pj["base"] / "site"
+    calls, spawned = [], []
+
+    def fake(method, path, params=None, body=None, **k):
+        calls.append((method, path, body))
+        if path == "/containers/create":
+            return {"Id": "cafe" * 16}
+        if path.endswith("/json") and "cafe" in path:
+            return {"State": {"Running": False, "ExitCode": 0}}
+        if path.endswith("/logs"):
+            return b""
+        return [] if path == "/containers/json" else {}
+
+    me = {"Id": "a" * 64, "Image": "sha256:abc", "Config": {"Image": "armadok:1", "Labels": {"com.docker.compose.project.working_dir": str(d)}},
+          "Mounts": [{"Destination": project_ops.settings.docker_socket, "Source": "/var/run/docker.sock"}], "HostConfig": {"GroupAdd": ["984"]}}
+    monkeypatch.setattr(project_ops.dapi, "request", fake)
+    monkeypatch.setattr(project_ops, "_self_container", lambda: me)
+    monkeypatch.setattr(project_ops, "_cli", lambda: "/usr/local/bin/docker")
+    monkeypatch.setattr(project_ops, "_spawn", lambda *a, **k: spawned.append(a) or {"job": "x", "label": "x"})
+    r = project_ops.p_compose({"dir": str(d), "action": "up"})
+    assert not spawned and r["job"]                                              # pas de sous-processus : un conteneur auxiliaire
+    create = next(b for m, p, b in calls if p == "/containers/create")
+    assert create["Entrypoint"] == ["/usr/local/bin/docker"] and create["Cmd"][:3] == ["compose", "--project-directory", str(d)] and create["Cmd"][-3:] == ["up", "-d", "--remove-orphans"]
+    hc = create["HostConfig"]
+    assert hc["NetworkMode"] == "none" and hc["CapDrop"] == ["ALL"] and "/var/run/docker.sock:/var/run/docker.sock" in hc["Binds"] and f"{d}:{d}:ro" in hc["Binds"]
+    assert create["Labels"] == {"armadok.helper": "compose"} and "984" in hc["GroupAdd"] and create["Image"] == "armadok:1"
+    # une action qui ne touche pas aux conteneurs (pull) reste un simple sous-processus
+    project_ops.p_compose({"dir": str(d), "action": "pull"})
+    assert spawned
+    # un autre projet : comportement habituel
+    monkeypatch.setattr(project_ops, "_self_container", lambda: {**me, "Config": {"Image": "x", "Labels": {"com.docker.compose.project.working_dir": "/ailleurs"}}})
+    spawned.clear()
+    project_ops.p_compose({"dir": str(d), "action": "up"})
+    assert spawned
