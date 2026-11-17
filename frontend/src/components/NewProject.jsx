@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Boxes, FileCode2, FolderPlus, GitFork, Globe, Lock, Rocket, Trash2, Wand2 } from 'lucide-react'
 import { api } from '../api.js'
-import { Badge, Btn, Field, Loading, Modal, useUi } from './ui.jsx'
+import { Badge, Btn, Field, Loading, Modal, Seg, useUi } from './ui.jsx'
 import ConvertContainer from './ConvertContainer.jsx'
 import { useGo } from '../lib/nav.js'
 
@@ -100,5 +100,43 @@ function FromTemplate({ onBack, onClose }) {
           <div className="muted small">Pour ajouter un modèle : ouvrez un projet existant → « Enregistrer comme modèle ».</div>
         </div>)}
     </Modal>
+  )
+}
+
+
+// Gérer ses modèles : renommer, décrire, rendre privé ou partagé, supprimer.
+export function ManageTemplates({ onClose }) {
+  const { toast, confirm } = useUi(); const qc = useQueryClient()
+  const list = useQuery({ queryKey: ['templates'], queryFn: () => api.get('/projects/templates/list') })
+  const mine = (list.data?.templates || []).filter((t) => t.mine)
+  const refresh = () => qc.invalidateQueries({ queryKey: ['templates'] })
+  const upd = useMutation({ mutationFn: ({ id, ...b }) => api.put(`/projects/templates/${id}`, b), onSuccess: () => { refresh(); toast('Modèle mis à jour') }, onError: (e) => toast(e.message, 'err') })
+  const del = useMutation({ mutationFn: (id) => api.del(`/projects/templates/${id}`), onSuccess: () => { refresh(); toast('Modèle supprimé') }, onError: (e) => toast(e.message, 'err') })
+  return (
+    <Modal wide title="Mes modèles de projet" onClose={onClose} footer={<Btn onClick={onClose}>Fermer</Btn>}>
+      {list.isLoading ? <Loading /> : mine.length === 0 ? <div className="muted">Aucun modèle pour l'instant. « Enregistrer comme modèle » en crée un à partir de ce projet.</div> : (
+        <div className="col" style={{ gap: 10 }}>{mine.map((t) => <TemplateRow key={t.id} t={t} busy={upd.isPending || del.isPending}
+          onSave={(b) => upd.mutate({ id: t.id, ...b })}
+          onShare={async (shared) => { if (!shared || await confirm({ title: `Partager « ${t.name} » ?`, message: 'Tous ceux qui peuvent créer des projets le verront et pourront l\'utiliser. Les valeurs des secrets du .env sont vidées pour de bon.', confirmLabel: 'Partager', danger: false })) upd.mutate({ id: t.id, shared }) }}
+          onDelete={async () => { if (await confirm({ title: `Supprimer le modèle « ${t.name} » ?`, message: 'Les projets déjà créés ne changent pas.', confirmLabel: 'Supprimer' })) del.mutate(t.id) }} />)}</div>)}
+    </Modal>
+  )
+}
+
+function TemplateRow({ t, busy, onSave, onShare, onDelete }) {
+  const [name, setName] = useState(t.name); const [desc, setDesc] = useState(t.description)
+  const dirty = name.trim() !== t.name || desc.trim() !== t.description
+  return (
+    <div className="card col" style={{ gap: 8 }}>
+      <div className="row wrap" style={{ gap: 8 }}>
+        <input className="input grow" style={{ minWidth: 160 }} value={name} maxLength={80} onChange={(e) => setName(e.target.value)} aria-label="Nom du modèle" />
+        <Seg value={t.shared ? 'shared' : 'private'} onChange={(v) => onShare(v === 'shared')} options={[{ id: 'private', label: <><Lock size={12} /> Privé</>, hint: 'Vous seul le voyez' }, { id: 'shared', label: <><Globe size={12} /> Partagé</>, hint: 'Visible de ceux qui créent des projets ; secrets vidés' }]} />
+        <Btn small kind="danger" title="Supprimer ce modèle (les projets déjà créés ne changent pas)" onClick={onDelete}><Trash2 size={13} /></Btn>
+      </div>
+      <input className="input" value={desc} maxLength={300} onChange={(e) => setDesc(e.target.value)} placeholder="Description (facultatif)" aria-label="Description" />
+      <div className="row wrap" style={{ gap: 6 }}><span className="muted small">{t.files.length} fichier{t.files.length > 1 ? 's' : ''} :</span>{t.files.slice(0, 8).map((f) => <Badge key={f}>{f}</Badge>)}{t.files.length > 8 && <span className="muted small">+{t.files.length - 8}</span>}
+        <span className="muted small">· {t.vars.length} variable{t.vars.length > 1 ? 's' : ''}{t.createdBy ? ` · par ${t.createdBy}` : ''}</span>
+        {dirty && <Btn small kind="primary" className="right" busy={busy} disabled={!name.trim()} onClick={() => onSave({ name: name.trim(), description: desc.trim() })}>Enregistrer</Btn>}</div>
+    </div>
   )
 }

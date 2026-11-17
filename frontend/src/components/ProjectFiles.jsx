@@ -14,7 +14,7 @@ const parentOf = (p) => p.split('/').slice(0, -1).join('/')
 const validRel = (r) => !!r && !r.startsWith('/') && !r.endsWith('/') && !r.includes('\\') && !r.split('/').some((x) => ['', '.', '..', '.git'].includes(x)) && r.length <= 300 && r.split('/').length <= 8
 
 // Liste plate -> arbre (dossiers d'abord, puis les fichiers clés — compose, .env, Makefile, Dockerfile — puis le reste par nom).
-function buildRows(entries, collapsed) {
+export function buildRows(entries, collapsed) {
   const root = { children: new Map() }
   for (const e of entries) {
     const parts = e.path.split('/'); let cur = root
@@ -37,7 +37,7 @@ function buildRows(entries, collapsed) {
   return out
 }
 
-function FileMark({ path, size = 15 }) {
+export function FileMark({ path, size = 15 }) {
   const k = kindOf(path)
   return <k.Icon size={size} className={'fk fk-' + k.id} aria-hidden />
 }

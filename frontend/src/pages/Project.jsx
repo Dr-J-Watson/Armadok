@@ -10,6 +10,7 @@ import ProjectFiles from '../components/ProjectFiles.jsx'
 import ProjectGit from '../components/ProjectGit.jsx'
 import ProjectMake from '../components/ProjectMake.jsx'
 import SaveTemplate from '../components/SaveTemplate.jsx'
+import { ManageTemplates } from '../components/NewProject.jsx'
 import ProjectImages from '../components/ProjectImages.jsx'
 import { publishNow } from '../lib/publish.js'
 import ContainerModal, { AccessPanel } from '../components/ContainerModal.jsx'
@@ -28,7 +29,7 @@ const svcDot = (x) => (x.done ? SVC_DOT.absent : SVC_DOT[x.state])
 export default function Project() {
   const { id } = useParams(); const go = useGo(); const { hasModule, can, node, setNode } = useNode(); const [params, setParams] = useSearchParams()
   const q = useQuery({ queryKey: ['project', id], queryFn: () => api.get(`/projects/${id}`), refetchInterval: 10000 })
-  const stat = useProjectStats(); const { toast, confirm } = useUi(); const qc = useQueryClient(); const [kill, setKill] = useState(false); const [slot, setSlot] = useState(null); const [tpl, setTpl] = useState(false)
+  const stat = useProjectStats(); const { toast, confirm } = useUi(); const qc = useQueryClient(); const [kill, setKill] = useState(false); const [slot, setSlot] = useState(null); const [tpl, setTpl] = useState(false); const [mtpl, setMtpl] = useState(false)
   const unimport = useMutation({ mutationFn: () => api.del(`/projects/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet retiré de la liste'); go('/projects') }, onError: (e) => toast(e.message, 'err') })
   const tab0 = params.get('tab') || 'overview'; const open = params.get('c')
   const set = (patch) => { const n = new URLSearchParams(params); Object.entries(patch).forEach(([k, v]) => (v == null ? n.delete(k) : n.set(k, v))); setParams(n, { replace: true }) }
@@ -62,7 +63,7 @@ export default function Project() {
                 <td className="actions">{x.containers[0] && <Btn title="Ouvrir la fiche du conteneur" small kind="ghost" onClick={() => set({ c: x.containers[0].name, ct: null })}>Détails</Btn>}{x.containers[0] && p.perms.logs && <Btn small kind="ghost" onClick={() => set({ tab: 'logs', lc: x.containers[0].name })}>Logs</Btn>}</td></tr>)}
               {p.services.length === 0 && <tr><td colSpan={5} className="muted">{p.error || 'Aucun service dans ce fichier compose.'}</td></tr>}</tbody></table></div>
             {(p.perms.import || p.perms.delete) && <div className="card flush">
-              {p.perms.import && p.perms.files && <div className="row" style={{ padding: '12px 16px', gap: 10 }}><span className="muted small grow">Garder ce projet comme modèle (fichiers choisis, secrets vidés) pour en créer d'autres en quelques clics.</span><Btn small title="Enregistre les fichiers de ce projet comme modèle réutilisable" onClick={() => setTpl(true)}><FileStack size={13} /> Enregistrer comme modèle</Btn></div>}
+              {p.perms.import && p.perms.files && <div className="row" style={{ padding: '12px 16px', gap: 10 }}><span className="muted small grow">Garder ce projet comme modèle (fichiers choisis, secrets vidés) pour en créer d'autres en quelques clics.</span><span className="row" style={{ gap: 6 }}><Btn small title="Enregistre les fichiers de ce projet comme modèle réutilisable" onClick={() => setTpl(true)}><FileStack size={13} /> Enregistrer comme modèle</Btn><Btn small kind="ghost" title="Renommer, décrire, partager ou supprimer vos modèles" onClick={() => setMtpl(true)}>Gérer les modèles</Btn></span></div>}
               {p.perms.import && <div className="row" style={{ padding: '12px 16px', gap: 10, borderTop: p.perms.files ? '1px solid var(--border)' : undefined }}><span className="muted small grow">Retirer le projet de la liste ne touche ni aux fichiers ni aux conteneurs.</span><Btn small onClick={async () => { if (await confirm({ title: 'Retirer ce projet de la liste ?', message: 'Les fichiers et les conteneurs ne sont pas touchés ; vous pourrez le réimporter.', confirmLabel: 'Retirer', danger: false })) unimport.mutate() }}><Undo2 size={13} /> Désimporter</Btn></div>}
               {p.perms.delete && <div className="row" style={{ padding: '12px 16px', gap: 10, borderTop: '1px solid var(--border)' }}><span className="muted small grow">Supprimer le projet efface son dossier et tous ses fichiers du disque. Irréversible.</span><Btn title="Efface le dossier du projet et tous ses fichiers du disque (irréversible)" small kind="danger" onClick={() => setKill(true)}><Trash2 size={13} /> Supprimer le projet et ses fichiers</Btn></div>}</div>}
           </div>)}
@@ -93,6 +94,7 @@ export default function Project() {
               <div className="row wrap" style={{ gap: 6 }}>{l.hosts.map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer"><ExternalLink size={11} /> {h}</a>)}</div>
             </div>))}</div>)}
       </div>
+      {mtpl && <ManageTemplates onClose={() => setMtpl(false)} />}
       {tpl && <SaveTemplate id={id} name={p.name} onClose={() => setTpl(false)} />}
       {kill && <Destroy id={id} name={p.path.split('/').pop()} onClose={() => setKill(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); go('/projects') }} />}
       {open && <ContainerModal key={open} name={open} tab={params.get('ct') || undefined} onClose={() => set({ c: null, ct: null })} />}
