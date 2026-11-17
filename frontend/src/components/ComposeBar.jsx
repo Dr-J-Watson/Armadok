@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, Download, FileStack, MoreHorizontal, Play, Power, RotateCw, Square } from 'lucide-react'
 import { api } from '../api.js'
@@ -8,7 +9,7 @@ import { stripAnsi } from '../lib/docker.js'
 const TITLES = { make: 'Commande du Makefile', 'git-pull': 'Récupération des changements (git pull)', 'git-fetch': 'Interrogation du dépôt', 'git-checkout': 'Changement de version', 'git-clone': 'Clonage du dépôt', up: 'Déploiement', recreate: 'Recréation', down: 'Arrêt et suppression des conteneurs', restart: 'Redémarrage', stop: 'Arrêt', start: 'Démarrage', pull: 'Téléchargement des images', build: 'Construction des images', config: 'Configuration résolue', ps: 'État' }
 
 // Boutons d'action d'un projet (docker compose) ; chaque commande s'exécute en tâche de fond et sa sortie s'affiche en direct.
-export default function ComposeBar({ id, perms, onDone, compose }) {
+export default function ComposeBar({ id, perms, onDone, compose, chipSlot }) {
   const { confirm, toast } = useUi(); const [job, setJob] = useState(null); const [menu, setMenu] = useState(false); const [pick, setPick] = useState(null); const qc = useQueryClient()
   const run = useMutation({ mutationFn: (body) => api.post(`/projects/${id}/compose`, body), onSuccess: (r, v) => { setMenu(false); setJob({ ...r, action: v.action }) }, onError: (e) => toast(e.message, 'err') })
   if (!perms.deploy) return null
@@ -18,14 +19,16 @@ export default function ComposeBar({ id, perms, onDone, compose }) {
     run.mutate(body)
   }
   const ask = async (title, message, body, label) => { if (await confirm({ title, message, confirmLabel: label })) go(body) }
-  return (
-    <div className="compose-bar">
-      {compose && compose.candidates.length > 0 && (
+  const chipEl = compose && compose.candidates.length > 0 ? (
         <button type="button" className="compose-files" onClick={() => setPick({})} title="Les fichiers compose utilisés pour lancer ce projet. Cliquez pour les choisir (par exemple le principal + un override).">
           <FileStack size={13} /> <span className="muted">Fichiers :</span> <b className="mono">{compose.effective.join(' + ')}</b>
           <span className="muted small">{compose.choice.length ? '(choisis)' : compose.candidates.length > 1 ? '(automatique)' : ''}</span>
           {compose.last.length > 0 && compose.last.join('+') !== compose.effective.join('+') && <Badge kind="warn" title="Ce projet a été lancé avec d'autres fichiers : arrêt et redémarrage reprennent ceux du dernier lancement, sauf choix explicite.">lancé avec {compose.last.join(' + ')}</Badge>}
-        </button>)}
+        </button>) : null
+  return (
+    <div className="compose-bar">
+      {chipEl && !chipSlot && chipEl}
+      {chipEl && chipSlot && createPortal(chipEl, chipSlot)}
       <div className="row wrap" style={{ gap: 6, position: 'relative' }}>
         <Btn kind="primary" busy={run.isPending} onClick={() => go({ action: 'up' })} title="docker compose up -d : crée ou met à jour les conteneurs d'après les fichiers"><Play size={14} /> Déployer</Btn>
         <Btn title="Redémarre les conteneurs du projet (sans recréer ni changer leur configuration)" busy={run.isPending} onClick={() => go({ action: 'restart' })}><RotateCw size={14} /> Redémarrer</Btn>
