@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.2.0...v1.3.0) (2026-11-17)
+
+
+### Nouveautés
+
+* un nœud qui publie ses sites via un autre Traefik hérite de ses domaines (liste en lecture seule) et de ses réglages (points d'entrée, résolveurs, adresse DNS affichés dans « Ce nœud ») ([c206dbe](https://github.com/Dr-J-Watson/Armadok/commit/c206dbe5d2a66a487a3b0ec85d32bbef3b15a407))
+* un nœud sans Traefik dont les sites passent par un autre Traefik a sa catégorie « Sites » dans le menu (les sites de ce Traefik qui mènent à ses conteneurs, ouverture sur le bon nœud, nouveau site) ([0c6db78](https://github.com/Dr-J-Watson/Armadok/commit/0c6db780ce3039d81f2a5f9e04500f3e49db0e45))
+
 ## [1.2.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.1.0...v1.2.0) (2026-11-17)
 
 
