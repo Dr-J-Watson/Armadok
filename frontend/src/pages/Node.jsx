@@ -87,7 +87,7 @@ function MfaPolicy({ node, role, user, onSaved }) {
 
 // ------------------------------------------------------------------ réglages
 function General({ node, user, onSaved }) {
-  const { toast } = useUi(); const qc = useQueryClient(); const { nodes } = useNode()
+  const { toast } = useUi(); const qc = useQueryClient(); const { nodes } = useNode(); const viaNode = node.traefikVia ? nodes.find((n) => n.id === node.traefikVia) : null
   const init = { name: node.name, description: node.description, entrypoints: node.entrypoints, certResolvers: node.certResolvers, dnsTarget: node.dnsTarget, apiUrl: node.apiUrl || '', addresses: node.addresses || [], traefikVia: node.traefikVia || '' }
   const [f, setF] = useState(init); const set = (k, v) => setF({ ...f, [k]: v })
   const dirty = JSON.stringify(f) !== JSON.stringify(init)
@@ -103,11 +103,21 @@ function General({ node, user, onSaved }) {
         <Field label="Nom du nœud" help="Affiché dans le sélecteur en haut du menu. Vous pouvez le renommer à tout moment."><input className="input" value={f.name} maxLength={60} onChange={(e) => set('name', e.target.value)} /></Field>
         <Field label="Description" help="Facultatif : à quoi sert cette instance (ex : « Serveur maison », « Production »)."><input className="input" value={f.description} maxLength={200} onChange={(e) => set('description', e.target.value)} /></Field>
       </div>
+      {viaNode && !(node.modules || []).includes('traefik') ? (
+        <div className="card col">
+          <div className="row"><h3>Traefik</h3><Info>Ce nœud n'a pas de Traefik : ses sites passent par celui de « {viaNode.name} ». Les points d'entrée, résolveurs de certificats et l'adresse DNS viennent de lui (ils se règlent dans ses propres réglages).</Info></div>
+          <div className="muted small">Publié par <b>{viaNode.name}</b></div>
+          <Field label="Points d'entrée"><div className="row wrap" style={{ gap: 4 }}>{(viaNode.entrypoints || []).map((e) => <Badge key={e}>{e}</Badge>)}{!(viaNode.entrypoints || []).length && <span className="muted small">—</span>}</div></Field>
+          <Field label="Résolveurs de certificats"><div className="row wrap" style={{ gap: 4 }}>{(viaNode.certResolvers || []).map((e) => <Badge key={e}>{e}</Badge>)}{!(viaNode.certResolvers || []).length && <span className="muted small">—</span>}</div></Field>
+          <Field label="Adresse cible DNS par défaut"><code>{viaNode.dnsTarget || '—'}</code></Field>
+        </div>
+      ) : (
       <div className="card col">
-        <div className="row"><h3>Traefik</h3><Info>Valeurs proposées dans les formulaires de site. Elles doivent correspondre à la configuration de Traefik lui-même.</Info></div>
-        <Field label="Points d'entrée (entryPoints)" help="Proposés lors de la création d'un site. Appuyez sur Entrée pour ajouter. Ex : web, websecure."><Chips value={f.entrypoints} onChange={(v) => set('entrypoints', v)} placeholder="web, websecure…" /></Field>
-        <Field label="Résolveurs de certificats" help="Noms définis dans la configuration de Traefik (certificatesResolvers). Ex : letsencrypt."><Chips value={f.certResolvers} onChange={(v) => set('certResolvers', v)} placeholder="letsencrypt…" /></Field>
-      </div>
+          <div className="row"><h3>Traefik</h3><Info>Valeurs proposées dans les formulaires de site. Elles doivent correspondre à la configuration de Traefik lui-même.</Info></div>
+          <Field label="Points d'entrée (entryPoints)" help="Proposés lors de la création d'un site. Appuyez sur Entrée pour ajouter. Ex : web, websecure."><Chips value={f.entrypoints} onChange={(v) => set('entrypoints', v)} placeholder="web, websecure…" /></Field>
+          <Field label="Résolveurs de certificats" help="Noms définis dans la configuration de Traefik (certificatesResolvers). Ex : letsencrypt."><Chips value={f.certResolvers} onChange={(v) => set('certResolvers', v)} placeholder="letsencrypt…" /></Field>
+        </div>
+      )}
       {node.modules?.includes('docker') && <div className="card col">
         <div className="row"><h3>Docker</h3><Info>Ce nœud gère Docker. Ses adresses servent à relier ses conteneurs au Traefik d'un AUTRE nœud.</Info></div>
         <Field label="Adresses de cette machine" help="Les IP ou noms par lesquels les autres nœuds la joignent (réseau local, VPN, DNS). Quand le Traefik d'un autre nœud vise « adresse:port » et que ce conteneur publie ce port, le lien est trouvé tout seul : on le voit dans la fiche du conteneur, avec les statistiques d'accès. Sans le nom ni le port : « 10.0.0.5 », « srv-a.lan »."><Chips value={f.addresses} onChange={(v) => set('addresses', v)} placeholder="10.0.0.5, srv-a.lan…" /></Field>
@@ -116,10 +126,12 @@ function General({ node, user, onSaved }) {
           <select className="input" value={f.traefikVia} onChange={(e) => set('traefikVia', e.target.value)}><option value="">— aucun (ce nœud a son Traefik, ou pas de site) —</option>{nodes.filter((n) => n.id !== node.id && (n.modules || []).includes('traefik')).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</select></Field>
         {f.traefikVia && f.addresses.length === 0 && !(node.addressesSeen || []).length && <div className="banner warn" style={{ margin: 0 }}>Aucune adresse n'est connue pour cette machine : sans elle, le lien automatique ne peut pas se faire. Ajoutez-la ci-dessus (ou <code>WORKER_ADDRESSES</code> dans le worker).</div>}
       </div>}
+      {!(viaNode && !(node.modules || []).includes('traefik')) && (
       <div className="card col">
-        <div className="row"><h3>DNS</h3><Info>Réglage utilisé quand vous créez un enregistrement DNS pour un site de ce nœud.</Info></div>
-        <Field label="Adresse cible par défaut" help="IP publique (ou nom) proposée quand un sous-domaine n'a pas encore d'enregistrement : en général l'IP de la machine qui héberge ce Traefik."><input className="input mono" value={f.dnsTarget} onChange={(e) => set('dnsTarget', e.target.value.trim())} placeholder="203.0.113.10" /></Field>
-      </div>
+          <div className="row"><h3>DNS</h3><Info>Réglage utilisé quand vous créez un enregistrement DNS pour un site de ce nœud.</Info></div>
+          <Field label="Adresse cible par défaut" help="IP publique (ou nom) proposée quand un sous-domaine n'a pas encore d'enregistrement : en général l'IP de la machine qui héberge ce Traefik."><input className="input mono" value={f.dnsTarget} onChange={(e) => set('dnsTarget', e.target.value.trim())} placeholder="203.0.113.10" /></Field>
+        </div>
+      )}
       <div className="card col">
         <div className="row"><h3>Connexion</h3><Info>Comment cette interface atteint le Traefik de ce nœud : un dossier de fichiers, et éventuellement son API pour le statut en direct.</Info></div>
         {node.kind === 'local' && node.directory && (
@@ -255,13 +267,14 @@ function Domains({ node, user, onChange }) {
   const unlink = async (d) => { if (await confirm({ title: `Retirer ${d.name} de ce nœud ?`, message: 'Le domaine reste intact chez OVH et sur ses autres nœuds ; il disparaît seulement d\'ici (et les sites de ce nœud qui l\'utilisent ne seront plus gérables pour les éditeurs).', confirmLabel: 'Retirer du nœud' })) api.del(`/nodes/${node.id}/domains/${d.name}`).then(() => { refresh(); toast('Domaine retiré du nœud') }).catch((e) => toast(e.message, 'err')) }
   return (
     <div className="col gap-lg">
-      <div className="row"><div className="muted grow">Les domaines disponibles sur ce nœud. Un même domaine peut être rattaché à plusieurs nœuds : les clés OVH ne sont jamais copiées.</div>
+      <div className="row"><div className="muted grow">Les domaines disponibles sur ce nœud. Un même domaine peut être rattaché à plusieurs nœuds : les clés OVH ne sont jamais copiées.{node.traefikVia && ' Ce nœud publie ses sites avec un autre Traefik : les domaines de ce Traefik apparaissent aussi ici, en lecture seule.'}</div>
         {user.canAddDomains && <Btn kind="primary" onClick={() => setImp(true)}><Download size={15} /> Importer un domaine</Btn>}</div>
       {list.isLoading ? <Loading /> : !list.data.length ? <div className="card"><Empty><Globe size={30} /><div>Aucun domaine sur ce nœud.{user.canAddDomains ? <><br />Importez un de vos domaines, ou ajoutez un compte dans « Comptes OVH ».</> : <><br />Un administrateur de la plateforme ou le propriétaire d'un domaine peut le rattacher ici.</>}</div></Empty></div> : (
         <div className="card flush">{list.data.map((d) => (
           <div className="link-card" key={d.name}><Globe size={16} className="muted" /><b className="grow">{d.name}</b>
             {d.system ? <Badge kind="accent">compte principal</Badge> : <Badge>{d.mine ? 'à vous' : d.owner}</Badge>}
-            <Btn small kind="ghost" icon title="Retirer de ce nœud" onClick={() => unlink(d)}><Trash2 size={14} /></Btn></div>))}</div>)}
+            {d.inherited ? <Badge kind="info" title={`Ce nœud publie ses sites avec le Traefik de « ${d.inherited} » : ses domaines valent aussi ici. Ils se gèrent depuis ce nœud.`}>via {d.inherited}</Badge>
+              : <Btn small kind="ghost" icon title="Retirer de ce nœud" onClick={() => unlink(d)}><Trash2 size={14} /></Btn>}</div>))}</div>)}
       {imp && <ImportDomains node={node} onClose={() => setImp(false)} onDone={refresh} />}
     </div>
   )

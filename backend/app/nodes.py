@@ -308,7 +308,7 @@ def list_nodes(p: Principal = Depends(current_user)):
     for c in accessible_nodes(p):
         info = {k: v for k, v in c.node.items() if k != "apiUrl" or c.can("node.settings")}
         out.append({**info, "role": c.role, "roleLabel": _role_label(c), "caps": sorted(c.caps), "mfaBlocked": sorted(c.p.mfa_blocked), "emergency": c.emergency,
-                    "domains": db.one("SELECT COUNT(*) c FROM node_domains WHERE node_id=?", (c.id,))["c"],
+                    "domains": db.one("SELECT COUNT(DISTINCT domain_id) c FROM node_domains WHERE node_id=? OR node_id=?", (c.id, c.node.get("traefikVia") or c.id))["c"],
                     "members": db.one("SELECT COUNT(*) c FROM node_members WHERE node_id=?", (c.id,))["c"]})
     return out
 
@@ -709,11 +709,18 @@ def _managed_domains(p: Principal) -> list:
 @router.get("/nodes/{nid}/domains")
 def node_domains(ctx: NodeCtx = Depends(_path_cap("node.domains.view"))):
     """Domaines rattachés à ce nœud, avec leur gestionnaire (les clés OVH restent chez lui)."""
-    return [{"name": r["name"], "account": r["label"], "owner": r["username"], "system": r["owner_id"] is None,
-             "mine": r["owner_id"] == ctx.p.id}
-            for r in db.rows("SELECT d.name, c.label, c.owner_id, u.username FROM node_domains nd JOIN domains d ON d.id=nd.domain_id "
-                             "JOIN credentials c ON c.id=d.credential_id LEFT JOIN users u ON u.id=c.owner_id "
-                             "WHERE nd.node_id=? ORDER BY d.name", (ctx.id,))]
+    sql = ("SELECT d.name, c.label, c.owner_id, u.username FROM node_domains nd JOIN domains d ON d.id=nd.domain_id "
+           "JOIN credentials c ON c.id=d.credential_id LEFT JOIN users u ON u.id=c.owner_id WHERE nd.node_id=? ORDER BY d.name")
+    out = [{"name": r["name"], "account": r["label"], "owner": r["username"], "system": r["owner_id"] is None, "mine": r["owner_id"] == ctx.p.id, "inherited": ""}
+           for r in db.rows(sql, (ctx.id,))]
+    via = ctx.node.get("traefikVia") or ""
+    if via:   # les sites de ce nœud passent par le Traefik d'un autre : ses domaines valent aussi ici (en lecture seule, gérés depuis ce nœud)
+        other = next((c for c in accessible_nodes(ctx.p) if c.id == via and c.can("node.domains.view")), None)
+        have = {d["name"] for d in out}
+        if other:
+            out += [{"name": r["name"], "account": r["label"], "owner": r["username"], "system": r["owner_id"] is None, "mine": r["owner_id"] == ctx.p.id, "inherited": other.node["name"]}
+                    for r in db.rows(sql, (via,)) if r["name"] not in have]
+    return out
 
 
 @router.get("/nodes/{nid}/importable")

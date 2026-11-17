@@ -30,3 +30,17 @@ def test_traefik_via_setting_is_validated(pj):
     assert client.put(f"/api/nodes/{nid}", headers=h, json={"traefikVia": "inconnu"}).status_code == 422
     assert client.put(f"/api/nodes/{nid}", headers=h, json={"traefikVia": ""}).json()["traefikVia"] == ""     # on peut l'enlever
     db.run("DELETE FROM nodes WHERE id=?", (nid,))
+
+
+def test_domains_of_the_via_node_are_inherited_read_only(pj):
+    h = pj["h"]
+    main = next(n for n in client.get("/api/nodes", headers=h).json() if n["kind"] == "local")
+    nid = client.post("/api/nodes", headers=h, json={"name": "PC2"}).json()["id"]
+    mine = [d["name"] for d in client.get(f"/api/nodes/{main['id']}/domains", headers=h).json()]
+    assert client.get(f"/api/nodes/{nid}/domains", headers=h).json() == []
+    client.put(f"/api/nodes/{nid}", headers=h, json={"traefikVia": main["id"]})
+    inh = client.get(f"/api/nodes/{nid}/domains", headers=h).json()
+    assert sorted(d["name"] for d in inh) == sorted(mine) and all(d["inherited"] == main["name"] for d in inh)      # lecture seule, venant du Traefik choisi
+    client.put(f"/api/nodes/{nid}", headers=h, json={"traefikVia": ""})
+    assert client.get(f"/api/nodes/{nid}/domains", headers=h).json() == []
+    db.run("DELETE FROM nodes WHERE id=?", (nid,))
