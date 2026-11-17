@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.4.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.3.0...v1.4.0) (2026-11-17)
+
+
+### Nouveautés
+
+* « Affichage complet » dans le sélecteur de nœud — Docker (conteneurs, images, réseaux, volumes), Projets et Sites listent tous les nœuds à la fois avec une colonne « Nœud » ; un clic ouvre l'élément sur son nœud ([6309766](https://github.com/Dr-J-Watson/Armadok/commit/6309766f9ca5501a16fbf6be8261e3460020e6cd))
+* changer de nœud en restant sur la même page (fiches propres à un nœud : retour à la liste), raccourcis g puis 1-9 / n / p pour naviguer entre les nœuds, numéros dans le sélecteur, « Aller au nœud… » dans la recherche ([1079a6c](https://github.com/Dr-J-Watson/Armadok/commit/1079a6cfea2d7aaf2a398194f4b80d5a2adc79e6))
+* un nœud sans Traefik qui publie via un autre Traefik reprend toutes les pages Traefik de ce nœud (Sites, Middlewares, Traefik avancé, Surveillance) filtrées sur ses conteneurs, avec un bouton « Tout voir » ; tests : horodatages relatifs (une date figée sortait de la fenêtre de 7 jours) ([90b82d3](https://github.com/Dr-J-Watson/Armadok/commit/90b82d3a287645da952f27cb9a4227688d5e4d19))
+
 ## [1.3.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.2.0...v1.3.0) (2026-11-17)
 
 
