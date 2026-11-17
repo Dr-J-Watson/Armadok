@@ -6,6 +6,7 @@ import { useNode } from '../node.jsx'
 import { Badge, Btn, Copyable, Empty, Loading, Modal, Tabs, useUi } from './ui.jsx'
 import { LogViewer, NameConfirm } from './DockerBits.jsx'
 import { publishNow } from '../lib/publish.js'
+import ConvertContainer from './ConvertContainer.jsx'
 import TerminalModal from './TerminalModal.jsx'
 import { enc, fmtSize, portLabel, PROTECTED, stateOf } from '../lib/docker.js'
 import { ago, fmtNum } from '../lib/features.js'
@@ -17,7 +18,7 @@ const Row = ({ k, children }) => <div className="kv"><span className="muted">{k}
 // La fiche d'un conteneur : ce qu'il est (Aperçu), quelles règles Traefik mènent à lui (Traefik), qui y accède (Accès), ses journaux (Logs).
 export default function ContainerModal({ name, tab: first, onClose }) {
   const { toast, confirm } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode } = useNode()
-  const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [term, setTerm] = useState(false)
+  const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [term, setTerm] = useState(false); const [conv, setConv] = useState(false)
   const q = useQuery({ queryKey: ['docker-c', name], queryFn: () => api.get(`/docker/containers/${enc(name)}`), refetchInterval: 10000 })
   const refresh = () => { qc.invalidateQueries({ queryKey: ['docker-c'] }); qc.invalidateQueries({ queryKey: ['docker-list'] }); qc.invalidateQueries({ queryKey: ['docker-stats'] }) }
   const act = useMutation({
@@ -45,6 +46,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
       {c.canRemove && c.protected !== 'self' && <Btn title="Supprime ce conteneur (ses volumes ne sont retirés que si vous le demandez)" kind="danger" onClick={remove}><Trash2 size={14} /> Supprimer</Btn>}<Btn onClick={onClose}>Fermer</Btn></>}>
       <div className="col">
         <div className="muted small">{c.image}{c.project && <> · projet <b>{c.project}</b></>}{c.service && <> · service <b>{c.service}</b></>}</div>
+        {!c.project && c.protected !== 'self' && can('projects.import') && can('projects.edit') && can('projects.env') && <div className="banner info" style={{ margin: 0 }}><Boxes size={16} /><span className="grow">Ce conteneur ne vient d'aucun projet compose (lancé avec <code>docker run</code> ?). Armadok peut en tirer un <b>docker-compose.yml</b> et un <b>.env</b> pour le gérer comme un projet.</span><Btn small kind="primary" onClick={() => setConv(true)} title="Aperçu du compose et du .env avant toute création">Convertir en projet</Btn></div>}
         <Tabs tabs={tabs} value={tabs.some((t) => t.id === tab) ? tab : 'overview'} onChange={setTab} />
         {tab === 'overview' && (
           <div className="grid two">
@@ -84,6 +86,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
         {tab === 'access' && <AccessPanel access={c.access} linked={c.links.length > 0} go={go} />}
         {tab === 'logs' && <LogViewer name={c.name} />}
       </div>
+      {conv && <ConvertContainer container={c.name} onClose={() => { setConv(false); onClose() }} />}
       {term && <TerminalModal container={c.name} onClose={() => setTerm(false)} />}
       {ask && <NameConfirm name={c.name} what={{ stop: 'Arrêter', restart: 'Redémarrer', remove: 'Supprimer' }[ask.action]} onCancel={() => setAsk(null)}
         onConfirm={(v) => { const a = ask.action; setAsk(null); if (a === 'remove') del.mutate({ volumes: false, confirm: v }); else act.mutate({ action: a, confirm: v }) }} />}

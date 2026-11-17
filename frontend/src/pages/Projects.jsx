@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Download, EyeOff, FolderGit2, GitFork, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
+import { Download, EyeOff, Plus, FolderGit2, GitFork, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Loading, Modal, SearchBox, Seg, Tabs, useUi } from '../components/ui.jsx'
 import { JobOutput } from '../components/ComposeBar.jsx'
@@ -11,6 +11,7 @@ import { fmtNum } from '../lib/features.js'
 import { usePersist } from '../lib/persist.js'
 import { useGo } from '../lib/nav.js'
 import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
+import NewProject from '../components/NewProject.jsx'
 
 export const STATUS = { running: ['En marche', 'ok'], partial: ['Partiel', 'warn'], stopped: ['Arrêté', ''], absent: ['Non démarré', ''] }
 export const SVC_DOT = { running: 'var(--ok)', partial: 'var(--warn)', stopped: 'var(--muted)', absent: 'var(--border)' }
@@ -25,7 +26,7 @@ export default function Projects() {
   const go = useGo(); const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(''); const [view, setView] = usePersist('projects-view', 'cards'); const [sel, setSel] = useState([]); const [ask, setAsk] = useState(null); const [clone, setClone] = useState(false)
   const list = useQuery({ queryKey: ['projects'], queryFn: () => api.get('/projects'), refetchInterval: 20000 })
-  const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false)
+  const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false); const [newp, setNewp] = useState(false)
   const { toast } = useUi(); const qc = useQueryClient()
   const tab = ['managed', 'discovered', 'ignored'].includes(params.get('tab')) ? params.get('tab') : 'managed'
   const done = (r, verb) => { qc.invalidateQueries({ queryKey: ['projects'] }); setSel([]); setAsk(null); toast(r.done.length ? `${r.done.length} projet${r.done.length > 1 ? 's' : ''} ${verb}` : 'Rien à faire') }
@@ -40,8 +41,7 @@ export default function Projects() {
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <div className="grow"><h1 style={{ margin: 0 }}>Projets</h1><div className="muted">Les dossiers docker compose de ce nœud : leur état, leurs sites et leurs visiteurs.</div></div>
-        {offer.missing && d.canImport && !offer.show && <Btn title="Aucun Traefik n'est détecté sur cette machine : Armadok peut en créer un (projet compose prêt à démarrer)" onClick={() => setTsetup(true)}>Créer un projet Traefik</Btn>}
-        {d.canGit && <Btn title="Récupérer un dépôt Git (HTTPS ou SSH) dans un dossier de projets" onClick={() => setClone(true)}><GitFork size={14} /> Cloner un dépôt</Btn>}
+        {d.canImport && <Btn kind="primary" title="Créer un projet : vide, modèle de base, depuis un conteneur lancé à la main, depuis un dépôt Git…" onClick={() => setNewp(true)}><Plus size={14} /> Nouveau projet</Btn>}
       </div>
       <div className="row wrap" style={{ gap: 10, marginBottom: 14 }}>
         <Tabs value={tab} onChange={(t) => { setParams({ tab: t }); setSel([]) }} tabs={[{ id: 'managed', label: 'Gérés', count: d.managed.length }, { id: 'discovered', label: 'Découverts', count: d.discovered.length }, { id: 'ignored', label: 'Ignorés', count: d.ignored.length }]} />
@@ -62,6 +62,7 @@ export default function Projects() {
       {clone && <CloneModal onClose={() => setClone(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); setParams({ tab: 'discovered' }) }} />}
       {ask && <ImportModal paths={ask} onClose={() => setAsk(null)} onDone={(r) => done(r, 'importé(s)')} />}
       {tsetup && <TraefikSetup onClose={() => setTsetup(false)} />}
+      {newp && <NewProject onClose={() => setNewp(false)} onClone={() => setClone(true)} onTraefik={() => setTsetup(true)} traefikMissing={offer.missing} />}
     </>
   )
 }

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 
-from . import crypto, db, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops, worker_link
+from . import compose_convert, crypto, db, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops, worker_link
 from .config import settings
 from .nodes import NodeCtx, node_ctx
 from .routes_docker import run
@@ -674,6 +674,84 @@ def labels_from_site_apply(pid: int, body: SiteApplyBody, ctx: NodeCtx = Depends
             raise HTTPException(ex.status, f"Labels écrits, mais le site n'a pas pu être mis en pause : {ex}")
     ctx.audit("project.labels.from_site", f"{row['name']}/{body.service} ({body.file}) ← {body.router}{' ; site en pause' if disabled else ''}")
     return {"file": body.file, "service": body.service, "added": added, "disabled": disabled, "note": "Redéployez le projet pour que les labels soient pris en compte."}
+
+
+# ------------------------------------------------------------------ conteneur lancé à la main (docker run) → projet compose
+def _convertible(ctx: NodeCtx, name: str) -> tuple[dict, dict]:
+    ctx.need("projects.env")   # la conversion lit les VALEURS des variables d'environnement (elles vont dans un .env)
+    lst = run(ctx, "d_containers", {"all": True})["containers"]
+    c = next((x for x in lst if name in (x["name"], x["id"])), None)
+    if not c:
+        raise HTTPException(404, "Conteneur introuvable")
+    spec = run(ctx, "d_spec", {"id": c["fullId"]})
+    if spec.get("composeProject"):
+        raise HTTPException(409, f"Ce conteneur fait déjà partie du projet compose « {spec['composeProject']} »")
+    if spec.get("self"):
+        raise HTTPException(409, "C'est le conteneur d'Armadok lui-même : il se gère avec son propre docker-compose.yml")
+    return c, spec
+
+
+@router.get("/from-container/list")
+def convertible_list(ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Les conteneurs qui ne viennent d'aucun projet compose (lancés avec docker run, Portainer, etc.) : candidats à la conversion."""
+    lst = run(ctx, "d_containers", {"all": True})["containers"]
+    return {"containers": [{"name": c["name"], "image": c["image"], "state": c["state"], "status": c["status"], "ports": [p for p in c["ports"] if p["public"]][:4],
+                            "protected": "self" if c.get("self") else ("traefik" if c["name"] == settings.traefik_container else "")}
+                           for c in lst if not c["project"] and not c.get("self")],
+            "canConvert": ctx.can("projects.import") and ctx.can("projects.edit") and ctx.can("projects.env")}
+
+
+class FromContainerPreview(BaseModel):
+    container: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/from-container/preview")
+def from_container_preview(body: FromContainerPreview, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    c, spec = _convertible(ctx, body.container)
+    conv = compose_convert.convert(spec)
+    return {"container": c["name"], "image": spec["image"], "running": spec["running"], "name": compose_convert.service_name(c["name"]), "compose": conv["compose"],
+            "envKeys": conv["envKeys"], "warnings": conv["warnings"], "volumes": conv["volumes"], "networks": conv["networks"],
+            "protected": "traefik" if c["name"] == settings.traefik_container else "", "canReplace": ctx.can("projects.deploy") and ctx.can("docker.control")}
+
+
+class FromContainerBody(BaseModel):
+    container: str = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=61)      # dossier du nouveau projet
+    replace: bool = False                                # arrête l'ancien conteneur (renommé, gardé pour revenir en arrière) et déploie le projet
+    confirm: str = Field(default="", max_length=200)    # le nom du dossier, exigé pour remplacer le conteneur de Traefik
+
+
+@router.post("/from-container")
+def from_container(body: FromContainerBody, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Crée un projet (docker-compose.yml + .env) à partir d'un conteneur existant. Avec `replace`, l'ancien conteneur est arrêté et renommé (jamais supprimé)."""
+    ctx.need("projects.edit")
+    if body.replace:
+        ctx.need("projects.deploy")
+        ctx.need("docker.control")
+    c, spec = _convertible(ctx, body.container)
+    if body.replace and c["name"] == settings.traefik_container and body.confirm != body.name:
+        raise HTTPException(409, "C'est le conteneur de Traefik : le remplacer coupe l'accès à tous vos sites quelques secondes. Retapez le nom du dossier pour confirmer")
+    conv = compose_convert.convert(spec, project=compose_convert.service_name(body.name))
+    files = {"docker-compose.yml": conv["compose"]}
+    if conv["env"]:
+        files[".env"] = conv["env"]
+    made = run(ctx, "p_create", {"name": body.name, "files": files})
+    ctx.audit("project.from_container", f"{c['name']} → {made['name']}")
+    r = _mark(ctx, PathsBody(paths=[made["path"]], tags=""), "managed")
+    row = db.one("SELECT id FROM projects WHERE node_id=? AND path=?", (ctx.id, made["path"]))
+    out = {**made, **r, "id": row["id"] if row else None, "warnings": conv["warnings"], "envKeys": conv["envKeys"], "oldContainer": c["name"], "job": None}
+    if body.replace:
+        old = f"{c['name']}-avant-armadok"
+        try:
+            if spec["running"]:
+                run(ctx, "d_action", {"id": c["fullId"], "action": "stop"})
+            run(ctx, "d_rename", {"id": c["fullId"], "name": old})
+        except HTTPException as ex:
+            raise HTTPException(ex.status_code, f"Projet créé, mais l'ancien conteneur n'a pas pu être arrêté ou renommé : {ex.detail}")
+        out["oldContainer"] = old
+        out["job"] = run(ctx, "p_compose", {"dir": made["path"], "action": "up"})
+        ctx.audit("project.from_container.replace", f"{c['name']} → {old}, déploiement de {made['name']}")
+    return out
 
 
 # ------------------------------------------------------------------ Git

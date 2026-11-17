@@ -210,5 +210,64 @@ def d_exec_volread(a: dict) -> dict:
     return r
 
 
-OPS = {"d_image": d_image, "d_network": d_network, "d_network_create": d_network_create, "d_network_connect": d_network_connect,
+
+# ── conteneur « lancé à la main » → spec pour un projet compose ─────────────────────────────────────────────────────────────────
+def d_spec(a: dict) -> dict:
+    """Tout ce qu'il faut pour refaire ce conteneur dans un docker-compose.yml (compose_convert.convert) : la configuration du conteneur, débarrassée de ce que
+    l'image fournit d'elle-même. ATTENTION : contrairement à d_container, les VALEURS des variables d'environnement y figurent (elles vont dans un .env) :
+    l'appelant doit avoir le droit de lire les .env."""
+    i = api.request("GET", f"/containers/{ident(a.get('id'))}/json") or {}
+    cfg, hc, ns, st = i.get("Config") or {}, i.get("HostConfig") or {}, i.get("NetworkSettings") or {}, i.get("State") or {}
+    try:
+        img = api.request("GET", f"/images/{ident(i.get('Image') or '')}/json") or {}
+    except DockerError:
+        img = {}
+    icfg = img.get("Config") or {}
+    base_env = {e for e in icfg.get("Env") or []}
+    env = [e.split("=", 1) if "=" in e else [e, ""] for e in cfg.get("Env") or [] if e not in base_env]
+    base_labels = icfg.get("Labels") or {}
+    labels = {k: v for k, v in (cfg.get("Labels") or {}).items() if not k.startswith("com.docker.") and base_labels.get(k) != v}
+    ports = []
+    for key, binds in (hc.get("PortBindings") or {}).items():
+        cport, _, proto = key.partition("/")
+        for b in binds or []:
+            ports.append({"ip": b.get("HostIp") or "", "host": b.get("HostPort") or "", "container": cport, "proto": proto or "tcp"})
+    cid = i.get("Id") or ""
+    nets = {}
+    for n, v in (ns.get("Networks") or {}).items():
+        al = [x for x in (v.get("Aliases") or []) if x != cid[:12] and x != (i.get("Name") or "").lstrip("/") and x != cfg.get("Hostname")]
+        nets[n] = {"aliases": al, "ipv4": ((v.get("IPAMConfig") or {}).get("IPv4Address") or "")}
+    hcheck = cfg.get("Healthcheck")
+    if hcheck == icfg.get("Healthcheck"):
+        hcheck = None
+    rp = hc.get("RestartPolicy") or {}
+    return {
+        "name": (i.get("Name") or "").lstrip("/"), "image": cfg.get("Image") or "", "cmd": cfg.get("Cmd") or [], "entrypoint": cfg.get("Entrypoint") or [],
+        "imageCmd": icfg.get("Cmd") or [], "imageEntrypoint": icfg.get("Entrypoint") or [], "env": env, "labels": labels, "user": cfg.get("User") or "",
+        "workdir": cfg.get("WorkingDir") if cfg.get("WorkingDir") != icfg.get("WorkingDir") else "", "hostname": cfg.get("Hostname") if cfg.get("Hostname") not in (cid[:12], "") else "",
+        "domainname": cfg.get("Domainname") or "", "tty": bool(cfg.get("Tty")), "stdinOpen": bool(cfg.get("OpenStdin")), "stopSignal": cfg.get("StopSignal") or "",
+        "stopTimeout": cfg.get("StopTimeout") or 0, "restart": {"name": rp.get("Name") or "no", "max": rp.get("MaximumRetryCount") or 0}, "ports": ports,
+        "networkMode": hc.get("NetworkMode") if hc.get("NetworkMode") not in ("default", "bridge", "") else "",
+        "mounts": [{"type": m.get("Type"), "name": m.get("Name") or "", "source": m.get("Source") or "", "destination": m.get("Destination"), "rw": bool(m.get("RW"))} for m in i.get("Mounts") or []],
+        "tmpfs": sorted((hc.get("Tmpfs") or {}).keys()), "networks": nets, "privileged": bool(hc.get("Privileged")), "capAdd": hc.get("CapAdd") or [], "capDrop": hc.get("CapDrop") or [],
+        "devices": [f"{d.get('PathOnHost')}:{d.get('PathInContainer')}:{d.get('CgroupPermissions') or 'rwm'}" for d in hc.get("Devices") or []],
+        "extraHosts": hc.get("ExtraHosts") or [], "dns": hc.get("Dns") or [], "dnsSearch": hc.get("DnsSearch") or [], "securityOpt": hc.get("SecurityOpt") or [],
+        "groupAdd": hc.get("GroupAdd") or [], "sysctls": hc.get("Sysctls") or {}, "readOnly": bool(hc.get("ReadonlyRootfs")), "init": bool(hc.get("Init")),
+        "pid": hc.get("PidMode") or "", "ipc": hc.get("IpcMode") if hc.get("IpcMode") not in ("", "private", "shareable") else "", "shmSize": hc.get("ShmSize") if hc.get("ShmSize") not in (None, 67108864) else 0,
+        "memory": hc.get("Memory") or 0, "memoryReservation": hc.get("MemoryReservation") or 0, "nanoCpus": hc.get("NanoCpus") or 0, "pidsLimit": hc.get("PidsLimit") or 0,
+        "healthcheck": hcheck, "logConfig": hc.get("LogConfig") or {}, "ulimits": hc.get("Ulimits") or [], "links": hc.get("Links") or [], "volumesFrom": hc.get("VolumesFrom") or [],
+        "composeProject": (cfg.get("Labels") or {}).get("com.docker.compose.project", ""), "running": bool(st.get("Running")), "self": _is_self(cid), "fullId": cid,
+    }
+
+
+def d_rename(a: dict) -> dict:
+    """Renomme un conteneur (sert à garder l'ancien sous un autre nom quand un projet reprend le sien)."""
+    new = str(a.get("name") or "")
+    if not _NAME.match(new):
+        raise StoreError("Nom de conteneur invalide", 422)
+    api.request("POST", f"/containers/{ident(a.get('id'))}/rename", {"name": new})
+    return {"ok": True, "name": new}
+
+
+OPS = {"d_spec": d_spec, "d_rename": d_rename, "d_image": d_image, "d_network": d_network, "d_network_create": d_network_create, "d_network_connect": d_network_connect,
        "d_network_disconnect": d_network_disconnect, "d_volume": d_volume, "d_exec_volls": d_exec_volls, "d_exec_volread": d_exec_volread}
