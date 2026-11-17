@@ -677,10 +677,19 @@ def labels_from_site_apply(pid: int, body: SiteApplyBody, ctx: NodeCtx = Depends
 
 
 # ------------------------------------------------------------------ modèles de projet
-def _tpl_all() -> list[dict]:
-    out = [{**b, "createdBy": "", "mine": False} for b in project_templates.BUILTIN]
+def _tpl_visible(r, ctx: NodeCtx) -> bool:
+    return bool(r["shared"]) or r["created_by"] == ctx.p.username or ctx.p.is_admin
+
+
+def _tpl_row_out(r) -> dict:
+    return {"id": str(r["id"]), "name": r["name"], "description": r["description"], "builtin": False, "createdBy": r["created_by"], "files": _tpl_files(r), "shared": bool(r["shared"])}
+
+
+def _tpl_all(ctx: NodeCtx) -> list[dict]:
+    out = [{**b, "createdBy": "", "shared": True} for b in project_templates.BUILTIN]
     for r in db.rows("SELECT * FROM project_templates ORDER BY name COLLATE NOCASE"):
-        out.append({"id": str(r["id"]), "name": r["name"], "description": r["description"], "builtin": False, "createdBy": r["created_by"], "files": _tpl_files(r)})
+        if _tpl_visible(r, ctx):
+            out.append(_tpl_row_out(r))
     return out
 
 
@@ -691,20 +700,20 @@ def _tpl_files(row) -> dict:
         return {}
 
 
-def _tpl_get(tid: str) -> dict:
+def _tpl_get(tid: str, ctx: NodeCtx) -> dict:
     for t in project_templates.BUILTIN:
         if t["id"] == tid:
-            return {**t, "createdBy": ""}
+            return {**t, "createdBy": "", "shared": True}
     row = db.one("SELECT * FROM project_templates WHERE id=?", (tid,)) if tid.isdigit() else None
-    if not row:
+    if not row or not _tpl_visible(row, ctx):   # un modèle privé n'existe pas pour les autres
         raise HTTPException(404, "Modèle introuvable")
-    return {"id": str(row["id"]), "name": row["name"], "description": row["description"], "builtin": False, "createdBy": row["created_by"], "files": _tpl_files(row)}
+    return _tpl_row_out(row)
 
 
 def _tpl_out(t: dict, ctx: NodeCtx, full: bool = False) -> dict:
     files = t["files"]
     out = {"id": t["id"], "name": t["name"], "description": t["description"], "builtin": t["builtin"], "createdBy": t["createdBy"], "files": sorted(files),
-           "mine": (not t["builtin"]) and (t["createdBy"] == ctx.p.username or ctx.p.is_admin), "vars": project_templates.variables(files)}
+           "shared": t["shared"], "mine": (not t["builtin"]) and (t["createdBy"] == ctx.p.username or ctx.p.is_admin), "vars": project_templates.variables(files)}
     if full:
         out["preview"] = {k: v[:12000] for k, v in files.items() if k != ".env" and len(v) <= 200000}
     return out
@@ -712,12 +721,12 @@ def _tpl_out(t: dict, ctx: NodeCtx, full: bool = False) -> dict:
 
 @router.get("/templates/list")
 def templates_list(ctx: NodeCtx = Depends(proj_cap("projects.import"))):
-    return {"templates": [_tpl_out(t, ctx) for t in _tpl_all()], "canCreate": ctx.can("projects.import") and ctx.can("projects.edit")}
+    return {"templates": [_tpl_out(t, ctx) for t in _tpl_all(ctx)], "canCreate": ctx.can("projects.import") and ctx.can("projects.edit")}
 
 
 @router.get("/templates/{tid}")
 def template_detail(tid: str, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
-    return _tpl_out(_tpl_get(tid), ctx, full=True)
+    return _tpl_out(_tpl_get(tid, ctx), ctx, full=True)
 
 
 class TemplateSave(BaseModel):
@@ -726,7 +735,8 @@ class TemplateSave(BaseModel):
     projectId: int
     files: list[str] = Field(min_length=1, max_length=project_templates.MAX_FILES)
     keepSecrets: list[str] = Field(default_factory=list, max_length=100)   # clés du .env dont la valeur est gardée (les autres secrets sont vidés)
-    keepAllSecrets: bool = False                                          # garde la valeur de tous les secrets du .env (modèle strictement personnel)
+    keepAllSecrets: bool = False                                          # garde la valeur de tous les secrets du .env (modèle PRIVÉ seulement)
+    shared: bool = False                                                  # visible des autres (secrets toujours vidés) ; sinon privé
     blankKeys: list[str] = Field(default_factory=list, max_length=200)     # clés du .env à vider en plus
 
 
@@ -748,7 +758,7 @@ def template_save(body: TemplateSave, ctx: NodeCtx = Depends(proj_cap("projects.
             ctx.need("projects.files")
         files[rel] = run(ctx, "p_read", {"dir": d, "rel": rel})["content"]
     if ".env" in files:
-        keep = set(body.keepSecrets) | ({v["key"] for v in project_templates.parse_env(files[".env"])} if body.keepAllSecrets else set())
+        keep = set() if body.shared else set(body.keepSecrets) | ({v["key"] for v in project_templates.parse_env(files[".env"])} if body.keepAllSecrets else set())   # un modèle partagé ne garde jamais de secret
         blank = set(body.blankKeys) | {v["key"] for v in project_templates.parse_env(files[".env"]) if v["secret"] and v["key"] not in keep}
         files[".env"] = project_templates.blank_secrets(files[".env"], blank, secrets_too=False)
     for rel in list(files):                       # le nom du projet devient un paramètre du modèle
@@ -758,9 +768,9 @@ def template_save(body: TemplateSave, ctx: NodeCtx = Depends(proj_cap("projects.
     except ValueError as ex:
         raise HTTPException(422, str(ex))
     now = db.now()
-    cur = db.run("INSERT INTO project_templates(name,description,data,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?)",
-                 (name, body.description.strip(), crypto.enc(json.dumps(clean)), ctx.p.username, now, now))
-    ctx.audit("project.template.save", f"{name} ← {row['name']}")
+    cur = db.run("INSERT INTO project_templates(name,description,data,created_by,created_at,updated_at,shared) VALUES(?,?,?,?,?,?,?)",
+                 (name, body.description.strip(), crypto.enc(json.dumps(clean)), ctx.p.username, now, now, 1 if body.shared else 0))
+    ctx.audit("project.template.save", f"{name} ← {row['name']} ({'partagé' if body.shared else 'privé'})")
     tid = str(cur)
     return {"id": tid, "name": name, "files": sorted(clean)}
 
@@ -768,10 +778,11 @@ def template_save(body: TemplateSave, ctx: NodeCtx = Depends(proj_cap("projects.
 class TemplatePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=80)
     description: str | None = Field(default=None, max_length=300)
+    shared: bool | None = None   # privé ⇄ partagé ; en passant à « partagé », les valeurs des secrets sont vidées pour de bon
 
 
 def _tpl_owned(tid: str, ctx: NodeCtx) -> dict:
-    t = _tpl_get(tid)
+    t = _tpl_get(tid, ctx)
     if t["builtin"]:
         raise HTTPException(403, "Les modèles intégrés ne se modifient pas")
     if t["createdBy"] != ctx.p.username and not ctx.p.is_admin:
@@ -785,8 +796,17 @@ def template_update(tid: str, body: TemplatePatch, ctx: NodeCtx = Depends(proj_c
     name = (body.name if body.name is not None else t["name"]).strip()
     if name.lower() != t["name"].lower() and (db.one("SELECT 1 FROM project_templates WHERE lower(name)=lower(?)", (name,)) or any(b["name"].lower() == name.lower() for b in project_templates.BUILTIN)):
         raise HTTPException(409, "Un modèle porte déjà ce nom")
-    db.run("UPDATE project_templates SET name=?, description=?, updated_at=? WHERE id=?", (name, (body.description if body.description is not None else t["description"]).strip(), db.now(), int(tid)))
-    ctx.audit("project.template.update", name)
+    sets, args = ["name=?", "description=?", "updated_at=?"], [name, (body.description if body.description is not None else t["description"]).strip(), db.now()]
+    if body.shared is not None and body.shared != t["shared"]:
+        sets.append("shared=?")
+        args.append(1 if body.shared else 0)
+        if body.shared and ".env" in t["files"]:   # partager = ne plus garder aucun secret
+            files = dict(t["files"])
+            files[".env"] = project_templates.blank_secrets(files[".env"])
+            sets.append("data=?")
+            args.append(crypto.enc(json.dumps(files)))
+    db.run(f"UPDATE project_templates SET {', '.join(sets)} WHERE id=?", (*args, int(tid)))
+    ctx.audit("project.template.update", f"{name}{' → ' + ('partagé' if body.shared else 'privé') if body.shared is not None else ''}")
     return {"ok": True}
 
 
@@ -807,7 +827,7 @@ class TemplateCreate(BaseModel):
 def template_create(tid: str, body: TemplateCreate, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
     """Crée un projet neuf à partir d'un modèle : `{{name}}` remplacé, le .env rempli avec les valeurs saisies. Rien n'est démarré."""
     ctx.need("projects.edit")
-    t = _tpl_get(tid)
+    t = _tpl_get(tid, ctx)
     if ".env" in t["files"]:
         ctx.need("projects.env")
     known = {v["key"] for v in project_templates.variables(t["files"])}

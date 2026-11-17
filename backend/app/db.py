@@ -256,6 +256,7 @@ MIGRATIONS = {
               ("traefik_via", "TEXT NOT NULL DEFAULT ''")],   # nœud dont le Traefik publie les sites de CE nœud (ex. le hub, pour un worker « Docker seul »)   # adresses de la machine (IP, noms) : relier ses conteneurs au Traefik d'un AUTRE nœud   # ce que le nœud sait faire : traefik, docker (annoncé par le worker ; calculé pour le nœud local)
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
+    "project_templates": [("shared", "INTEGER NOT NULL DEFAULT 1")],   # 0 = privé (son auteur seulement), 1 = partagé ; les modèles d'avant ce réglage restent partagés
     "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''")],   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)
     "node_members": [("expires_at", "REAL")],  # accès temporaire : le membre perd son rôle à cette date
     "domain_access": [("types", "TEXT NOT NULL DEFAULT ''"), ("subs", "TEXT NOT NULL DEFAULT ''"), ("no_delete", "INTEGER NOT NULL DEFAULT 0"), ("expires_at", "REAL")],  # suppression douce : le nœud est invisible mais récupérable jusqu'à sa purge

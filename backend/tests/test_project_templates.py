@@ -1,7 +1,7 @@
 """Modèles de projet : variables du .env, enregistrement d'un projet comme modèle (secrets vidés), création à partir d'un modèle."""
 import pytest
 
-from app import db, project_templates as pt
+from app import crypto, db, project_templates as pt
 from test_projects import client, pid_of, pj  # noqa: F401  (fixture)
 
 
@@ -77,3 +77,33 @@ def test_create_from_builtin_and_save_a_project_as_template(pj):
     assert client.put("/api/projects/templates/builtin:base", headers=h, json={"description": "x"}).status_code == 403
     assert client.delete(f"/api/projects/templates/{tid}", headers=h).status_code == 200
     assert client.get(f"/api/projects/templates/{tid}", headers=h).status_code == 404
+
+
+def test_private_by_default_shared_blanks_secrets_and_visibility(pj):
+    h = pj["h"]
+    r = client.post("/api/projects/templates/builtin:minecraft/create", headers=h, json={"name": "mc-vis", "values": {"MC_RCON_PASSWORD": "motdepasse"}})
+    pid = r.json()["id"]
+    priv = client.post("/api/projects/templates", headers=h, json={"name": "Privé", "projectId": pid, "files": ["docker-compose.yml", ".env"], "keepAllSecrets": True})
+    assert priv.status_code == 200
+    tid = priv.json()["id"]
+    det = client.get(f"/api/projects/templates/{tid}", headers=h).json()
+    assert det["shared"] is False and next(v for v in det["vars"] if v["key"] == "MC_RCON_PASSWORD")["default"] == "motdepasse"      # privé : le secret gardé reste
+    assert client.put(f"/api/projects/templates/{tid}", headers=h, json={"shared": True}).status_code == 200                           # partager vide les secrets
+    det = client.get(f"/api/projects/templates/{tid}", headers=h).json()
+    assert det["shared"] is True and next(v for v in det["vars"] if v["key"] == "MC_RCON_PASSWORD")["default"] == ""
+    assert "motdepasse" not in crypto.dec(db.one("SELECT data FROM project_templates WHERE id=?", (tid,))["data"])
+    shared = client.post("/api/projects/templates", headers=h, json={"name": "Partagé", "projectId": pid, "files": [".env", "docker-compose.yml"], "shared": True, "keepAllSecrets": True}).json()
+    sd = client.get(f"/api/projects/templates/{shared['id']}", headers=h).json()
+    assert next(v for v in sd["vars"] if v["key"] == "MC_RCON_PASSWORD")["default"] == ""                                              # un modèle partagé ne garde jamais de secret
+    other = db.one("SELECT 1 FROM project_templates WHERE id=?", (tid,))
+    db.run("UPDATE project_templates SET created_by='quelquun-d-autre', shared=0 WHERE id=?", (tid,))
+    lst = [t["id"] for t in client.get("/api/projects/templates/list", headers=h).json()["templates"]]
+    assert tid in lst                                                                                                                   # l'administrateur voit tout
+    from app import routes_projects as rp
+    class P:  # un autre utilisateur, non administrateur
+        username, is_admin = "intrus", False
+    class C:
+        p = P()
+    assert not rp._tpl_visible(db.one("SELECT * FROM project_templates WHERE id=?", (tid,)), C())
+    assert rp._tpl_visible(db.one("SELECT * FROM project_templates WHERE id=?", (shared["id"],)), C())
+    assert other

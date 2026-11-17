@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, FileCode2, FolderPlus, GitFork, Rocket, Trash2, Wand2 } from 'lucide-react'
+import { Boxes, FileCode2, FolderPlus, GitFork, Globe, Lock, Rocket, Trash2, Wand2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Field, Loading, Modal, useUi } from './ui.jsx'
 import ConvertContainer from './ConvertContainer.jsx'
@@ -61,6 +61,7 @@ function FromTemplate({ onBack, onClose }) {
   const list = useQuery({ queryKey: ['templates'], queryFn: () => api.get('/projects/templates/list') })
   const [pick, setPick] = useState(null); const [name, setName] = useState(''); const [vals, setVals] = useState({})
   const det = useQuery({ queryKey: ['template', pick], queryFn: () => api.get(`/projects/templates/${encodeURIComponent(pick)}`), enabled: !!pick })
+  const vis = useMutation({ mutationFn: ({ id, shared }) => api.put(`/projects/templates/${id}`, { shared }), onSuccess: (_, v) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(v.shared ? 'Modèle partagé (valeurs des secrets vidées)' : 'Modèle privé') }, onError: (e) => toast(e.message, 'err') })
   const del = useMutation({ mutationFn: (id) => api.del(`/projects/templates/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['templates'] }); toast('Modèle supprimé') }, onError: (e) => toast(e.message, 'err') })
   const shown = (v) => (vals[v.key] ?? v.default).replace(/\{\{name\}\}/g, name)
   const create = useMutation({
@@ -90,7 +91,8 @@ function FromTemplate({ onBack, onClose }) {
         <div className="col" style={{ gap: 10 }}>
           <div className="np-grid">{list.data.templates.map((t) => (
             <div key={t.id} className="card np-card" role="button" tabIndex={0} onClick={() => setPick(t.id)} onKeyDown={(e) => e.key === 'Enter' && setPick(t.id)}>
-              <div className="row" style={{ gap: 8 }}><b className="grow">{t.name}</b>{t.builtin ? <Badge>intégré</Badge> : <Badge kind="info">{t.createdBy}</Badge>}
+              <div className="row" style={{ gap: 8 }}><b className="grow">{t.name}</b>{t.builtin ? <Badge>intégré</Badge> : <Badge kind={t.shared ? 'info' : 'warn'} title={t.shared ? `Partagé par ${t.createdBy}` : `Privé (${t.createdBy})`}>{t.shared ? <><Globe size={10} /> {t.createdBy}</> : <><Lock size={10} /> privé</>}</Badge>}
+                {t.mine && <Btn small kind="ghost" title={t.shared ? 'Le rendre privé : vous seul le voyez' : 'Le partager : visible de tous ceux qui créent des projets (les valeurs des secrets sont alors vidées)'} onClick={async (e) => { e.stopPropagation(); if (t.shared || await confirm({ title: `Partager « ${t.name} » ?`, message: 'Tous ceux qui peuvent créer des projets le verront et pourront l\'utiliser. Les valeurs des secrets du .env sont vidées pour de bon.', confirmLabel: 'Partager', danger: false })) vis.mutate({ id: t.id, shared: !t.shared }) }}>{t.shared ? <Lock size={13} /> : <Globe size={13} />}</Btn>}
                 {t.mine && <Btn small kind="ghost" title="Supprimer ce modèle" onClick={async (e) => { e.stopPropagation(); if (await confirm({ title: `Supprimer le modèle « ${t.name} » ?`, message: 'Les projets déjà créés ne changent pas.', confirmLabel: 'Supprimer' })) del.mutate(t.id) }}><Trash2 size={13} /></Btn>}</div>
               <div className="muted small">{t.description || `${t.files.length} fichier${t.files.length > 1 ? 's' : ''}`}</div>
               <div className="muted small">{t.vars.length} variable{t.vars.length > 1 ? 's' : ''} à régler</div>
