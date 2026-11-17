@@ -157,6 +157,37 @@ flowchart LR
 - [x] **Traefik v3** avec le *provider file* sur un dossier (`--providers.file.directory=...`), et un réseau Docker partagé avec lui.
 - [ ] Une clé API OVH *(facultatif au départ : voir [Clé API OVH](#-clé-api-ovh))*.
 
+### 🗂 Organisation recommandée
+
+Armadok est plus agréable (et plus sûr) quand vos fichiers suivent une organisation simple. Rien n'est obligatoire, mais c'est celle que l'installation guidée suppose.
+
+```text
+/opt/stacks/                       ← un seul dossier racine pour tous vos projets (PROJECT_ROOTS)
+├── traefik/                       ← UN PROJET = UN DOSSIER avec son docker-compose.yml et son .env
+│   ├── docker-compose.yml
+│   ├── .env
+│   └── traefik-dynamic/           ← la configuration dynamique de Traefik (file provider)
+├── armadok/                       ← Armadok lui-même : compose, .env, data/
+│   ├── docker-compose.yml
+│   ├── .env
+│   └── data/
+├── nextcloud/
+│   ├── docker-compose.yml
+│   ├── docker-compose.override.yml   ← pris avec le principal, comme « docker compose up »
+│   └── .env
+└── blog/
+    └── docker-compose.yml
+```
+
+- **Un dossier racine, un sous-dossier par projet.** Armadok y découvre les projets (un `docker-compose.yml` ou `compose.yaml` par dossier, jusqu'à 4 niveaux), les liste dans **Projets** et en édite les fichiers. Plusieurs racines sont possibles (`PROJECT_ROOTS=/opt/stacks,/srv/apps`, séparées par des virgules) ; elles sont montées **avec le même chemin** dans le conteneur d'Armadok.
+- **Traefik et Armadok sont chacun un projet**, comme les autres : ils se démarrent, se mettent à jour et se relisent depuis la même page. Ordre de première installation : le réseau Docker partagé (`docker network create proxy`), puis Traefik, puis Armadok, puis le reste.
+- **La configuration dynamique de Traefik** peut être un **dossier de la machine** *ou* un **volume Docker** : Armadok gère les deux.
+  - **Dossier physique** (recommandé pour commencer) : visible et modifiable à la main, facile à sauvegarder et à versionner avec Git ; il faut que l'UID:GID du conteneur puisse y écrire (l'installation le reprend du dossier).
+  - **Volume Docker** : indépendant du système de fichiers de la machine, pas de souci de droits sur l'hôte ; pratique pour un Traefik géré à distance. Il doit exister avant l'installation (`docker volume ls`).
+- **Les secrets dans le `.env`** du projet (droits 600), jamais dans le compose : un droit à part (« voir le `.env` ») protège ces fichiers dans Armadok.
+- **Les variantes** (`docker-compose.override.yml`, `docker-compose.prod.yml`…) restent dans le dossier du projet : Armadok propose avec lesquelles lancer.
+- **Un réseau partagé** (souvent `proxy`) relie Traefik aux applications publiées ; une application sans site public n'a pas besoin d'y être.
+
 ### 🪄 Installation guidée (recommandée)
 
 ```bash
@@ -165,29 +196,34 @@ curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
 make install
 ```
 
-Le script propose **quatre installations** :
+Le script propose **deux installations** :
 
 | Choix | Ce qu'il fait | Écrit |
 |---|---|---|
-| **1 · Le hub, avec Docker Compose** | l'interface complète (DNS, sites Traefik, utilisateurs, nœuds) | `docker-compose.yml`, `.env`, `data/` |
-| **2 · Le hub, dans Portainer** | la même interface, pour une pile Portainer ([détails](#-le-hub-dans-portainer)) | `docker-compose.stack.yml`, `stack.env` à copier-coller |
-| **3 · Un worker, avec Docker Compose** | relie le Traefik de **cette** machine à un hub déjà installé ailleurs (voir [Plusieurs Traefik](#-plusieurs-traefik)) | `docker-compose.yml`, `.env`, puis démarre et attend la connexion |
-| **4 · Un worker, dans Portainer** | la même chose pour un Traefik géré par Portainer | `docker-compose.stack.yml`, `stack.env` à copier-coller (rien n'est démarré) |
+| **1 · Le hub** | l'interface complète (DNS, sites Traefik, utilisateurs, nœuds, Docker) | `docker-compose.yml`, `.env`, `data/` |
+| **2 · Un worker** | relie le Traefik et/ou le Docker de **cette** machine à un hub déjà installé ailleurs (voir [Plusieurs Traefik](#-plusieurs-traefik)) | `docker-compose.yml`, `.env`, puis démarre et attend la connexion |
 
-Chaque question est **expliquée** avant d'être posée, les questions facultatives se passent avec <kbd>Entrée</kbd>, et un **récapitulatif** est montré avant d'écrire quoi que ce soit.
+Quelle que soit la façon de le lancer (`make install`, `make hub`, `make worker`), le script demande d'abord **comment continuer** :
+
+| Mode | Ce qui se passe |
+|---|---|
+| **1 · Interactif** *(défaut)* | des questions guidées avec des vérifications (dossiers, réseau, image), un récapitulatif, puis l'écriture des fichiers. Chaque question est **expliquée** avant d'être posée, les questions facultatives se passent avec <kbd>Entrée</kbd> |
+| **2 · Seulement le `.env` et le compose** | **aucune question** : valeurs par défaut, secrets générés, rien n'est démarré. Vous éditez ensuite les fichiers à votre rythme. Il liste à la fin ce qui reste à faire (mot de passe avec `make password`, réseau Docker, dossier de Traefik, adresse du hub et jeton pour un worker) |
+
+Pour passer la question : `make hub INTERACTIVE=0` (fichiers seulement) ou `INTERACTIVE=1` (interactif).
 
 > [!IMPORTANT]
-> **Pour le hub, l'assistant ne démarre rien.** Il écrit les fichiers, puis indique la commande à lancer (`docker compose up -d`, ou `make up`). Seul le worker avec Docker Compose démarre tout de suite : son jeton d'enrôlement expire en 15 minutes et ne sert qu'une fois. Pour un worker dans Portainer, déployez la pile aussitôt les fichiers collés.
+> **Pour le hub, l'assistant ne démarre rien.** Il écrit les fichiers, puis indique la commande à lancer (`docker compose up -d`, ou `make up`). Seul le worker en mode interactif démarre tout de suite : son jeton d'enrôlement expire après 15 minutes.
 
 <table>
 <tr>
-<th width="50%">🏠 Le hub — questions posées</th>
-<th width="50%">🔌 Un worker — déroulé</th>
+<th width="50%">🏠 Le hub — questions posées (mode interactif)</th>
+<th width="50%">🔌 Un worker — déroulé (mode interactif)</th>
 </tr>
 <tr valign="top">
 <td>
 
-1. **Traefik** : dossier de sa configuration dynamique, réseau Docker, points d'entrée et résolveur, dossier d'`acme.json` *(avec le socket Docker pour supprimer / renouveler, et son avertissement)*, journal d'accès, API de Traefik, Prometheus, IP par défaut *(tous facultatifs)* ;
+1. **Traefik** : dossier de sa configuration dynamique (ou volume Docker), réseau Docker, points d'entrée et résolveur, dossier d'`acme.json` *(avec le socket Docker pour supprimer / renouveler, et son avertissement)*, **gestion de Docker et dossier des projets**, journal d'accès, API de Traefik ;
 2. **compte administrateur** (mot de passe de 12 caractères minimum) ;
 3. **compte OVH** (facultatif) ;
 4. **adresse de l'interface** (facultatif : crée le routage `armadok.yml`) ;
@@ -198,7 +234,7 @@ Le `.env` produit est rangé par étiquette (obligatoire, une fois, toujours, Co
 </td>
 <td>
 
-1. votre Traefik (dossier ou volume Docker, certificats facultatifs, URL de l'API pour le statut en direct) ;
+1. ce que gère le worker (Traefik, Docker, les deux) puis votre Traefik (dossier ou volume Docker, certificats facultatifs, API pour le statut en direct) et/ou vos projets Docker ;
 2. l'adresse du hub ;
 3. le **jeton d'enrôlement**, demandé en dernier (il expire après **15 min** et ne sert **qu'une fois**) ;
 4. écriture des fichiers, démarrage, **attente de la connexion**, jeton retiré du `.env`.
@@ -208,69 +244,17 @@ Le `.env` produit est rangé par étiquette (obligatoire, une fois, toujours, Co
 </table>
 
 > [!TIP]
-> L'interface du hub (**Nouveau nœud**) affiche le jeton et une **commande déjà complète** (adresse et jeton inclus) : collée sur la machine distante, elle ne pose que les questions sur cette machine (Traefik, Docker, journal d'accès).
+> L'interface du hub (**Nouveau nœud**) affiche le jeton et une **commande déjà complète** (adresse et jeton inclus) : collée sur la machine distante, elle ne pose que les questions sur cette machine.
 
-Dans les deux cas, l'UID/GID du dossier Traefik est repris automatiquement pour que le conteneur puisse y écrire. Pour sauter une question, passez sa réponse en variable :
+L'UID/GID du dossier Traefik est repris automatiquement pour que le conteneur puisse y écrire. Pour sauter une question, passez sa réponse en variable :
 
 ```bash
 make worker HUB_URL=https://… ENROLL_TOKEN=enr_… TRAEFIK_DYNAMIC_PATH=/chemin/dynamic
 ```
 
-`make worker` demande d'abord **ce que le worker gère** : Traefik + DNS (le défaut), Docker seul, ou les deux (`WORKER_MODULES=traefik|docker|both` pour passer la réponse). Selon le choix, il pose les questions sur Traefik (dossier dynamique, certificats, **journal d'accès**, API) et/ou sur Docker (dossiers des projets, groupe du socket, terminal).
+`make worker` demande aussi **ce que le worker gère** : Traefik + DNS (le défaut), Docker seul, ou les deux (`WORKER_MODULES=traefik|docker|both` pour passer la réponse). Selon le choix, il pose les questions sur Traefik et/ou sur Docker (dossiers des projets, terminal, adresse de la machine pour un Traefik distant).
 
-`make hub`, `make stack`, `make worker` et `make worker-stack` lancent directement l'un ou l'autre.
-
-<details>
-<summary><b>🐳 Le hub dans Portainer</b></summary>
-
-<br>
-
-Sur la machine de Portainer, `make stack` pose les mêmes questions que `make hub` mais **ne démarre rien** : il écrit deux fichiers à copier-coller.
-
-```bash
-make stack
-```
-
-| Fichier | À coller dans Portainer |
-|---|---|
-| `docker-compose.stack.yml` | **Stacks → Add stack → Web editor** |
-| `stack.env` | plus bas, **Environment variables → Advanced mode** |
-
-Puis **Deploy the stack**. Le script propose d'afficher les deux fichiers à la fin (`cat docker-compose.stack.yml stack.env`).
-
-Ce qui diffère d'une installation par `make hub` :
-
-- **Pas de `.env`** : la pile liste chaque variable en `${NOM}` et c'est Portainer qui les fournit (le `stack.env` est étiqueté comme le `.env`).
-- **Les données vivent dans un volume nommé** `armadok_data` (comptes, clés chiffrées, audit) : à sauvegarder. Le conteneur démarre en root avec seulement `CHOWN`, `SETUID` et `SETGID`, donne `/data` à `PUID:PGID` puis abandonne ses droits.
-- **Le hachage du mot de passe est fourni en base64** (`ADMIN_PASSWORD_HASH_B64`) : le `$` d'un hachage bcrypt est mal lu par certains éditeurs de variables.
-- **Socket Docker** (supprimer / renouveler des certificats) : le groupe `docker` est conservé grâce à `PGROUPS`.
-- Les chemins demandés (dossier de Traefik, `acme.json`, journal d'accès) sont vérifiés sur la machine où vous lancez la commande : lancez-la sur celle de Portainer.
-
-> [!NOTE]
-> `stack.env` contient les **secrets** : effacez-le une fois collé (Portainer les garde de son côté). Mise à jour : **Stacks → armadok → Pull and redeploy**.
-
-</details>
-
-<details>
-<summary><b>🧩 Le worker dans Portainer</b></summary>
-
-<br>
-
-Deux façons d'obtenir la pile : sur la machine du Traefik, **`make worker-stack`** (mêmes questions que `make worker`, il écrit `docker-compose.stack.yml` et `stack.env` à coller dans *Stacks → Add stack*), ou **sans terminal**, depuis l'interface du hub, ci-dessous.
-
-Dans **Nouveau nœud** (ou **Ce nœud → Connexion**), l'onglet *Portainer / compose* pose quelques questions :
-
-- volume ou dossier de la configuration dynamique,
-- réseau et API de Traefik,
-- `PUID:PGID`,
-- certificats (facultatif),
-
-puis génère la **pile complète**, avec le hub et le jeton déjà inclus. Collez-la dans *Stacks → Add stack → Web editor*.
-
-- Les volumes de Traefik existants sont déclarés `external` ; l'identité du worker vit dans un volume nommé.
-- Le conteneur démarre en root avec seulement `CHOWN`, `SETUID` et `SETGID`, donne `/data` à `PUID:PGID` puis **abandonne ses droits** (`python -m app.drop`) : mettez l'UID:GID qui peut écrire dans la configuration dynamique de Traefik.
-
-</details>
+**Version installée** : le script demande aussi *latest* (la plus récente) ou un numéro précis (ex. `1.0.0`). `IMAGE=…` ou `WORKER_IMAGE=…` passent la réponse.
 
 <details>
 <summary><b>🛠 Installation manuelle</b></summary>
@@ -405,8 +389,7 @@ Le `docker-compose.yml` les définit, à ne pas changer : `TRAEFIK_DYNAMIC_DIR` 
 | `PROJECT_ROOTS`, `DOCKER_SOCKET` | *(worker Docker)* dossiers des projets (montés au même chemin) et socket Docker |
 | `WORKER_ADDRESSES` | adresses (IP ou noms, séparées par des virgules) par lesquelles le Traefik d'un autre nœud joint cette machine : relie ses conteneurs aux sites de ce Traefik |
 | `WORKER_ALLOW_EXEC` | `true` pour autoriser le **terminal** dans les conteneurs de cette machine (refusé sinon, même si le hub le demande) |
-| `PUID`, `PGID` | *(piles Portainer, worker et hub)* identité que prend le conteneur après avoir donné `/data` à ce compte |
-| `PGROUPS` | *(pile Portainer du hub)* groupes supplémentaires conservés, séparés par des virgules : le groupe `docker`, pour joindre le socket |
+| `PUID`, `PGID`, `PGROUPS` | *(worker)* identité que prend le conteneur après avoir donné `/data` à ce compte, et groupes conservés (le groupe `docker`, pour joindre le socket) |
 | `CERTSYNC_IN`, `CERTSYNC_OUT`, `CERTSYNC_EVERY` | relais de certificats d'un worker (`python -m app.certsync`) : fichier lu, relevé écrit, période en secondes |
 
 ### 🧪 Développement et tests seulement
@@ -957,9 +940,8 @@ Le conteneur doit tourner avec un utilisateur autorisé à **écrire** dans le d
 
 | Commande | Effet |
 |---|---|
-| `make install` | installation guidée : hub (Docker Compose), hub (Portainer) ou worker |
-| `make hub` · `make worker` | lance directement l'un ou l'autre (`make hub` n'écrit que les fichiers, il ne démarre rien) |
-| `make stack` · `make worker-stack` | **prépare la pile Portainer** du hub · d'un worker : `docker-compose.stack.yml` + `stack.env` à copier-coller |
+| `make install` | installation guidée : hub ou worker, en mode interactif ou en n'écrivant que le `.env` et le compose |
+| `make hub` · `make worker` | lance directement l'un ou l'autre (`INTERACTIVE=0` : fichiers seulement ; `make hub` ne démarre jamais rien) |
 | `make doctor` | **vérifie l'installation** (variables, droits, dossiers, réseau, conteneur) |
 | `make config` | valide `docker-compose.yml` avec le `.env` |
 | `make status` | état, et connexion d'un worker |

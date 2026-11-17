@@ -157,7 +157,7 @@ Les sept étapes sont faites, testées (381 tests) et vérifiées **contre le vr
 
 | Ajout | Détail |
 |---|---|
-| `make worker` / `worker-stack` | demande le type (Traefik, Docker, les deux), le journal d'accès, les dossiers des projets, le terminal ; `make doctor` vérifie aussi un worker Docker |
+| `make worker` | demande le type (Traefik, Docker, les deux), le journal d'accès, les dossiers des projets, le terminal ; `make doctor` vérifie aussi un worker Docker |
 | Journal d'accès d'un nœud distant | le worker lit `TRAEFIK_ACCESS_LOG` et envoie les lignes brutes au hub (message `access`, 2000 lignes et 8 Ko par ligne au plus) ; le hub les range sous le nœud ; rafales (alertes) séparées par nœud ; alertes et règles automatiques tournent pour chaque nœud qui a un journal |
 | Terminal sur un worker | session tenue par le worker (`docker_exec.py`, 5 au plus, 15 min d'inactivité), le hub lit par courtes attentes ; refusé sans `WORKER_ALLOW_EXEC=true` ; shell fixe |
 | Git en SSH | clé Ed25519 par projet ou par nœud (`gitssh.py`), chiffrée en base, écrite 0600 le temps d'une commande puis effacée, `known_hosts` en confiance au premier contact |

@@ -31,11 +31,11 @@ class Settings:
         self.admin_password_hash = env("ADMIN_PASSWORD_HASH")
         self._hash_error = ""
         if not self.admin_password_hash and env("ADMIN_PASSWORD_HASH_B64"):
-            # Même hachage, encodé en base64 : le « $ » d'un hachage bcrypt est mal lu par certains éditeurs de variables (Portainer…)
+            # Même hachage, encodé en base64 : le « $ » d'un hachage bcrypt est mal lu par certains éditeurs de variables (éditeurs de variables d'environnement…)
             try:
                 self.admin_password_hash = base64.b64decode((env("ADMIN_PASSWORD_HASH_B64") or "").strip(), validate=True).decode().strip()
             except (binascii.Error, ValueError):
-                self._hash_error = "ADMIN_PASSWORD_HASH_B64 n'est pas du base64 valide (générez-le avec « make stack » ou : printf '%s' '$2b$…' | base64 -w0)."
+                self._hash_error = "ADMIN_PASSWORD_HASH_B64 n'est pas du base64 valide (générez-le avec : printf '%s' '$2b$…' | base64 -w0)."
         self.admin_password = env("ADMIN_PASSWORD")
         self.access_ttl = int(env("ACCESS_TOKEN_MINUTES", "15")) * 60
         self.refresh_ttl = int(env("REFRESH_TOKEN_DAYS", "7")) * 86400

@@ -1,4 +1,4 @@
-// docker-compose.yml / pile Portainer d'un worker, prêt à copier. Les options décrivent la machine du Traefik distant.
+// docker-compose.yml d'un worker, prêt à copier. Les options décrivent la machine du Traefik distant.
 const q = (s) => JSON.stringify(String(s))
 const isPath = (s) => /^(\/|\.\/|\.\.\/)/.test(s)
 

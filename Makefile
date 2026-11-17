@@ -59,119 +59,6 @@ networks:
 endef
 export COMPOSE_YML
 
-define STACK_YML
-# Armadok : pile pour Portainer (Stacks → Add stack → Web editor), générée par « make stack ».
-# Portainer n'a pas de fichier .env : les $${VARIABLES} ci-dessous se saisissent dans « Environment variables »
-# (« Advanced mode » : collez tout le contenu du fichier stack.env). Chaque variable y est étiquetée.
-services:
-  #@certs-service
-  armadok:
-    image: $${ARMADOK_IMAGE:-$(IMAGE)}
-    container_name: armadok
-    restart: unless-stopped
-    # Démarre en root uniquement pour donner /data à PUID:PGID, puis abandonne ses droits (python -m app.drop).
-    command: ["python", "-m", "app.drop", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--no-server-header"]
-    user: "0:0"
-    cap_add: [CHOWN, SETUID, SETGID]
-    environment:
-      PUID: "$${PUID:-1000}"                # propriétaire du dossier Traefik : il doit pouvoir y écrire
-      PGID: "$${PGID:-1000}"
-      #@stack-groups
-      # chemins DANS le conteneur : ne pas modifier
-      TRAEFIK_DYNAMIC_DIR: /traefik-dynamic
-      DATA_DIR: /data
-      #@log-env
-      #@certs-env
-      #@dk-env
-      # [OBLIGATOIRE] compte propriétaire et secrets
-      ADMIN_USER: $${ADMIN_USER:-admin}
-      ADMIN_PASSWORD_HASH_B64: $${ADMIN_PASSWORD_HASH_B64}
-      JWT_SECRET: $${JWT_SECRET}
-      ENCRYPTION_KEY: $${ENCRYPTION_KEY}
-      # [UNE FOIS] valeurs de départ du nœud Principal (ensuite réglées dans « Ce nœud »)
-      TRAEFIK_ENTRYPOINTS: $${TRAEFIK_ENTRYPOINTS:-web,websecure}
-      TRAEFIK_CERT_RESOLVERS: $${TRAEFIK_CERT_RESOLVERS:-}
-      TRAEFIK_API_URL: $${TRAEFIK_API_URL:-}
-      PROMETHEUS_URL: $${PROMETHEUS_URL:-}
-      DEFAULT_DNS_TARGET: $${DEFAULT_DNS_TARGET:-}
-      # [TOUJOURS] compte OVH principal (facultatif)
-      OVH_ENDPOINT: $${OVH_ENDPOINT:-ovh-eu}
-      OVH_APPLICATION_KEY: $${OVH_APPLICATION_KEY:-}
-      OVH_APPLICATION_SECRET: $${OVH_APPLICATION_SECRET:-}
-      OVH_CONSUMER_KEY: $${OVH_CONSUMER_KEY:-}
-      # [TOUJOURS] sessions, réseau, audit (valeurs par défaut)
-      ACCESS_TOKEN_MINUTES: $${ACCESS_TOKEN_MINUTES:-15}
-      REFRESH_TOKEN_DAYS: $${REFRESH_TOKEN_DAYS:-7}
-      COOKIE_SECURE: $${COOKIE_SECURE:-true}
-      FORWARDED_ALLOW_IPS: $${FORWARDED_ALLOW_IPS:-127.0.0.1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      AUDIT_MAX_MB: $${AUDIT_MAX_MB:-50}
-    volumes:
-      - $${TRAEFIK_DYNAMIC_PATH}:/traefik-dynamic   # configuration dynamique de Traefik (écriture)
-      - armadok_data:/data                            # base, sauvegardes, audit : volume nommé, À SAUVEGARDER
-      #@log-vol
-      #@certs-vol
-      #@dk-vol
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 512m
-    pids_limit: 200
-    networks: [proxy]
-
-networks:
-  proxy:
-    external: true
-    name: $${TRAEFIK_NETWORK:-proxy}
-endef
-export STACK_YML
-
-define WORKER_STACK_YML
-# Armadok : pile Portainer d'un WORKER (Stacks → Add stack → Web editor), générée par « make worker-stack ».
-# Les $${VARIABLES} se saisissent dans « Environment variables » (« Advanced mode » : collez le contenu de stack.env).
-services:
-  #@certs-service
-  worker:
-    image: $${WORKER_IMAGE:-$(IMAGE)}
-    container_name: armadok-worker
-    restart: unless-stopped
-    # Démarre en root uniquement pour donner /data à PUID:PGID, puis abandonne ses droits (python -m app.drop).
-    command: ["python", "-m", "app.drop", "python", "-m", "app.worker"]
-    user: "0:0"
-    cap_add: [CHOWN, SETUID, SETGID]
-    environment:
-      PUID: "$${PUID:-1000}"                # propriétaire du dossier Traefik : il doit pouvoir y écrire
-      PGID: "$${PGID:-1000}"
-      HUB_URL: $${HUB_URL}
-      ENROLL_TOKEN: $${ENROLL_TOKEN:-}      # usage unique, 15 minutes : inutile après la première connexion
-      WORKER_ALLOW_INSECURE: $${WORKER_ALLOW_INSECURE:-}
-      TRAEFIK_API_URL: $${TRAEFIK_API_URL:-}   #@tr
-      TRAEFIK_DYNAMIC_DIR: /traefik-dynamic   #@tr
-      DATA_DIR: /data
-      #@log-env
-      #@certs-env
-      #@wk-env
-      #@wk-pgroups
-    volumes:
-      - $${TRAEFIK_DYNAMIC_PATH}:/traefik-dynamic   # la configuration dynamique (file provider) de ce Traefik   #@tr
-      - worker_data:/data                           # identité du worker + sauvegardes
-      #@log-vol
-      #@certs-vol
-      #@wk-vol
-    healthcheck:
-      test: ["CMD", "python", "-m", "app.worker", "--health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    read_only: true
-    tmpfs: [/tmp]
-    cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 256m
-endef
-export WORKER_STACK_YML
-
-
 define WORKER_YML
 services:
   #@certs-service
@@ -228,21 +115,38 @@ fail() { printf '  %s✗%s %s\n' "$$R" "$$Z" "$$*" >&2; }
 die() { fail "$$*"; exit 1; }
 cmd() { printf '      %s%s%s\n' "$$B" "$$*" "$$Z"; }
 # ask : question avec valeur par défaut, ou valeur préremplie par une variable (3e argument). asks : idem sans écho (secrets). yes / confirm : o/N, O/n.
-ask() { local v="" pre="$${3:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : %s\n' "$$G" "$$Z" "$$1" "$$v" >&2; else read -r -p "  $${C}➜$${Z} $$1 $${D}[$$2]$${Z} : " v || true; fi; printf '%s' "$${v:-$$2}"; }
-asks() { local v="" pre="$${2:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$1" >&2; else read -rs -p "  $${C}➜$${Z} $$1 : " v || true; echo >&2; fi; printf '%s' "$$v"; }
-yes() { local v=""; read -r -p "  $${C}➜$${Z} $$1 $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
-confirm() { local v=""; read -r -p "  $${C}➜$${Z} $$1 $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
+ask() { local v="" pre="$${3:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : %s\n' "$$G" "$$Z" "$$1" "$$v" >&2; elif [ "$${FILES_ONLY:-}" != 1 ]; then read -r -p "  $${C}➜$${Z} $$1 $${D}[$$2]$${Z} : " v || true; fi; printf '%s' "$${v:-$$2}"; }
+asks() { local v="" pre="$${2:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$1" >&2; elif [ "$${FILES_ONLY:-}" != 1 ]; then read -rs -p "  $${C}➜$${Z} $$1 : " v || true; echo >&2; fi; printf '%s' "$$v"; }
+yes() { local v=""; [ "$${FILES_ONLY:-}" = 1 ] && return 1; read -r -p "  $${C}➜$${Z} $$1 $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
+confirm() { local v=""; [ "$${FILES_ONLY:-}" = 1 ] && return 0; read -r -p "  $${C}➜$${Z} $$1 $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
 image_ref() { case "$$1" in "") echo "$(IMAGE)";; */*|*:*) echo "$$1";; *) echo "$(IMAGE_REPO):$$1";; esac; }
 # pick_image VARIABLE_À_REMPLIR : demande « latest » ou un numéro de version précis (ex. 1.0.0) ; sauté si IMAGE a été fourni (IMAGE=… ou variable d'environnement)
 pick_image() {
   local ans=""
-  if [ -n "$(if $(filter file,$(origin IMAGE)),,1)" ]; then ans="$(IMAGE)"; printf '  %s✓%s Image : %s\n' "$$G" "$$Z" "$$ans" >&2
+  if [ "$${FILES_ONLY:-}" = 1 ]; then ans="$(IMAGE)"
+  elif [ -n "$(if $(filter file,$(origin IMAGE)),,1)" ]; then ans="$(IMAGE)"; printf '  %s✓%s Image : %s\n' "$$G" "$$Z" "$$ans" >&2
   else
     hint "Quelle version installer ? « latest » est la plus récente publiée ; un numéro précis (ex. 1.0.0) fige la version. Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
     read -r -p "  $${C}➜$${Z} Version d'Armadok $${D}[latest]$${Z} : " ans || true
     ans="$$(image_ref "$${ans:-latest}")"
   fi
   printf -v "$$1" '%s' "$$ans"
+}
+# choose_mode : « interactif » (questions, vérifications) ou « fichiers seulement » (.env et compose avec des valeurs par défaut, rien n'est démarré).
+# Peut être fixé d'avance : make hub INTERACTIVE=0 (fichiers seulement) ou INTERACTIVE=1 (interactif).
+choose_mode() {
+  case "$${INTERACTIVE:-}" in 0|non|no|n) FILES_ONLY=1; return 0;; 1|oui|yes|o|y) FILES_ONLY=""; return 0;; esac
+  [ "$${FILES_ONLY:-}" = 1 ] && return 0
+  echo
+  say "Comment voulez-vous continuer ?"
+  printf '\n'
+  printf '  %s1)%s %sMode interactif%s\n' "$$C" "$$Z" "$$B" "$$Z"
+  hint "     Des questions guidées avec des vérifications (dossiers, réseau, image), puis les fichiers."
+  printf '  %s2)%s %sSeulement le .env et le compose%s\n' "$$C" "$$Z" "$$B" "$$Z"
+  hint "     Aucune question : valeurs par défaut et secrets générés, rien n'est démarré. Vous modifiez ensuite les fichiers à votre rythme."
+  printf '\n'
+  case "$$(ask "Votre choix" "1" INSTALL_MODE)" in 2|f|fichiers|files) FILES_ONLY=1;; *) FILES_ONLY="";; esac
+  echo
 }
 as_root() { if [ "$$(id -u)" = 0 ]; then "$$@"; else sudo "$$@"; fi; }
 need_docker() {
@@ -254,6 +158,14 @@ need_docker() {
 pick_source() {
   local v; v=$$(ask "$$1" "" "$${2:-}"); v=$${v/#\~/$$HOME}
   SRC=""; SRC_KIND=""
+  if [ "$${FILES_ONLY:-}" = 1 ]; then   # mode fichiers : rien n'est vérifié ; un dossier par défaut est prévu pour la configuration de Traefik
+    if [ -z "$$v" ]; then [ "$${3:-}" = opt ] && return 0; v=./traefik-dynamic; fi
+    case "$$v" in
+      /*|./*|../*) mkdir -p "$$v" 2>/dev/null || true; SRC=$$(cd "$$v" 2>/dev/null && pwd || echo "$$v"); SRC_KIND=dir;;
+      *) SRC="$$v"; SRC_KIND=volume;;
+    esac
+    return 0
+  fi
   case "$$v" in
     "") [ "$${3:-}" = opt ] && return 0; die "Une valeur est requise.";;
     /*|./*|../*) [ -d "$$v" ] || die "Dossier introuvable : $$v"; SRC=$$(cd "$$v" && pwd); SRC_KIND=dir;;
@@ -263,7 +175,7 @@ pick_source() {
 ensure_image() { docker image inspect "$$UTIL_IMAGE" >/dev/null 2>&1 || docker pull "$$UTIL_IMAGE" >/dev/null 2>&1 || { echo "Image $$UTIL_IMAGE introuvable."; exit 1; }; }
 # Un volume ne se lit pas depuis l'hôte : on passe par un conteneur jetable (root) qui le voit sur /d.
 util() { ensure_image; docker run --rm -u 0 --entrypoint "" "$$@"; }
-owner_of() { if [ "$$1" = dir ]; then stat -c '%u:%g' "$$2"; else util -v "$$2:/d:ro" "$$UTIL_IMAGE" stat -c '%u:%g' /d; fi; }
+owner_of() { if [ "$${FILES_ONLY:-}" = 1 ]; then echo "$$(id -u):$$(id -g)"; elif [ "$$1" = dir ]; then stat -c '%u:%g' "$$2"; else util -v "$$2:/d:ro" "$$UTIL_IMAGE" stat -c '%u:%g' /d; fi; }
 exists_in() { if [ "$$1" = dir ]; then [ -e "$$2/$$3" ]; else util -v "$$2:/d:ro" "$$UTIL_IMAGE" test -e "/d/$$3"; fi; }
 write_in() { # KIND SRC FICHIER PROPRIÉTAIRE ; contenu sur l'entrée standard
   if [ "$$1" = dir ]; then cat > "$$2/$$3"; chown "$$4" "$$2/$$3" 2>/dev/null || as_root chown "$$4" "$$2/$$3" || true
@@ -272,7 +184,7 @@ write_in() { # KIND SRC FICHIER PROPRIÉTAIRE ; contenu sur l'entrée standard
 # Un volume qui appartient à root : on propose de le céder à 1000:1000 pour que l'interface ne tourne pas en root.
 own_volume() { # KIND SRC PROPRIÉTAIRE -> propriétaire à utiliser
   local o="$$3" v=""
-  if [ "$$1" = volume ] && [ "$$o" = 0:0 ]; then
+  if [ "$${FILES_ONLY:-}" != 1 ] && [ "$$1" = volume ] && [ "$$o" = 0:0 ]; then
     warnl "Ce volume appartient à root : l'interface y tournerait en root." >&2
     if confirm "Le donner à 1000:1000 ?"; then util -v "$$2:/d" "$$UTIL_IMAGE" chown -R 1000:1000 /d && o=1000:1000; fi
   fi
@@ -365,7 +277,7 @@ EOT
   [ -n "$$vols" ] && c+=$$'\n\nvolumes:\n'"$${vols%$$'\n'}"
   printf '%s\n' "$$c"
 }
-# --- Questions communes au hub (Docker Compose) et à la pile Portainer. Chaque groupe est expliqué avant d'être posé.
+# --- Questions du hub. Chaque groupe est expliqué avant d'être posé.
 # ask_traefik : DYN DYN_KIND OWNER NET EPS RES CERTS_* LOG_SRC API PROM DNST · ask_admin : AUSER HASH · ask_ovh : OEND AK AS CK · ask_route : DOM MW EP
 ask_traefik() {
   sub "Configuration dynamique de Traefik"
@@ -381,8 +293,11 @@ ask_traefik() {
   hint "Traefik joint l'interface par ce réseau (http://armadok:8000). Pour le connaître : docker network ls (souvent « proxy »)."
   echo
   NET=$$(ask "Nom du réseau" "proxy" TRAEFIK_NETWORK)
-  docker network inspect "$$NET" >/dev/null 2>&1 || die "Réseau « $$NET » introuvable (docker network ls). Créez-le ou indiquez le bon nom."
-  good "Réseau « $$NET » trouvé."
+  if [ "$${FILES_ONLY:-}" = 1 ]; then hint "Le réseau « $$NET » doit exister avant le démarrage : docker network create $$NET"
+  else
+    docker network inspect "$$NET" >/dev/null 2>&1 || die "Réseau « $$NET » introuvable (docker network ls). Créez-le ou indiquez le bon nom."
+    good "Réseau « $$NET » trouvé."
+  fi
 
   sub "Points d'entrée et certificats (valeurs de départ)"
   hint "Les noms des points d'entrée de Traefik (web = port 80, websecure = port 443) et de son résolveur Let's Encrypt, tels qu'écrits dans"
@@ -431,8 +346,8 @@ ask_traefik() {
     local r norm=""
     for r in $${PROJECT_ROOTS//,/ }; do
       case "$$r" in /*) ;; *) die "« $$r » n'est pas un chemin absolu.";; esac
-      [ -d "$$r" ] || die "Le dossier « $$r » n'existe pas."
-      norm+=$${norm:+,}$$(cd "$$r" && pwd)
+      [ -d "$$r" ] || { [ "$${FILES_ONLY:-}" = 1 ] && warnl "Le dossier « $$r » n'existe pas encore : créez-le avant de démarrer." || die "Le dossier « $$r » n'existe pas."; }
+      norm+=$${norm:+,}$$(cd "$$r" 2>/dev/null && pwd || echo "$$r")
     done
     PROJECT_ROOTS="$$norm"
     good "Gestion de Docker activée ($$PROJECT_ROOTS)."
@@ -458,6 +373,11 @@ ask_admin() {
   hint "C'est l'administrateur permanent de l'interface. Les autres comptes se créent ensuite dans l'interface (menu Équipe)."
   hint "Le mot de passe n'est jamais écrit en clair : seul son hachage (bcrypt) est enregistré dans le fichier de configuration."
   echo
+  if [ "$${FILES_ONLY:-}" = 1 ]; then
+    AUSER=$$(ask "Identifiant" "admin"); HASH=""
+    warnl "Mot de passe non défini : « make password » en génère le hachage, à coller dans ADMIN_PASSWORD_HASH (.env)."
+    return 0
+  fi
   AUSER=$$(ask "Identifiant" "admin")
   while :; do
     read -rs -p "  $${C}➜$${Z} Mot de passe $${D}(12 caractères minimum)$${Z} : " PW; echo
@@ -535,35 +455,32 @@ recap() {
   if [ -n "$${DOM:-}" ]; then say "  Adresse                 : https://$$DOM (routage armadok.yml créé)"; else say "  Adresse                 : aucune (pas de routage créé)"; fi
   say "  Valeurs de départ       : API $${API:-—} · Prometheus $${PROM:-—} · IP par défaut $${DNST:-—}"
 }
-# install_hub compose|stack : tout le parcours du hub. N'écrit que des fichiers : RIEN n'est démarré.
+# install_hub : tout le parcours du hub. N'écrit que des fichiers : RIEN n'est démarré.
 install_hub() {
-  local mode="$$1" label n1 n2 n3 n4 n5
+  local n1 n2 n3 n4 n5
   command -v openssl >/dev/null || die "openssl est requis."
-  if [ "$$mode" = stack ]; then
-    label="dans Portainer"
-    if [ -f docker-compose.stack.yml ] || [ -f stack.env ]; then die "docker-compose.stack.yml ou stack.env existe déjà : rien n'est écrasé (déplacez-les pour régénérer)."; fi
-  else
-    label="avec Docker Compose"
-    if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
-  fi
-  banner "Armadok — installation du hub $$label"
+  if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
+  banner "Armadok — installation du hub"
   printf '\n'
-  say "Cet assistant pose quelques questions, puis écrit les fichiers de configuration."
-  if [ "$$mode" = stack ]; then
-    say "Il ne démarre rien : vous collerez les deux fichiers produits dans Portainer."
+  choose_mode
+  if [ "$${FILES_ONLY:-}" = 1 ]; then
+    say "Mode fichiers : aucune question. Il écrit docker-compose.yml et .env (valeurs par défaut, secrets générés) sans rien démarrer."
   else
+    say "Cet assistant pose quelques questions, puis écrit les fichiers de configuration."
     say "Il ne démarre rien : à la fin, il vous indique la commande à lancer."
+    hint "Les questions facultatives se passent avec Entrée. Vous pourrez tout régler plus tard dans l'interface, sauf les secrets du fichier .env."
+    hint "Un récapitulatif vous est montré avant d'écrire quoi que ce soit."
   fi
-  hint "Les questions facultatives se passent avec Entrée. Vous pourrez tout régler plus tard dans l'interface, sauf les secrets du fichier .env."
-  hint "Un récapitulatif vous est montré avant d'écrire quoi que ce soit."
-  if [ "$$mode" = compose ] && docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx armadok; then
+  if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx armadok; then
     echo
     warnl "Un conteneur nommé « armadok » existe déjà sur cette machine. Pour lancer cette nouvelle installation, il faudra"
     hint "d'abord l'arrêter et le supprimer (docker rm -f armadok), ou changer « container_name » dans docker-compose.yml."
   fi
   echo; pick_image IMG_HUB
-  hint "Récupération de l'image $$IMG_HUB…"
-  docker pull "$$IMG_HUB" >/dev/null 2>&1 || docker image inspect "$$IMG_HUB" >/dev/null 2>&1 || die "Image $$IMG_HUB introuvable (version inexistante ? voir github.com/Dr-J-Watson/Armadok/releases)."
+  if [ "$${FILES_ONLY:-}" != 1 ]; then
+    hint "Récupération de l'image $$IMG_HUB…"
+    docker pull "$$IMG_HUB" >/dev/null 2>&1 || docker image inspect "$$IMG_HUB" >/dev/null 2>&1 || die "Image $$IMG_HUB introuvable (version inexistante ? voir github.com/Dr-J-Watson/Armadok/releases)."
+  fi
   UTIL_IMAGE="$$IMG_HUB"
   step "1/5 · Traefik"
   ask_traefik
@@ -578,61 +495,6 @@ install_hub() {
   echo
   confirm "Écrire les fichiers maintenant ?" || { echo; say "Annulé : rien n'a été écrit."; exit 0; }
   echo
-  if [ "$$mode" = stack ]; then
-    local S; S=$$(EXTRA_VOLS=$$'  armadok_data:\n' build_compose "$$STACK_YML" ARMADOK_IMAGE)
-    if [ "$${CERTS_DOCKER:-}" = 1 ] || [ "$${DOCKER_MANAGE:-}" = 1 ]; then S=$${S//'#@stack-groups'/'PGROUPS: "$${DOCKER_GID}"           # groupe « docker » : conservé pour joindre le socket'}; fi
-    S=$$(grep -v '#@stack-groups' <<<"$$S")
-    printf '%s\n' "$$S" > docker-compose.stack.yml
-    umask 077
-    {
-      echo "# stack.env : à coller dans Portainer → Stacks → Add stack → « Environment variables » → « Advanced mode »."
-      echo "# Généré par « make stack » le $$(date +%F). Étiquettes et explications : .env.example. Contient des SECRETS : ne pas le partager."
-      echo; echo "# ── [OBLIGATOIRE · TOUJOURS] compte propriétaire et secrets"
-      echo "ADMIN_USER=$$AUSER"
-      echo "ADMIN_PASSWORD_HASH_B64=$$(printf '%s' "$$HASH" | base64 -w0)"
-      echo "JWT_SECRET=$$(openssl rand -hex 32)"
-      echo "ENCRYPTION_KEY=$$(openssl rand -hex 32)"
-      echo; echo "# ── [UNE FOIS] valeurs de départ du nœud Principal : lues au premier démarrage, ensuite réglées dans « Ce nœud »"
-      echo "TRAEFIK_ENTRYPOINTS=$$EPS"
-      echo "TRAEFIK_CERT_RESOLVERS=$$RES"
-      echo "TRAEFIK_API_URL=$$API"
-      echo "PROMETHEUS_URL=$$PROM"
-      echo "DEFAULT_DNS_TARGET=$$DNST"
-      echo; echo "# ── [TOUJOURS] compte OVH principal (facultatif)"
-      echo "OVH_ENDPOINT=$$OEND"
-      echo "OVH_APPLICATION_KEY=$$AK"
-      echo "OVH_APPLICATION_SECRET=$$AS"
-      echo "OVH_CONSUMER_KEY=$$CK"
-      echo; echo "# ── [COMPOSE] chemins, réseau, utilisateur (construisent les montages de la pile)"
-      echo "ARMADOK_IMAGE=$$IMG_HUB"
-      echo "TRAEFIK_DYNAMIC_PATH=$$DYN"
-      echo "PUID=$${OWNER%%:*}"
-      echo "PGID=$${OWNER##*:}"
-      echo "TRAEFIK_NETWORK=$$NET"
-      [ -n "$$LOG_SRC" ] && echo "TRAEFIK_ACCESS_LOG_PATH=$$LOG_SRC"
-      [ -n "$$CERTS_SRC" ] && echo "CERTS_PATH=$$CERTS_SRC"
-      [ -n "$${DGID:-}" ] && echo "DOCKER_GID=$$DGID"
-      if [ "$${DOCKER_MANAGE:-}" = 1 ]; then echo; echo "# ── [TOUJOURS] gestion de Docker (accès équivalent à root : droits « docker.* » du nœud)"; echo "DOCKER_MANAGE=true"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; fi
-    } > stack.env
-    chmod 600 stack.env
-    good "docker-compose.stack.yml créé (la pile)."
-    good "stack.env créé (les variables, droits 600)."
-    write_route
-    banner "Terminé — il reste à coller les fichiers dans Portainer"
-    printf '\n'
-    say "$${B}1.$${Z} Dans Portainer : Stacks → Add stack, nom « armadok »."
-    say "$${B}2.$${Z} Onglet « Web editor » : collez le contenu de docker-compose.stack.yml."
-    cmd "cat docker-compose.stack.yml"
-    say "$${B}3.$${Z} Plus bas, « Environment variables » → « Advanced mode » : collez le contenu de stack.env."
-    cmd "cat stack.env"
-    say "$${B}4.$${Z} Cliquez « Deploy the stack »."
-    printf '\n'
-    hint "stack.env contient les secrets : effacez-le de cette machine une fois collé (Portainer les garde de son côté)."
-    hint "Mise à jour : Stacks → armadok → « Pull and redeploy ». Sauvegarde : le volume « armadok_data » (comptes, clés chiffrées, audit)."
-    [ -z "$${DOM:-}" ] || hint "N'oubliez pas l'enregistrement DNS de $$DOM vers ce serveur."
-    printf '\n'
-    if yes "Afficher les deux fichiers maintenant ?"; then echo; printf '%s── docker-compose.stack.yml ──%s\n' "$$B" "$$Z"; cat docker-compose.stack.yml; echo; printf '%s── stack.env ──%s\n' "$$B" "$$Z"; cat stack.env; fi
-  else
     mkdir -p data
     [ "$$(stat -c '%u:%g' data)" = "$$OWNER" ] || as_root chown "$$OWNER" data
     build_compose "$$COMPOSE_YML" ARMADOK_IMAGE > docker-compose.yml
@@ -674,6 +536,14 @@ install_hub() {
     write_route
     banner "Terminé — rien n'est démarré"
     printf '\n'
+    if [ "$${FILES_ONLY:-}" = 1 ]; then
+      say "$${B}À faire AVANT de démarrer :$${Z}"
+      say "  • mot de passe : « make password », puis collez le résultat dans ADMIN_PASSWORD_HASH (.env)"
+      say "  • réseau Docker partagé avec Traefik : docker network create $$NET   (s'il n'existe pas)"
+      say "  • dossier de la configuration de Traefik : $$DYN (changez TRAEFIK_DYNAMIC_PATH dans le .env si besoin)"
+      say "  • relisez le .env : chaque valeur est expliquée dans .env.example"
+      printf '\n'
+    fi
     say "$${B}Pour démarrer l'interface :$${Z}"
     cmd "docker compose up -d"
     hint "(ou simplement : make up)"
@@ -685,26 +555,23 @@ install_hub() {
     say "  • gérer un Traefik sur une AUTRE machine : « Nouveau nœud » dans l'interface, qui affiche la commande à y coller"
     printf '\n'
     hint "Commandes utiles : make up · make logs · make status · make update · make backup · make doctor · make help"
-  fi
   printf '\n'
 }
-# install_worker compose|stack : tout le parcours du worker. En mode « stack », rien n'est démarré (pile Portainer à copier-coller).
+# install_worker : tout le parcours du worker (il démarre et attend sa connexion ; en mode fichiers, seuls docker-compose.yml et .env sont écrits).
 install_worker() {
-  local mode="$$1" label
-  if [ "$$mode" = stack ]; then
-    label="dans Portainer"
-    if [ -f docker-compose.stack.yml ] || [ -f stack.env ]; then die "docker-compose.stack.yml ou stack.env existe déjà : rien n'est écrasé (déplacez-les pour régénérer)."; fi
-  else
-    label="avec Docker Compose"
-    if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
-  fi
-  banner "Armadok — installation d'un worker $$label"
+  if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
+  banner "Armadok — installation d'un worker"
   printf '\n'
+  choose_mode
   say "Un worker relie CETTE machine (son Traefik et/ou son Docker) à l'interface (le hub) installée ailleurs : le hub peut alors la gérer."
   say "Le worker appelle le hub (connexion sortante) : aucun port à ouvrir ici."
-  hint "Déroulé : 1) cette machine · 2) l'adresse du hub · 3) le jeton d'enrôlement · 4) écriture, démarrage et connexion."
-  hint "Le jeton (valable 15 minutes, une seule fois) est demandé en DERNIER : ne le créez qu'au moment de l'étape 3."
-  hint "Raccourci : « Nouveau nœud » dans l'interface du hub affiche une commande toute prête, avec l'adresse et le jeton déjà dedans."
+  if [ "$${FILES_ONLY:-}" = 1 ]; then
+    hint "Mode fichiers : aucune question. Les chemins par défaut sont écrits ; l'adresse du hub et le jeton sont à renseigner dans le .env."
+  else
+    hint "Déroulé : 1) cette machine · 2) l'adresse du hub · 3) le jeton d'enrôlement · 4) écriture, démarrage et connexion."
+    hint "Le jeton (valable 15 minutes, une seule fois) est demandé en DERNIER : ne le créez qu'au moment de l'étape 3."
+    hint "Raccourci : « Nouveau nœud » dans l'interface du hub affiche une commande toute prête, avec l'adresse et le jeton déjà dedans."
+  fi
   step "1/4 · Cette machine"
   UTIL_IMAGE="$$(image_ref "$${WORKER_IMAGE:-}")"
   sub "Que doit gérer ce worker ?"
@@ -759,13 +626,13 @@ install_worker() {
   local r norm=""
   for r in $${PROJECT_ROOTS//,/ }; do
     case "$$r" in /*) ;; *) die "« $$r » n'est pas un chemin absolu.";; esac
-    [ -d "$$r" ] || die "Le dossier « $$r » n'existe pas."
-    norm+=$${norm:+,}$$(cd "$$r" && pwd)
+    [ -d "$$r" ] || { [ "$${FILES_ONLY:-}" = 1 ] && warnl "Le dossier « $$r » n'existe pas encore : créez-le avant de démarrer." || die "Le dossier « $$r » n'existe pas."; }
+    norm+=$${norm:+,}$$(cd "$$r" 2>/dev/null && pwd || echo "$$r")
   done
   PROJECT_ROOTS="$$norm"
   DGID=$$(getent group docker | cut -d: -f3 || true)
   [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker » (getent group docker)" "")
-  [ -n "$$OWNER" ] || { OWNER=$$(stat -c '%u:%g' "$${PROJECT_ROOTS%%,*}"); good "Le worker tournera avec l'identité $$OWNER (propriétaire du premier dossier de projets)."; }
+  [ -n "$$OWNER" ] || { OWNER=$$(stat -c '%u:%g' "$${PROJECT_ROOTS%%,*}" 2>/dev/null || echo "$$(id -u):$$(id -g)"); good "Le worker tournera avec l'identité $$OWNER (propriétaire du premier dossier de projets)."; }
   echo
   hint "Terminal dans un conteneur : réservé au droit « docker.exec » du hub (jamais donné d'office), et refusé ici tant que vous ne l'autorisez pas."
   if yes "Autoriser le terminal dans les conteneurs de cette machine ?"; then WORKER_ALLOW_EXEC=true; fi
@@ -787,6 +654,10 @@ install_worker() {
   echo
   HUB=$$(ask "Adresse du hub (https://…)" "" HUB_URL); HUB=$${HUB%/}
   INSECURE=""
+  if [ "$${FILES_ONLY:-}" = 1 ]; then
+    [ -n "$$HUB" ] || HUB=https://hub.exemple.fr
+    case "$$HUB" in http://?*) INSECURE=1;; esac
+  else
   case "$$HUB" in
     https://?*) ;;
     http://?*) warnl "http:// : les échanges avec le hub circuleraient en clair (réservé aux essais)."
@@ -797,60 +668,17 @@ install_worker() {
   	if curl -fsS --max-time 8 "$$HUB/api/health" >/dev/null 2>&1; then good "Le hub répond."
   	else warnl "Le hub ne répond pas depuis cette machine (DNS, pare-feu, certificat ?)."; yes "Continuer quand même ?" || exit 1; fi
   fi
+  fi
   step "3/4 · Jeton d'enrôlement"
   say "Dans l'interface du hub : « Nouveau nœud » (ou « Ce nœud » → Connexion → « Générer un jeton »), puis copiez le jeton affiché (enr_…)."
   hint "Il expire 15 minutes après sa création et ne sert qu'une fois : générez-le maintenant, pas avant."
   echo
   TOKEN=$$(asks "Jeton d'enrôlement (enr_…)" ENROLL_TOKEN)
+  [ "$${FILES_ONLY:-}" != 1 ] || [ -n "$$TOKEN" ] || TOKEN=enr_A_REMPLACER
   case "$$TOKEN" in enr_?*) ;; *) die "Jeton invalide : il commence par « enr_ » (voir « Nouveau nœud » dans l'interface).";; esac
-  if [ "$$mode" = stack ]; then step "4/4 · Écriture des fichiers"; else step "4/4 · Écriture, démarrage et connexion"; fi
+  if [ "$${FILES_ONLY:-}" = 1 ]; then step "4/4 · Écriture des fichiers"; else step "4/4 · Écriture, démarrage et connexion"; fi
   echo
-  if [ "$$mode" = stack ]; then
-    hint "Rien n'est démarré ici : vous collerez les deux fichiers dans Portainer. Le jeton expire 15 minutes après sa création : déployez la pile tout de suite."
-    WY="$$WORKER_STACK_YML"
-    if [ -n "$$NET" ]; then WY+=$$'\n    networks: [proxy]\n\nnetworks:\n  proxy:\n    external: true\n    name: $${TRAEFIK_NETWORK}'; fi
-    S=$$(EXTRA_VOLS=$$'  worker_data:\n' build_compose "$$WY" WORKER_IMAGE)
-    printf '%s\n' "$$S" > docker-compose.stack.yml
-    umask 077
-    {
-      echo "# stack.env (worker) : à coller dans Portainer → Stacks → Add stack → « Environment variables » → « Advanced mode »."
-      echo "# Généré par « make worker-stack » le $$(date +%F). Contient un jeton d'enrôlement (usage unique, 15 minutes) : ne pas le partager."
-      echo; echo "# ── connexion au hub"
-      echo "HUB_URL=$$HUB"
-      echo "ENROLL_TOKEN=$$TOKEN"
-      [ -n "$$INSECURE" ] && echo "WORKER_ALLOW_INSECURE=1"
-      echo; echo "# ── [TOUJOURS] Traefik de cette machine"
-      echo "TRAEFIK_API_URL=$$API"
-      echo; echo "# ── [COMPOSE] chemins, réseau, utilisateur"
-      echo "WORKER_IMAGE=$$IMG"
-      [ -n "$$DYN" ] && echo "TRAEFIK_DYNAMIC_PATH=$$DYN"
-      [ -n "$$CERTS_SRC" ] && echo "CERTS_PATH=$$CERTS_SRC"
-      [ -n "$$LOG_SRC" ] && echo "TRAEFIK_ACCESS_LOG_PATH=$$LOG_SRC"
-      echo "TRAEFIK_NETWORK=$${NET:-proxy}"
-      echo "PUID=$${OWNER%%:*}"
-      echo "PGID=$${OWNER##*:}"
-      if [ -n "$$WORKER_DOCKER" ]; then echo; echo "# ── [TOUJOURS] ce que gère le worker (Docker : accès équivalent à root sur cette machine)"; echo "WORKER_MODULES=$$WORKER_MODULES"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; echo "DOCKER_GID=$$DGID"; echo "WORKER_ALLOW_EXEC=$$WORKER_ALLOW_EXEC"; echo "WORKER_ADDRESSES=$$WORKER_ADDRESSES"; fi
-    } > stack.env
-    chmod 600 stack.env
-    good "docker-compose.stack.yml créé (la pile)."
-    good "stack.env créé (les variables, droits 600)."
-    banner "Terminé — il reste à coller les fichiers dans Portainer"
-    printf '\n'
-    say "$${B}1.$${Z} Dans Portainer, sur la machine de ce Traefik : Stacks → Add stack, nom « armadok-worker »."
-    say "$${B}2.$${Z} Onglet « Web editor » : collez le contenu de docker-compose.stack.yml."
-    cmd "cat docker-compose.stack.yml"
-    say "$${B}3.$${Z} Plus bas, « Environment variables » → « Advanced mode » : collez le contenu de stack.env."
-    cmd "cat stack.env"
-    say "$${B}4.$${Z} Cliquez « Deploy the stack » (avant l'expiration du jeton)."
-    say "$${B}5.$${Z} Dans l'interface du hub, le nœud passe « En ligne »."
-    printf '\n'
-    hint "Une fois le worker connecté, retirez la variable ENROLL_TOKEN de la pile (Stacks → armadok-worker → Editor) : elle ne sert plus."
-    hint "Si le jeton a expiré : « Ce nœud → Connexion » en génère un nouveau ; mettez-le dans ENROLL_TOKEN et redéployez."
-    printf '\n'
-    if yes "Afficher les deux fichiers maintenant ?"; then echo; printf '%s── docker-compose.stack.yml ──%s\n' "$$B" "$$Z"; cat docker-compose.stack.yml; echo; printf '%s── stack.env ──%s\n' "$$B" "$$Z"; cat stack.env; fi
-    return 0
-  fi
-  hint "Le worker doit démarrer maintenant : le jeton expire vite et ne sert qu'une fois."
+  [ "$${FILES_ONLY:-}" = 1 ] || hint "Le worker doit démarrer maintenant : le jeton expire vite et ne sert qu'une fois."
   WY="$$WORKER_YML"
   if [ -n "$$NET" ]; then WY+=$$'\n    networks: [proxy]\n\nnetworks:\n  proxy:\n    external: true\n    name: $${TRAEFIK_NETWORK}'; fi
   mkdir -p data
@@ -878,6 +706,19 @@ install_worker() {
   } > .env
   chmod 600 .env
   good "docker-compose.yml et .env (droits 600) créés, data/ prêt."
+  if [ "$${FILES_ONLY:-}" = 1 ]; then
+    banner "Terminé — rien n'est démarré"
+    printf '\n'
+    say "$${B}À faire AVANT de démarrer :$${Z}"
+    say "  • HUB_URL et ENROLL_TOKEN dans le .env (jeton : « Nouveau nœud » dans le hub ; valable 15 minutes, usage unique)"
+    say "  • vérifiez les chemins (Traefik, projets Docker) et le réseau Docker s'il y en a un"
+    printf '\n'
+    say "$${B}Puis :$${Z}"
+    cmd "make up"
+    hint "Commandes utiles : make logs · make status · make update · make backup · make doctor · make help"
+    printf '\n'
+    return 0
+  fi
   docker pull "$$IMG" >/dev/null 2>&1 || docker image inspect "$$IMG" >/dev/null 2>&1 || die "Image $$IMG introuvable."
   docker compose up -d
   echo
@@ -916,7 +757,7 @@ help: ## Affiche cette aide
 	@echo
 
 ##@ Installation
-install: ## Installation guidée : hub ou worker, avec Docker Compose ou dans Portainer
+install: ## Installation guidée : hub ou worker (interactive, ou seulement le .env et le compose)
 	eval "$$SH_FUNCS"
 	need_docker
 	banner "Armadok — installation"
@@ -927,43 +768,24 @@ install: ## Installation guidée : hub ou worker, avec Docker Compose ou dans Po
 	hint "     L'interface complète (DNS, sites Traefik, utilisateurs, nœuds). Écrit docker-compose.yml et .env ici."
 	hint "     Rien n'est démarré : la commande à lancer vous est indiquée à la fin."
 	printf '\n'
-	printf '  %s2)%s %sLe hub, dans Portainer%s\n' "$$C" "$$Z" "$$B" "$$Z"
-	hint "     Même interface, mais pour une pile Portainer. Écrit docker-compose.stack.yml et stack.env,"
-	hint "     à copier-coller dans Stacks → Add stack (éditeur web + variables d'environnement)."
-	printf '\n'
-	printf '  %s3)%s %sUn worker, avec Docker Compose%s\n' "$$C" "$$Z" "$$B" "$$Z"
-	hint "     Relie le Traefik et/ou le Docker de CETTE machine à une interface (hub) déjà installée ailleurs. Démarre le worker et attend la connexion."
-	printf '\n'
-	printf '  %s4)%s %sUn worker, dans Portainer%s\n' "$$C" "$$Z" "$$B" "$$Z"
-	hint "     Même chose pour une machine gérée par Portainer : écrit docker-compose.stack.yml et stack.env à copier-coller."
+	printf '  %s2)%s %sUn worker, avec Docker Compose%s\n' "$$C" "$$Z" "$$B" "$$Z"
+	hint "     Relie le Traefik et/ou le Docker de CETTE machine à une interface (hub) déjà installée ailleurs. Démarre le worker et attend la connexion (sauf en mode fichiers)."
 	printf '\n'
 	case "$$(ask "Votre choix" "1" MODE)" in
 	  1|hub|compose|h) exec $(MAKE) --no-print-directory hub;;
-	  2|stack|portainer|p) exec $(MAKE) --no-print-directory stack;;
-	  3|worker|w) exec $(MAKE) --no-print-directory worker;;
-	  4|worker-stack|wp) exec $(MAKE) --no-print-directory worker-stack;;
+	  2|worker|w) exec $(MAKE) --no-print-directory worker;;
 	  *) die "Choix invalide.";;
 	esac
 
 hub: ## Installe le hub avec Docker Compose (écrit docker-compose.yml et .env, ne démarre rien)
 	eval "$$SH_FUNCS"
 	need_docker
-	install_hub compose
-
-stack: ## Prépare la pile Portainer du hub : docker-compose.stack.yml + stack.env à copier-coller
-	eval "$$SH_FUNCS"
-	need_docker
-	install_hub stack
+	install_hub
 
 worker: ## Installe un worker avec Docker Compose (relie le Traefik et/ou le Docker de cette machine à un hub)
 	eval "$$SH_FUNCS"
 	need_docker
-	install_worker compose
-
-worker-stack: ## Prépare la pile Portainer d'un worker (Traefik, Docker ou les deux) : docker-compose.stack.yml + stack.env à copier-coller
-	eval "$$SH_FUNCS"
-	need_docker
-	install_worker stack
+	install_worker
 
 ##@ Au quotidien
 up: ## Démarre (ou applique un changement du .env)
@@ -1089,4 +911,4 @@ reset-2fa: ## Désactive la double authentification (hub) : make reset-2fa NAME=
 	@[ -n "$(NAME)" ] || { echo "Usage : make reset-2fa NAME=utilisateur"; exit 1; }
 	docker compose run --rm $(HUB_SVC) python -m app.tools.reset_2fa "$(NAME)"
 
-.PHONY: help install hub stack worker worker-stack up down restart logs status update backup doctor config version password consumer-key reset-2fa
+.PHONY: help install hub worker up down restart logs status update backup doctor config version password consumer-key reset-2fa

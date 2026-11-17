@@ -37,16 +37,16 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
       <div className="step"><span className="num">1</span><div className="grow col" style={{ gap: 8 }}>
         <b>Installez le worker sur la machine à relier</b>
         <Field label="Que doit gérer ce worker ?" tip="Un worker peut gérer Traefik + DNS (sites, protections, certificats), Docker (conteneurs, projets compose, Git, images) ou les deux. Le DNS lui-même reste géré par ce hub."><Seg value={o.modules} onChange={(m) => setO((x) => ({ ...x, modules: m }))} options={WORKER_TYPES} /></Field>
-        <Seg value={mode} onChange={setMode} options={[{ id: 'make', label: 'Terminal (Makefile)', hint: 'Un script pose les questions et démarre tout' }, { id: 'portainer', label: 'Portainer / compose', hint: 'Une pile à coller dans Portainer (Stacks → Add stack) ou un docker-compose.yml' }]} />
+        <Seg value={mode} onChange={setMode} options={[{ id: 'make', label: 'Terminal (Makefile)', hint: 'Un script pose les questions et démarre tout (ou n\'écrit que le .env et le compose)' }, { id: 'compose', label: 'docker-compose.yml', hint: 'Un fichier compose à enregistrer sur la machine, sans le Makefile' }]} />
         {mode === 'make' ? <>
           <div className="codebox wrap"><CopyBtn text={quick} /><pre><Terminal size={12} /> {quick}</pre></div>
           <div className="muted small">Le script utilise la même version que ce hub. Il vous demande selon le type choisi : où se trouve la configuration de votre Traefik (dossier ou volume Docker), son journal d'accès, les dossiers de vos projets compose, puis il se connecte à ce hub avec l'adresse et le jeton déjà fournis : rien d'autre à saisir. Aucun port à ouvrir : le worker appelle ce hub, qui doit être joignable en HTTPS depuis cette machine ({window.location.host}).</div>
           <details className="small"><summary className="muted" style={{ cursor: 'pointer' }}>Avec les questions guidées : make install</summary>
             <div className="muted small" style={{ marginTop: 6 }}>Lancez <code>make install</code>, choisissez « worker ». Il demandera dans l'ordre : ce que gère le worker, votre Traefik et/ou Docker, l'adresse du hub (<code>{hub}</code>), puis le jeton ci-dessus.</div></details>
         </> : <>
-          <div className="muted small">Répondez aux champs : la pile ci-dessous se met à jour. Collez-la ensuite dans <b>Portainer → Stacks → Add stack → Web editor</b> (ou dans un <code>docker-compose.yml</code>), puis « Deploy the stack ». Aucune variable d'environnement à saisir : le hub et le jeton y sont déjà.</div>
+          <div className="muted small">Répondez aux champs : le fichier ci-dessous se met à jour. Enregistrez-le en <code>docker-compose.yml</code> sur la machine à relier, puis lancez <code>docker compose up -d</code>. Aucune variable d'environnement à saisir : le hub et le jeton y sont déjà.</div>
           <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-            {tr && <Field label="Config dynamique de Traefik" tip="Ce que Traefik lit en file provider (ses fichiers .yml). Un volume Docker existant (nom, visible dans Portainer → Volumes) ou le chemin absolu d'un dossier de la machine.">
+            {tr && <Field label="Config dynamique de Traefik" tip="Ce que Traefik lit en file provider (ses fichiers .yml). Un volume Docker existant (son nom : docker volume ls) ou le chemin absolu d'un dossier de la machine.">
               <input className="input" value={o.dyn} onChange={set('dyn')} placeholder="traefik_dynamic  ou  /opt/traefik/dynamic" /></Field>}
             {tr && <Field label="Réseau de Traefik (facultatif)" tip="Le réseau Docker où se trouve Traefik. Nécessaire seulement pour lire son état en direct via son API.">
               <input className="input" value={o.net} onChange={set('net')} placeholder="proxy" /></Field>}
@@ -71,7 +71,7 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
           </div>}
           {tr && !o.dyn && <div className="muted small">Indiquez la config dynamique : sinon le chemin d'exemple reste à remplacer à la main.</div>}
           <div className="codebox"><CopyBtn text={yaml} /><pre>{yaml}</pre></div>
-          <div className="muted small">Les volumes nommés sont déclarés <code>external</code> : ils doivent déjà exister (Portainer → Volumes). Le jeton est à usage unique ; une fois le worker connecté, vous pouvez le retirer de la pile.</div>
+          <div className="muted small">Les volumes nommés sont déclarés <code>external</code> : ils doivent déjà exister (docker volume ls). Le jeton est à usage unique ; une fois le worker connecté, vous pouvez le retirer du fichier.</div>
         </>}</div></div>
       <div className={'step ' + (online ? 'done' : '')}><span className="num">{online ? <Check size={14} /> : 2}</span><div className="grow col" style={{ gap: 4 }}>
         <b>{online ? 'Worker connecté !' : 'En attente du worker…'}</b>
