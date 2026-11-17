@@ -33,7 +33,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
   if (q.isLoading) return <Modal title={name} onClose={onClose}><Loading /></Modal>
   if (q.error) return <Modal title={name} onClose={onClose}><div className="banner err">{q.error.message}</div></Modal>
   const c = q.data; const [stLabel, stKind] = stateOf({ state: c.state, health: c.health }); const running = c.state === 'running'
-  const tf = hasModule('traefik') || c.links.some((l) => l.node)   // un nœud sans Traefik montre quand même les sites servis ailleurs
+  const tf = hasModule('traefik') || !!node?.traefikVia || c.links.some((l) => l.node)   // un nœud sans Traefik montre quand même les sites servis ailleurs
   const tabs = [{ id: 'overview', label: 'Aperçu', icon: <InfoIcon size={14} /> }, ...(tf ? [{ id: 'traefik', label: 'Traefik', icon: <Workflow size={14} />, count: c.links.length || undefined }, { id: 'access', label: 'Accès', icon: <Activity size={14} /> }] : []), ...(c.canLogs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : [])]
   const remove = async () => { if (await confirm({ title: `Supprimer « ${c.name} » ?`, message: 'Le conteneur est supprimé définitivement (ses volumes nommés sont conservés). Ses fichiers vivent dans le dossier du projet : ils ne sont pas touchés.', confirmLabel: 'Supprimer' })) del.mutate({ volumes: false }) }
   return (
@@ -73,7 +73,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
               <div className="col" style={{ gap: 2, marginTop: 8 }}>{Object.entries(c.labels).sort().map(([k, v]) => <div key={k} className="small mono" style={{ wordBreak: 'break-all' }}><span className="muted">{k}</span> = {v}</div>)}</div></details>
           </div>)}
         {tab === 'traefik' && (c.links.length === 0
-          ? <div className="card"><Empty><Workflow size={28} /><div>Aucune règle Traefik ne mène à ce conteneur.<br /><span className="muted small">On cherche ses labels <code>traefik.http.routers.*</code> et les services d'un fichier dont l'adresse est le nom de ce conteneur.</span>{can('sites.create') && <div style={{ marginTop: 10 }}><Btn title="Ouvre l'assistant de site, déjà rempli pour ce conteneur" kind="primary" onClick={() => publishNow(c.name, toast).then(onClose)}><Globe size={14} /> Publier sur Traefik</Btn></div>}</div></Empty></div>
+          ? <div className="card"><Empty><Workflow size={28} /><div>Aucune règle Traefik ne mène à ce conteneur.<br /><span className="muted small">On cherche ses labels <code>traefik.http.routers.*</code> et les services d'un fichier dont l'adresse est le nom de ce conteneur.</span>{can('sites.create') && <div style={{ marginTop: 10 }}><Btn title="Ouvre l'assistant de site, déjà rempli pour ce conteneur" kind="primary" onClick={() => publishNow(c.name, toast, setNode).then(onClose)}><Globe size={14} /> Publier sur Traefik</Btn></div>}</div></Empty></div>
           : <div className="col">{c.links.map((l) => (
             <div key={l.router} className="card col" style={{ gap: 6 }}>
               <div className="row" style={{ gap: 8 }}><b className="mono">{l.router}</b><Badge kind={l.sure ? 'ok' : 'warn'} title={l.sure ? 'Lien certain' : 'Lien probable : le nom ou le port ne correspond pas exactement'}>{l.sure ? 'certain' : 'probable'}</Badge><Badge>{l.provider === 'docker' ? 'labels du conteneur' : 'fichier YAML'}</Badge>{l.node && <Badge kind="info" title="Ce site est servi par le Traefik d'un autre nœud, qui vise l'adresse et le port publié de ce conteneur">sur le nœud « {l.node.name} »</Badge>}

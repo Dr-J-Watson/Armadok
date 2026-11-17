@@ -23,7 +23,7 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
   const mode = mode0
   const tr = o.modules !== 'docker'; const dk = o.modules !== 'traefik'
   const yaml = composeFor({ hub, token, version: meta.data?.version, ...o })
-  const quick = `mkdir armadok-worker && cd armadok-worker\ncurl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile\nmake worker HUB_URL=${hub} ENROLL_TOKEN=${token} WORKER_IMAGE=${imageFor(meta.data?.version)}${o.modules === 'traefik' ? '' : ` WORKER_MODULES=${o.modules}`}`
+  const quick = `mkdir armadok-worker && cd armadok-worker\ncurl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile\nmake worker HUB_URL=${hub} ENROLL_TOKEN=${token} WORKER_IMAGE=${imageFor(meta.data?.version)}${o.modules === 'traefik' ? '' : ` WORKER_MODULES=${o.modules}`}${dk && o.addr.trim() ? ` WORKER_ADDRESSES=${o.addr.trim().replace(/\s+/g, '')}` : ''}`
   const until = expires ? `à ${fmtDate(expires * 1000)}` : 'dans 15 minutes'
   useEffect(() => { if (online) onOnline?.() }, [online]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -61,6 +61,7 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
             {dk && <Field label="Groupe du socket Docker (GID)" tip="Le worker doit appartenir au groupe du socket Docker. Pour le connaître : stat -c %g /var/run/docker.sock">
               <input className="input mono" value={o.dgid} onChange={set('dgid')} style={{ width: 120 }} /></Field>}
           </div>
+          {dk && <Field label="Adresse de cette machine pour un Traefik distant (facultatif)" tip="Si les sites de cette machine passent par le Traefik d'un AUTRE nœud (par exemple celui du hub), indiquez ici l'adresse par laquelle ce Traefik la joint : IP du réseau local ou du VPN, ou un nom. Séparez-en plusieurs par des virgules. Le hub relie alors tout seul ses conteneurs aux règles de ce Traefik (Ce nœud → Docker : « Publier les sites avec le Traefik de… »)."><input className="input mono" value={o.addr} onChange={set('addr')} placeholder="192.168.1.20" /></Field>}
           {dk && <div className="banner warn">Donner Docker à un worker lui donne un accès équivalent à <b>root</b> sur cette machine. Les droits « Docker » de ce nœud (menu « Droits ») décident qui peut s'en servir.</div>}
           {dk && <label className="row small" style={{ gap: 8 }}><input type="checkbox" checked={o.exec} onChange={(e) => setO((x) => ({ ...x, exec: e.target.checked }))} />Autoriser le terminal dans les conteneurs de cette machine<Info>Ajoute WORKER_ALLOW_EXEC=true. Sans cela, le worker refuse tout terminal, même si le hub le demande. Il faut aussi le droit « docker.exec » sur ce nœud (jamais donné d'office, 2FA possible).</Info></label>}
           {tr && <label className="row small" style={{ gap: 8 }}><input type="checkbox" checked={o.certs} onChange={(e) => setO((x) => ({ ...x, certs: e.target.checked }))} />Afficher les certificats de ce Traefik (relais sans clé privée)<Info>Ajoute un second conteneur, sans réseau et en lecture seule, qui lit acme.json et ne transmet que les noms de domaines et les dates d'expiration. Les clés privées ne quittent jamais ce conteneur.</Info></label>}

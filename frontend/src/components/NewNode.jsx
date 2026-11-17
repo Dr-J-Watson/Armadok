@@ -9,14 +9,14 @@ import WorkerSetup from './WorkerSetup.jsx'
 
 // Assistant « Nouveau nœud » : 1) nom, 2) installation du worker avec détection de la connexion.
 export default function NewNode({ onClose }) {
-  const { toast } = useUi(); const { setNode, reload } = useNode(); const nav = useNavigate()
+  const { toast } = useUi(); const { setNode, reload, nodes } = useNode(); const nav = useNavigate()
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get('/meta'), staleTime: 60000 })
-  const [f, setF] = useState({ name: '', description: '', dnsTarget: '', eps: null, res: null, modules: 'traefik' }); const set = (k, v) => setF({ ...f, [k]: v })
+  const [f, setF] = useState({ name: '', description: '', dnsTarget: '', eps: null, res: null, modules: 'traefik', via: '' }); const set = (k, v) => setF({ ...f, [k]: v })
   const eps = f.eps ?? (meta.data?.entrypoints?.length ? meta.data.entrypoints.join(', ') : 'web, websecure')
   const res = f.res ?? (meta.data?.certResolvers || []).join(', ')
   const tr = f.modules !== 'docker'; const list = (s) => s.split(/[,\s;]+/).map((x) => x.trim()).filter(Boolean)
   const [made, setMade] = useState(null); const [busy, setBusy] = useState(false)
-  const create = () => { setBusy(true); api.post('/nodes', { name: f.name, description: f.description, dnsTarget: f.dnsTarget, ...(tr ? { entrypoints: list(eps), certResolvers: list(res) } : {}) }).then((r) => { setMade(r); reload() }).catch((e) => toast(e.message, 'err')).finally(() => setBusy(false)) }
+  const create = () => { setBusy(true); api.post('/nodes', { name: f.name, description: f.description, dnsTarget: f.dnsTarget, ...(tr ? { entrypoints: list(eps), certResolvers: list(res) } : {}) }).then(async (r) => { if (f.via && f.modules !== 'traefik') await api.put(`/nodes/${r.id}`, { traefikVia: f.via }).catch((e) => toast(e.message, 'err')); setMade(r); reload() }).catch((e) => toast(e.message, 'err')).finally(() => setBusy(false)) }
   const open = () => { setNode(made.id); onClose(); nav('/node') }
   if (!made) return (
     <Modal title="Nouveau nœud" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!f.name.trim()} onClick={create}>Créer et continuer</Btn></>}>
@@ -25,6 +25,7 @@ export default function NewNode({ onClose }) {
         <Field label="Que doit gérer ce nœud ?" help={WORKER_TYPES.find((t) => t.id === f.modules)?.hint}><Seg value={f.modules} onChange={(m) => set('modules', m)} options={WORKER_TYPES} /></Field>
         <Field label="Nom du nœud" help="Ex : Maison, Serveur Paris, Client X."><input className="input" autoFocus value={f.name} maxLength={60} onChange={(e) => set('name', e.target.value)} onKeyDown={(e) => e.key === 'Enter' && f.name.trim() && create()} /></Field>
         <Field label="Description" help="Facultatif."><input className="input" value={f.description} maxLength={200} onChange={(e) => set('description', e.target.value)} /></Field>
+        {f.modules !== 'traefik' && nodes.some((n) => (n.modules || []).includes('traefik')) && <Field label="Ses sites passent par le Traefik de…" help="Facultatif. Pour un nœud sans Traefik : le Traefik d'un autre nœud (le principal par exemple) publie ses sites. Les conteneurs sont reliés automatiquement à ses règles. Modifiable dans « Ce nœud »."><select className="input" value={f.via} onChange={(e) => set('via', e.target.value)}><option value="">— aucun pour l'instant —</option>{nodes.filter((n) => (n.modules || []).includes('traefik')).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</select></Field>}
         {tr && <Field label="Adresse IP publique de cette machine" help="Facultatif : proposée quand vous créez un enregistrement DNS pour un site de ce nœud."><input className="input mono" value={f.dnsTarget} onChange={(e) => set('dnsTarget', e.target.value.trim())} placeholder="203.0.113.10" /></Field>}
         {tr && <div className="fgrid">
           <Field label="Entrypoints de ce Traefik" help="Les ports d'écoute, tels que nommés dans sa configuration. Ex : web (80), websecure (443)."><input className="input mono" value={eps} onChange={(e) => set('eps', e.target.value)} /></Field>

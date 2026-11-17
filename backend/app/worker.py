@@ -64,6 +64,16 @@ def worker_modules() -> tuple[str, ...]:
     return proto.parse_modules(env("WORKER_MODULES"))
 
 
+def announced_addresses() -> list[str]:
+    """Adresses (IP ou noms) par lesquelles un Traefik d'un AUTRE nœud peut joindre les conteneurs de cette machine (WORKER_ADDRESSES=192.168.1.20,nas.lan)."""
+    out = []
+    for a in (env("WORKER_ADDRESSES") or "").replace(";", ",").split(","):
+        a = a.strip().lower()
+        if a and len(a) <= 253 and all(c.isalnum() or c in ".-:" for c in a) and a not in out:
+            out.append(a)
+    return out[:10]
+
+
 def exec_allowed() -> bool:
     """Le terminal dans un conteneur n'est ouvert que si l'administrateur du worker l'a voulu."""
     return (env("WORKER_ALLOW_EXEC") or "").lower() in ("1", "true", "yes", "on")
@@ -222,7 +232,7 @@ async def session(hub: str, ident: Identity, store: Store, api_url: str) -> None
                 await ws.send(json.dumps(msg))
 
         await send({"type": "hello", "nodeId": ident.node_id, "version": VERSION, "protocol": proto.PROTOCOL, "modules": list(worker_modules()),
-                    "exec": "docker" in worker_modules() and exec_allowed(),
+                    "exec": "docker" in worker_modules() and exec_allowed(), "addresses": announced_addresses(),
                     "access": "traefik" in worker_modules() and worker_log.available()})
         challenge = json.loads(await asyncio.wait_for(ws.recv(), 15))
         if challenge.get("type") != "challenge":

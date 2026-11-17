@@ -64,7 +64,8 @@ def node_out(row) -> dict:
            "status": row["status"], "apiUrl": row["api_url"], "entrypoints": _split(row["entrypoints"]),
            "certResolvers": _split(row["cert_resolvers"]), "dnsTarget": row["dns_target"], "connection": "online",
            "metricsEnabled": bool(row["prometheus_url"]), "webhookSet": bool(row["webhook_url"]), "mfaCaps": sorted(capmod.parse_mfa(row["mfa_caps"])),
-           "lastSeen": None, "workerVersion": "", "modules": list(modules_of(row)), "addresses": _split(row["addresses"])}
+           "lastSeen": None, "workerVersion": "", "modules": list(modules_of(row)), "addresses": _split(row["addresses"]), "addressesSeen": _split(row["addresses_seen"]),
+           "traefikVia": row["traefik_via"] or ""}
     if row["kind"] == "remote":
         w = db.one("SELECT last_seen, version FROM node_workers WHERE node_id=?", (row["id"],))
         out["connection"] = "pending" if not w else "online" if worker_link.online(row["id"]) else "offline"
@@ -385,6 +386,7 @@ class NodePatch(BaseModel):
     prometheusUrl: str | None = Field(default=None, max_length=300)
     webhookUrl: str | None = Field(default=None, max_length=500)
     addresses: list[str] | None = Field(default=None, max_length=20)
+    traefikVia: str | None = Field(default=None, max_length=64)   # nœud dont le Traefik publie les sites de ce nœud ; vide = aucun
 
 
 @router.put("/nodes/{nid}")
@@ -404,6 +406,15 @@ def update_node(body: NodePatch, ctx: NodeCtx = Depends(_path_cap("node.settings
         sets["dns_target"] = _check_dns_target(body.dnsTarget)
     if body.addresses is not None:
         sets["addresses"] = _clean_addresses(body.addresses)
+    if body.traefikVia is not None:
+        via = body.traefikVia.strip()
+        if via:
+            if via == ctx.id:
+                raise HTTPException(422, "Un nœud ne peut pas passer par son propre Traefik ici : c'est déjà le cas s'il a Traefik")
+            other = next((c for c in accessible_nodes(ctx.p) if c.id == via), None)
+            if not other or "traefik" not in (other.node.get("modules") or []) or not other.can("sites.view"):
+                raise HTTPException(422, "Ce nœud n'existe pas, n'a pas Traefik, ou vous ne pouvez pas voir ses sites")
+        sets["traefik_via"] = via
     if body.apiUrl is not None and ctx.node["kind"] == "remote":
         raise HTTPException(400, "L'URL de l'API Traefik d'un nœud distant se règle sur son worker (TRAEFIK_API_URL)")
     if body.apiUrl is not None and body.apiUrl.strip().rstrip("/") != ctx.node["apiUrl"]:

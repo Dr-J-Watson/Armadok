@@ -25,7 +25,7 @@ const svcLabel = (x) => (x.done ? 'Terminé' : SVC_LABEL[x.state])
 const svcDot = (x) => (x.done ? SVC_DOT.absent : SVC_DOT[x.state])
 
 export default function Project() {
-  const { id } = useParams(); const go = useGo(); const { hasModule, can } = useNode(); const [params, setParams] = useSearchParams()
+  const { id } = useParams(); const go = useGo(); const { hasModule, can, node, setNode } = useNode(); const [params, setParams] = useSearchParams()
   const q = useQuery({ queryKey: ['project', id], queryFn: () => api.get(`/projects/${id}`), refetchInterval: 10000 })
   const stat = useProjectStats(); const { toast, confirm } = useUi(); const qc = useQueryClient(); const [kill, setKill] = useState(false)
   const unimport = useMutation({ mutationFn: () => api.del(`/projects/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet retiré de la liste'); go('/projects') }, onError: (e) => toast(e.message, 'err') })
@@ -34,7 +34,7 @@ export default function Project() {
   useEffect(() => { if (q.data?.name) document.title = `${q.data.name} · Projets · Armadok` }, [q.data?.name])
   if (q.isLoading) return <Loading />
   if (q.error) return <div className="banner err">{q.error.message}</div>
-  const p = q.data; const tf = hasModule('traefik') || p.hosts.length > 0; const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const all = [...p.services.flatMap((x) => x.containers), ...p.extra]
+  const p = q.data; const via = !!node?.traefikVia; const tf = hasModule('traefik') || p.hosts.length > 0 || via; const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const all = [...p.services.flatMap((x) => x.containers), ...p.extra]
   const links = p.services.flatMap((x) => x.links.map((l) => ({ ...l, svc: x.name }))); const uniq = [...new Map(links.map((l) => [l.router, l])).values()]
   const tabs = [{ id: 'overview', label: 'Vue d\'ensemble', icon: <LayoutDashboard size={14} /> }, { id: 'services', label: 'Services', icon: <Boxes size={14} />, count: p.services.length },
     ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
@@ -70,7 +70,7 @@ export default function Project() {
               <div className="row"><i className="dot" style={{ background: svcDot(x) }} /><b className="grow">{x.name}</b><Badge kind={x.state === 'running' ? 'ok' : x.state === 'partial' ? 'warn' : ''} title={x.done ? 'Le conteneur s\'est arrêté normalement (code 0) : service ponctuel, par exemple une initialisation.' : undefined}>{svcLabel(x)}</Badge></div>
               <div className="muted small ellipsis">{x.image || (x.build ? 'build local' : '—')}</div>
               {x.containers.map((c) => <div key={c.id} className="row" style={{ gap: 6, flexWrap: 'wrap' }}><span className="mono small">{c.name}</span>{c.ports.slice(0, 2).map((pt, i) => <Badge key={i}>{portLabel(pt)}</Badge>)}<Btn small kind="ghost" className="right" onClick={() => set({ c: c.name, ct: null })}>Détails</Btn></div>)}
-              {tf && can('sites.create') && x.containers.length > 0 && x.hosts.length === 0 && <Btn small onClick={() => publishNow(x.containers[0].name, toast)}><Globe size={13} /> Publier sur Traefik</Btn>}
+              {tf && (can('sites.create') || via) && x.containers.length > 0 && x.hosts.length === 0 && <Btn small onClick={() => publishNow(x.containers[0].name, toast, setNode)}><Globe size={13} /> Publier sur Traefik</Btn>}
               {x.containers.length === 0 && <span className="muted small">{x.profiles.length ? `Démarré avec le profil « ${x.profiles.join(', ')} »` : 'Aucun conteneur : le service n\'est pas démarré.'}</span>}
               {tf && x.hosts.length > 0 && <div className="row wrap" style={{ gap: 4 }}>{x.hosts.map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer"><Globe size={11} /> {h}</a>)}</div>}
             </div>))}

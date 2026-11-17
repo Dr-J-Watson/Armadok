@@ -87,13 +87,13 @@ function MfaPolicy({ node, role, user, onSaved }) {
 
 // ------------------------------------------------------------------ réglages
 function General({ node, user, onSaved }) {
-  const { toast } = useUi(); const qc = useQueryClient()
-  const init = { name: node.name, description: node.description, entrypoints: node.entrypoints, certResolvers: node.certResolvers, dnsTarget: node.dnsTarget, apiUrl: node.apiUrl || '', addresses: node.addresses || [] }
+  const { toast } = useUi(); const qc = useQueryClient(); const { nodes } = useNode()
+  const init = { name: node.name, description: node.description, entrypoints: node.entrypoints, certResolvers: node.certResolvers, dnsTarget: node.dnsTarget, apiUrl: node.apiUrl || '', addresses: node.addresses || [], traefikVia: node.traefikVia || '' }
   const [f, setF] = useState(init); const set = (k, v) => setF({ ...f, [k]: v })
   const dirty = JSON.stringify(f) !== JSON.stringify(init)
   const platformAdmin = user.role === 'admin'
   const save = useMutation({
-    mutationFn: () => api.put(`/nodes/${node.id}`, { name: f.name, description: f.description, entrypoints: f.entrypoints, certResolvers: f.certResolvers, dnsTarget: f.dnsTarget, addresses: f.addresses, ...(platformAdmin && node.kind === 'local' ? { apiUrl: f.apiUrl } : {}) }),
+    mutationFn: () => api.put(`/nodes/${node.id}`, { name: f.name, description: f.description, entrypoints: f.entrypoints, certResolvers: f.certResolvers, dnsTarget: f.dnsTarget, addresses: f.addresses, ...(node.modules?.includes('docker') ? { traefikVia: f.traefikVia } : {}), ...(platformAdmin && node.kind === 'local' ? { apiUrl: f.apiUrl } : {}) }),
     onSuccess: () => { toast('Réglages enregistrés'); qc.invalidateQueries({ queryKey: ['meta'] }); onSaved() }, onError: (e) => toast(e.message, 'err'),
   })
   return (
@@ -111,6 +111,10 @@ function General({ node, user, onSaved }) {
       {node.modules?.includes('docker') && <div className="card col">
         <div className="row"><h3>Docker</h3><Info>Ce nœud gère Docker. Ses adresses servent à relier ses conteneurs au Traefik d'un AUTRE nœud.</Info></div>
         <Field label="Adresses de cette machine" help="Les IP ou noms par lesquels les autres nœuds la joignent (réseau local, VPN, DNS). Quand le Traefik d'un autre nœud vise « adresse:port » et que ce conteneur publie ce port, le lien est trouvé tout seul : on le voit dans la fiche du conteneur, avec les statistiques d'accès. Sans le nom ni le port : « 10.0.0.5 », « srv-a.lan »."><Chips value={f.addresses} onChange={(v) => set('addresses', v)} placeholder="10.0.0.5, srv-a.lan…" /></Field>
+        {(node.addressesSeen || []).length > 0 && <div className="muted small">Annoncées par le worker lui-même (<code>WORKER_ADDRESSES</code>) : {(node.addressesSeen || []).map((a) => <code key={a} style={{ marginRight: 6 }}>{a}</code>)}— elles s'ajoutent à celles-ci.</div>}
+        <Field label="Publier les sites de cette machine avec le Traefik de…" help="Pour un nœud sans Traefik (« Docker seul ») ou dont les sites passent par un autre Traefik, par exemple celui du hub. Les conteneurs de cette machine sont alors reliés automatiquement aux règles de ce Traefik (par l'adresse de la machine et le port publié), avec leurs statistiques d'accès ; « Publier sur Traefik » crée le site sur ce Traefik, vers l'adresse de la machine. Il faut que ce Traefik puisse joindre cette machine (réseau local, VPN) et qu'au moins une adresse soit connue ci-dessus.">
+          <select className="input" value={f.traefikVia} onChange={(e) => set('traefikVia', e.target.value)}><option value="">— aucun (ce nœud a son Traefik, ou pas de site) —</option>{nodes.filter((n) => n.id !== node.id && (n.modules || []).includes('traefik')).map((n) => <option key={n.id} value={n.id}>{n.name}</option>)}</select></Field>
+        {f.traefikVia && f.addresses.length === 0 && !(node.addressesSeen || []).length && <div className="banner warn" style={{ margin: 0 }}>Aucune adresse n'est connue pour cette machine : sans elle, le lien automatique ne peut pas se faire. Ajoutez-la ci-dessus (ou <code>WORKER_ADDRESSES</code> dans le worker).</div>}
       </div>}
       <div className="card col">
         <div className="row"><h3>DNS</h3><Info>Réglage utilisé quand vous créez un enregistrement DNS pour un site de ce nœud.</Info></div>

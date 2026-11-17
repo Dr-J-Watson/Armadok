@@ -16,7 +16,7 @@ const FILTERS = [['all', 'Tous'], ['running', 'En marche'], ['stopped', 'Arrêt�
 const TABS = ['containers', 'images', 'networks', 'volumes']
 
 export default function Docker() {
-  const { can, hasModule } = useNode(); const [params, setParams] = useSearchParams()
+  const { can, hasModule, node } = useNode(); const [params, setParams] = useSearchParams()
   const tab = TABS.includes(params.get('tab')) ? params.get('tab') : 'containers'
   const open = params.get('c'); const [q, setQ] = useState('')
   const info = useQuery({ queryKey: ['docker-info'], queryFn: () => api.get('/docker/info'), staleTime: 60000 })
@@ -33,7 +33,7 @@ export default function Docker() {
         <Tabs value={tab} onChange={setTab} tabs={[{ id: 'containers', label: 'Conteneurs', icon: <Container size={14} /> }, { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, { id: 'networks', label: 'Réseaux', icon: <NetIcon size={14} /> }, { id: 'volumes', label: 'Volumes', icon: <HardDrive size={14} /> }]} />
         <SearchBox value={q} onChange={setQ} placeholder="Rechercher un nom, une image, un projet, un port, un site…" />
       </div>
-      {tab === 'containers' && <Containers q={q} onOpen={openC} can={can} linked={hasModule('traefik')} />}
+      {tab === 'containers' && <Containers q={q} onOpen={openC} can={can} linked={hasModule('traefik') || !!node?.traefikVia} />}
       {tab === 'images' && <Images q={q} can={can} onOpenContainer={openC} />}
       {tab === 'networks' && <Networks q={q} can={can} onOpen={openC} />}
       {tab === 'volumes' && <Volumes q={q} can={can} onOpen={openC} />}

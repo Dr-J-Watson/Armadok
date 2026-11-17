@@ -244,6 +244,10 @@ async def worker_ws(ws: WebSocket):
             db.run("UPDATE nodes SET modules=? WHERE id=?", (mods, node_id))
             audit("worker", "node.worker.modules", mods, node=node_id)
             events.publish("nodes")
+        seen = ",".join(a for a in (str(x).strip().lower() for x in (hello.get("addresses") or [])[:10] if isinstance(x, str)) if a and len(a) <= 253 and all(c.isalnum() or c in ".-:" for c in a))
+        if db.one("SELECT 1 FROM nodes WHERE id=? AND addresses_seen!=?", (node_id, seen)):
+            db.run("UPDATE nodes SET addresses_seen=? WHERE id=?", (seen, node_id))
+            events.publish("nodes")
         link.feat = {"exec": hello.get("exec") is True and "docker" in mods, "access": hello.get("access") is True and "traefik" in mods}
         accesslog.remote_hello(node_id, link.feat["access"])
         await ws.send_text(json.dumps({"type": "ready"}))

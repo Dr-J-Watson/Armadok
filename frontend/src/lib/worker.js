@@ -2,7 +2,7 @@
 const q = (s) => JSON.stringify(String(s))
 const isPath = (s) => /^(\/|\.\/|\.\.\/)/.test(s)
 
-export const WORKER_DEFAULTS = { dyn: '', net: '', api: '', puid: '1000', pgid: '1000', certs: false, acme: '', acmeFile: 'acme.json', data: 'worker_data', modules: 'traefik', dgid: '984', roots: '', logs: '', logFile: 'access.log', exec: false }
+export const WORKER_DEFAULTS = { dyn: '', net: '', api: '', puid: '1000', pgid: '1000', certs: false, acme: '', acmeFile: 'acme.json', data: 'worker_data', modules: 'traefik', dgid: '984', roots: '', logs: '', logFile: 'access.log', exec: false, addr: '' }
 
 // Ce que gère un worker : « traefik » (Traefik + DNS, le défaut), « docker » (conteneurs et projets compose) ou « both ».
 export const WORKER_TYPES = [{ id: 'traefik', label: 'Traefik + DNS', hint: 'Les sites, protections et certificats du Traefik de cette machine (le DNS reste géré par le hub).' }, { id: 'docker', label: 'Docker seul', hint: 'Les conteneurs et projets compose de cette machine, sans Traefik.' }, { id: 'both', label: 'Les deux', hint: 'Traefik ET Docker : la liaison complète sur cette machine.' }]
@@ -58,7 +58,7 @@ export function composeFor({ hub, token, version, ...o }) {
     logVol = `      - ${src}\n`
   }
   const roots = rootsOf(o.roots)
-  const dockerEnv = dk ? `      DOCKER_SOCKET: /var/run/docker.sock\n      PGROUPS: "${o.dgid}"                          # groupe du socket Docker (stat -c %g /var/run/docker.sock) : le worker le garde en abandonnant ses droits\n      PROJECT_ROOTS: ${roots.length ? roots.join(',') : '/chemin/vers/projets'}\n${o.exec ? '      WORKER_ALLOW_EXEC: "true"                  # autorise le terminal dans les conteneurs depuis le hub (droit « docker.exec »)\n' : ''}` : ''
+  const dockerEnv = dk ? `      DOCKER_SOCKET: /var/run/docker.sock\n      PGROUPS: "${o.dgid}"                          # groupe du socket Docker (stat -c %g /var/run/docker.sock) : le worker le garde en abandonnant ses droits\n      PROJECT_ROOTS: ${roots.length ? roots.join(',') : '/chemin/vers/projets'}\n${o.addr.trim() ? `      WORKER_ADDRESSES: ${q(o.addr.trim().replace(/\s+/g, ''))}          # adresses de cette machine, pour le Traefik d'un autre nœud (le hub)\n` : ''}${o.exec ? '      WORKER_ALLOW_EXEC: "true"                  # autorise le terminal dans les conteneurs depuis le hub (droit « docker.exec »)\n' : ''}` : ''
   const dockerVols = dk ? `      - /var/run/docker.sock:/var/run/docker.sock   # ATTENTION : accès équivalent à root sur cette machine\n${(roots.length ? roots : ['/chemin/vers/projets']).map((r) => `      - ${r}:${r}                         # même chemin dedans et dehors\n`).join('')}` : ''
   const net = tr && o.net ? '    networks: [proxy]\n' : ''
   const netDecl = tr && o.net ? `\nnetworks:\n  proxy:\n    external: true\n    name: ${q(o.net)}\n` : ''

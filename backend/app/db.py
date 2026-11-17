@@ -247,7 +247,9 @@ MIGRATIONS = {
     "log_offsets": [("head", "TEXT NOT NULL DEFAULT ''")],
     "nodes": [("mfa_caps", "TEXT NOT NULL DEFAULT ''"), ("deleted_at", "REAL"), ("prometheus_url", "TEXT NOT NULL DEFAULT ''"), ("webhook_url", "TEXT NOT NULL DEFAULT ''"),
               ("modules", "TEXT NOT NULL DEFAULT 'traefik'"),
-              ("addresses", "TEXT NOT NULL DEFAULT ''")],   # adresses de la machine (IP, noms) : relier ses conteneurs au Traefik d'un AUTRE nœud   # ce que le nœud sait faire : traefik, docker (annoncé par le worker ; calculé pour le nœud local)
+              ("addresses", "TEXT NOT NULL DEFAULT ''"),
+              ("addresses_seen", "TEXT NOT NULL DEFAULT ''"),   # adresses annoncées par le worker lui-même (WORKER_ADDRESSES)
+              ("traefik_via", "TEXT NOT NULL DEFAULT ''")],   # nœud dont le Traefik publie les sites de CE nœud (ex. le hub, pour un worker « Docker seul »)   # adresses de la machine (IP, noms) : relier ses conteneurs au Traefik d'un AUTRE nœud   # ce que le nœud sait faire : traefik, docker (annoncé par le worker ; calculé pour le nœud local)
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
     "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''")],   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)

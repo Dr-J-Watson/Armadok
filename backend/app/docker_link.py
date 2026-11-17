@@ -40,16 +40,24 @@ def _local_links(ctx, simple: list[dict]) -> dict:
     return out
 
 
+def machine_addresses(node: dict) -> list[str]:
+    """Adresses de la machine d'un nœud : celles réglées à la main, plus celles que son worker annonce (WORKER_ADDRESSES)."""
+    return list(dict.fromkeys([*(node.get("addresses") or []), *(node.get("addressesSeen") or [])]))
+
+
 def _cross_links(ctx, simple: list[dict]) -> tuple[dict, dict]:
     """Conteneurs de CE nœud servis par le Traefik d'un AUTRE nœud (visible de la personne) : on compare les adresses de la machine et les ports publiés."""
-    addrs = list(ctx.node.get("addresses") or [])
+    addrs = machine_addresses(ctx.node)
     if not addrs or not any(c["published"] for c in simple):
         return {}, {}
     from .nodes import accessible_nodes
+    via = ctx.node.get("traefikVia") or ""
     out: dict[str, list[dict]] = {}
     ctxs: dict = {}
     for other in accessible_nodes(ctx.p):
         if other.id == ctx.id or "traefik" not in (other.node.get("modules") or []) or not other.can("sites.view") or other.node["status"] != "active":
+            continue
+        if via and other.id != via:   # un Traefik désigné : seul lui compte
             continue
         try:
             items = scope_items(other.p, other.store.items()[0])

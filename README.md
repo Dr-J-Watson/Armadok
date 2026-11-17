@@ -403,6 +403,7 @@ Le `docker-compose.yml` les définit, à ne pas changer : `TRAEFIK_DYNAMIC_DIR` 
 | `WORKER_MODULES` | ce que gère le worker : `traefik` (défaut), `docker` ou `traefik,docker` ; annoncé au hub à chaque connexion |
 | `TRAEFIK_ACCESS_LOG` | *(worker)* fichier du journal d'accès de Traefik, monté en lecture seule : le worker le **lit et l'envoie au hub** (statistiques de visiteurs, adresses IP, alertes de ce nœud) |
 | `PROJECT_ROOTS`, `DOCKER_SOCKET` | *(worker Docker)* dossiers des projets (montés au même chemin) et socket Docker |
+| `WORKER_ADDRESSES` | adresses (IP ou noms, séparées par des virgules) par lesquelles le Traefik d'un autre nœud joint cette machine : relie ses conteneurs aux sites de ce Traefik |
 | `WORKER_ALLOW_EXEC` | `true` pour autoriser le **terminal** dans les conteneurs de cette machine (refusé sinon, même si le hub le demande) |
 | `PUID`, `PGID` | *(piles Portainer, worker et hub)* identité que prend le conteneur après avoir donné `/data` à ce compte |
 | `PGROUPS` | *(pile Portainer du hub)* groupes supplémentaires conservés, séparés par des virgules : le groupe `docker`, pour joindre le socket |
@@ -662,6 +663,7 @@ Un onglet **Projets** et une page **Docker** s'ajoutent aux nœuds qui gèrent D
 | **Installer Traefik** | si le hub n'en détecte aucun, la page Projets propose de créer un projet Traefik (e-mail Let's Encrypt, réseau, HTTPS automatique, protections, journal d'accès…) sans rien démarrer avant relecture |
 | **Plusieurs fichiers compose** | un dossier avec un `override` ou des variantes (`prod`, `dev`…) : par défaut Armadok lance comme `docker compose up` (principal + override) ; sinon il demande quels fichiers fusionner et peut retenir le choix. L'arrêt et le redémarrage reprennent les fichiers du dernier lancement |
 | **Makefile du projet** | onglet qui liste les cibles avec leur description (`cible: ## texte` ou commentaire au-dessus) et les lance, sortie en direct ; droit « terminal » requis (les commandes s'exécutent dans le conteneur d'Armadok : `make`, `docker`, `git`) |
+| **Sites via le Traefik d'un autre nœud** | pour un worker « Docker seul » : `Ce nœud` → Docker → « Publier les sites avec le Traefik de… » (le hub, par exemple). Ses conteneurs sont reliés automatiquement aux règles de ce Traefik (adresse de la machine + port publié), avec leurs visiteurs ; « Publier sur Traefik » crée le site sur ce Traefik, vers l'adresse de la machine. L'adresse se donne avec `WORKER_ADDRESSES` (demandée par `make worker`) ou dans les réglages du nœud |
 | **Services « init »** | un service qui s'est arrêté normalement (code 0) est marqué « Terminé » et ne déclenche plus d'alerte |
 
 ### Activer (hub)

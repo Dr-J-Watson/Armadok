@@ -86,9 +86,20 @@ def publish_hint(cid: str, ctx: NodeCtx = Depends(docker_cap("docker.view"))):
     ports = sorted(set(exposed), key=lambda p: (p not in (80, 8080, 3000, 8000), p))
     port = int(declared) if declared.isdigit() else (ports[0] if ports else None)
     shared = [n for n in c["networks"] if n in prov["networks"]]
-    return {"name": (c["service"] or c["name"]).lower(), "container": c["name"], "port": port, "ports": ports, "url": f"http://{c['name']}:{port}" if port else f"http://{c['name']}:",
-            "networks": sorted(c["networks"]), "traefik": {**prov, "sharedNetworks": shared, "reachable": bool(shared) if prov["found"] else None},
-            "linked": bool(docker_link.link_containers(ctx, lst).get(c["name"])), "canCreate": ctx.can("sites.create")}
+    via = None
+    if ctx.node.get("traefikVia"):   # les sites de ce nœud passent par le Traefik d'un AUTRE nœud : il joint le conteneur par l'adresse de la machine et le port PUBLIÉ
+        from .nodes import accessible_nodes
+        other = next((x for x in accessible_nodes(ctx.p) if x.id == ctx.node["traefikVia"]), None)
+        if other:
+            addrs = docker_link.machine_addresses(ctx.node)
+            pub = next((p["public"] for p in c["ports"] if p["public"]), None)
+            via = {"id": other.id, "name": other.node["name"], "canCreate": other.can("sites.create"), "address": addrs[0] if addrs else "", "publicPort": pub}
+    url = f"http://{c['name']}:{port}" if port else f"http://{c['name']}:"
+    if via and via["address"] and via["publicPort"]:
+        url = f"http://{via['address']}:{via['publicPort']}"
+    return {"name": (c["service"] or c["name"]).lower(), "container": c["name"], "port": port, "ports": ports, "url": url, "via": via,
+            "networks": sorted(c["networks"]), "traefik": {**prov, "sharedNetworks": shared, "reachable": bool(shared) if prov["found"] and not via else None},
+            "linked": bool(docker_link.link_containers(ctx, lst).get(c["name"])), "canCreate": via["canCreate"] if via else ctx.can("sites.create")}
 
 
 class ActionBody(BaseModel):

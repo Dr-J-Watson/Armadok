@@ -302,7 +302,7 @@ build_compose() {
     local wv="- /var/run/docker.sock:/var/run/docker.sock   # ATTENTION : accès équivalent à root sur cette machine" wr
     for wr in $${PROJECT_ROOTS//,/ }; do wv+=$$'\n      '"- $$wr:$$wr"; done
     c=$${c//'#@wk-vol'/"$$wv"}
-    c=$${c//'#@wk-env'/'WORKER_MODULES: $${WORKER_MODULES}'$$'\n      '"DOCKER_SOCKET: /var/run/docker.sock"$$'\n      '"PROJECT_ROOTS: "'$${PROJECT_ROOTS}'$$'\n      '"WORKER_ALLOW_EXEC: "'$${WORKER_ALLOW_EXEC:-}'}
+    c=$${c//'#@wk-env'/'WORKER_MODULES: $${WORKER_MODULES}'$$'\n      '"DOCKER_SOCKET: /var/run/docker.sock"$$'\n      '"PROJECT_ROOTS: "'$${PROJECT_ROOTS}'$$'\n      '"WORKER_ALLOW_EXEC: "'$${WORKER_ALLOW_EXEC:-}'$$'\n      '"WORKER_ADDRESSES: "'$${WORKER_ADDRESSES:-}'}
     c=$${c//'#@wk-pgroups'/'PGROUPS: "$${DOCKER_GID}"'}
     c=$${c//'#@wk-group'/'group_add: ["$${DOCKER_GID}"]'}
   else
@@ -718,7 +718,7 @@ install_worker() {
     1|traefik|"") WORKER_MODULES=traefik; WORKER_NOTR=""; WORKER_DOCKER="";;
     *) die "Choix invalide : 1, 2 ou 3.";;
   esac
-  DYN=""; DYN_KIND=dir; OWNER=""; CERTS_SRC=""; CERTS_KIND=dir; LOG_SRC=""; LOG_KIND=dir; API=""; NET=""; PROJECT_ROOTS=""; DGID=""; WORKER_ALLOW_EXEC=""
+  DYN=""; DYN_KIND=dir; OWNER=""; CERTS_SRC=""; CERTS_KIND=dir; LOG_SRC=""; LOG_KIND=dir; API=""; NET=""; PROJECT_ROOTS=""; DGID=""; WORKER_ALLOW_EXEC=""; WORKER_ADDRESSES="$${WORKER_ADDRESSES:-}"
   if [ -z "$$WORKER_NOTR" ]; then
   sub "Configuration dynamique de Traefik"
   hint "Le dossier où Traefik lit ses fichiers de sites (file provider). Le worker y écrit ce que le hub lui demande, et rien d'autre."
@@ -769,6 +769,12 @@ install_worker() {
   echo
   hint "Terminal dans un conteneur : réservé au droit « docker.exec » du hub (jamais donné d'office), et refusé ici tant que vous ne l'autorisez pas."
   if yes "Autoriser le terminal dans les conteneurs de cette machine ?"; then WORKER_ALLOW_EXEC=true; fi
+  echo
+  hint "Sites publiés par le Traefik d'un AUTRE nœud (par exemple celui du hub) : indiquez l'adresse par laquelle ce Traefik joint cette machine"
+  hint "(IP du réseau local ou du VPN, ou un nom ; plusieurs : séparées par des virgules). Le hub relie alors tout seul les conteneurs à ses règles."
+  hint "Laissez vide si cette machine a son propre Traefik ou n'a pas de site. Ensuite : « Ce nœud » → Docker → « Publier les sites avec le Traefik de… »."
+  WORKER_ADDRESSES=$$(ask "Adresse de cette machine pour ce Traefik (facultatif)" "$$(hostname -I 2>/dev/null | awk '{print $$1}')" WORKER_ADDRESSES)
+  WORKER_ADDRESSES=$${WORKER_ADDRESSES// /}
   fi
   sub "Image du worker"
   hint "Utilisez la même version que le hub : le protocole entre les deux évolue avec les versions."
@@ -823,7 +829,7 @@ install_worker() {
       echo "TRAEFIK_NETWORK=$${NET:-proxy}"
       echo "PUID=$${OWNER%%:*}"
       echo "PGID=$${OWNER##*:}"
-      if [ -n "$$WORKER_DOCKER" ]; then echo; echo "# ── [TOUJOURS] ce que gère le worker (Docker : accès équivalent à root sur cette machine)"; echo "WORKER_MODULES=$$WORKER_MODULES"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; echo "DOCKER_GID=$$DGID"; echo "WORKER_ALLOW_EXEC=$$WORKER_ALLOW_EXEC"; fi
+      if [ -n "$$WORKER_DOCKER" ]; then echo; echo "# ── [TOUJOURS] ce que gère le worker (Docker : accès équivalent à root sur cette machine)"; echo "WORKER_MODULES=$$WORKER_MODULES"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; echo "DOCKER_GID=$$DGID"; echo "WORKER_ALLOW_EXEC=$$WORKER_ALLOW_EXEC"; echo "WORKER_ADDRESSES=$$WORKER_ADDRESSES"; fi
     } > stack.env
     chmod 600 stack.env
     good "docker-compose.stack.yml créé (la pile)."
@@ -868,7 +874,7 @@ install_worker() {
     echo "TRAEFIK_NETWORK=$${NET:-proxy}"
     echo "UID=$${OWNER%%:*}"
     echo "GID=$${OWNER##*:}"
-    if [ -n "$$WORKER_DOCKER" ]; then echo; echo "# ── [TOUJOURS] ce que gère le worker (Docker : accès équivalent à root sur cette machine)"; echo "WORKER_MODULES=$$WORKER_MODULES"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; echo "DOCKER_GID=$$DGID"; echo "WORKER_ALLOW_EXEC=$$WORKER_ALLOW_EXEC"; fi
+    if [ -n "$$WORKER_DOCKER" ]; then echo; echo "# ── [TOUJOURS] ce que gère le worker (Docker : accès équivalent à root sur cette machine)"; echo "WORKER_MODULES=$$WORKER_MODULES"; echo "PROJECT_ROOTS=$$PROJECT_ROOTS"; echo "DOCKER_GID=$$DGID"; echo "WORKER_ALLOW_EXEC=$$WORKER_ALLOW_EXEC"; echo "WORKER_ADDRESSES=$$WORKER_ADDRESSES"; fi
   } > .env
   chmod 600 .env
   good "docker-compose.yml et .env (droits 600) créés, data/ prêt."
