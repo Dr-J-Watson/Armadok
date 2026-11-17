@@ -75,7 +75,7 @@ def handle(store: Store, op: str, a: dict, api_url: str = "", modules=None):
     if op not in allowed or not isinstance(a, dict):
         raise StoreError("Opération non autorisée", 400)
     if op in proto.OPS_BY_MODULE["docker"]:
-        if op.startswith("d_exec_") and not exec_allowed():
+        if op.startswith(("d_exec_", "p_exec_")) and not exec_allowed():
             raise StoreError("Le terminal est désactivé sur ce worker (WORKER_ALLOW_EXEC=true pour l'autoriser)", 403)
         from . import host_ops   # seulement si ce worker gère Docker
         return host_ops.handle(op, a)

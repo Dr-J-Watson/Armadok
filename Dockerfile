@@ -19,8 +19,8 @@ COPY backend/requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 COPY backend/app ./app
 COPY --from=web /web/dist ./static
-# Git (projets liés à un dépôt : état, pull, retour à une version, clonage) et client SSH
-RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client && rm -rf /var/lib/apt/lists/*
+# Git (projets liés à un dépôt : état, pull, retour à une version, clonage), client SSH et make (cibles du Makefile d'un projet)
+RUN apt-get update && apt-get install -y --no-install-recommends git openssh-client make && rm -rf /var/lib/apt/lists/*
 # CLI Docker + plugins compose et buildx : « docker compose up / pull / build » des projets, via le socket monté (seulement si DOCKER_MANAGE=true)
 COPY --from=docker:cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker:cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose

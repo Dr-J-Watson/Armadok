@@ -5,6 +5,7 @@ Un projet est un DOSSIER sur la machine (le disque reste la source de vérité) 
 import hashlib
 import hmac
 import io
+import json
 import os
 import re
 import secrets
@@ -15,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 
-from . import crypto, db, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops
+from . import crypto, db, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops, worker_link
 from .config import settings
 from .nodes import NodeCtx, node_ctx
 from .routes_docker import run
@@ -97,7 +98,7 @@ def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]
             "state": row["state"] if row else "discovered", "tags": [t for t in (row["tags"] if row else "").split(",") if t], "services": services, "extra": [_slim(c) for c in extra],
             "status": status, "running": running, "total": len(expected), "alerts": alerts, "hosts": hosts, "containerIds": [c["id"] for c in cs],
             "access": docker_link.access_for(ctx, [l for s in services for l in s["links"]] + [l for c in extra for l in links.get(c["name"], [])], ctxs, totals=True) if access and hosts else None,
-            "hasEnv": e["hasEnv"], "hasGit": e["hasGit"], "build": e["build"], "mtime": e["mtime"], "missing": False}
+            "hasEnv": e["hasEnv"], "hasMake": e.get("hasMake", False), "hasGit": e["hasGit"], "build": e["build"], "mtime": e["mtime"], "missing": False}
 
 
 @router.get("")
@@ -189,15 +190,42 @@ def unimport(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
     return {"ok": True}
 
 
+def _choice(row) -> list[str]:
+    """Fichiers compose choisis pour ce projet (liste vide = automatique)."""
+    try:
+        v = json.loads(row["compose_files"] or "[]")
+    except (ValueError, KeyError, TypeError):
+        return []
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def _last_files(path: str, cs: list[dict]) -> list[str]:
+    """Fichiers compose du dernier lancement, relus sur les conteneurs du projet (label com.docker.compose.project.config_files), restreints à son dossier."""
+    for c in sorted(cs, key=lambda c: c.get("state") != "running"):
+        raw = c.get("configFiles") or ""
+        names = []
+        for part in raw.split(","):
+            pp = part.strip()
+            if pp.startswith(path.rstrip("/") + "/") and "/" not in pp[len(path.rstrip("/")) + 1:]:
+                names.append(pp.rsplit("/", 1)[1])
+        if names:
+            return names
+    return []
+
+
 @router.get("/{pid}")
 def detail(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     row = _row(ctx, pid)
-    e = run(ctx, "p_project", {"dir": row["path"]})
+    choice = _choice(row)
+    e = run(ctx, "p_project", {"dir": row["path"], "files": choice})
     containers = run(ctx, "d_containers", {"all": True})["containers"]
     others = [x for x in run(ctx, "p_discover")["projects"] if x["path"] != e["path"]]
     cs = assign([e] + others, containers).get(e["path"], [])
     links = docker_link.link_containers(ctx, containers)
     s = summarize(ctx, e, cs, links, row, access=False)
+    last = _last_files(e["path"], cs)
+    s["compose"] = {"candidates": e.get("composeFiles", []), "default": e.get("defaultFiles", []), "choice": choice, "last": last,
+                    "effective": choice or e.get("defaultFiles", []), "running": any(c["state"] == "running" for c in cs)}
     s["access"] = docker_link.access_for(ctx, [l for sv in s["services"] for l in sv["links"]], getattr(links, "ctxs", {}))
     s["perms"] = {"import": ctx.can("projects.import"), "deploy": ctx.can("projects.deploy"), "files": ctx.can("projects.files"), "edit": ctx.can("projects.edit"), "env": ctx.can("projects.env"),
                   "git": ctx.can("projects.git"), "delete": ctx.can("projects.delete"), "logs": ctx.can("docker.logs"), "control": ctx.can("docker.control"), "exec": ctx.can("docker.exec")}
@@ -317,6 +345,9 @@ def validate(pid: int, body: ValidateBody, ctx: NodeCtx = Depends(proj_cap("proj
 
 
 # ------------------------------------------------------------------ déploiement
+LAUNCHED_ACTIONS = ("down", "stop", "start", "restart", "ps")
+
+
 class ComposeBody(BaseModel):
     action: str = Field(max_length=20)
     services: list[str] = Field(default_factory=list, max_length=50)
@@ -324,6 +355,7 @@ class ComposeBody(BaseModel):
     pull: bool = False
     noCache: bool = False
     volumes: bool = False
+    files: list[str] = Field(default_factory=list, max_length=10)   # fichiers compose de cette commande ; vide = choix du projet, sinon automatique
 
 
 @router.post("/{pid}/compose")
@@ -333,8 +365,51 @@ def compose(pid: int, body: ComposeBody, ctx: NodeCtx = Depends(proj_cap("projec
     if body.volumes:
         ctx.need("projects.delete")   # « down --volumes » détruit les données
     d, row = _dir(ctx, pid)
-    r = run(ctx, "p_compose", {"dir": d, "action": body.action, "services": body.services, "build": body.build, "pull": body.pull, "noCache": body.noCache, "volumes": body.volumes})
-    ctx.audit(f"project.compose.{body.action}", f"{row['name']}{' : ' + ', '.join(body.services) if body.services else ''}{' (+ volumes)' if body.volumes else ''}")
+    files = body.files or _choice(row)
+    if not files and body.action in LAUNCHED_ACTIONS:   # arrêter / redémarrer / supprimer : avec ce qui a servi au dernier lancement, pas forcément le défaut
+        cs = [c for c in run(ctx, "d_containers", {"all": True})["containers"] if c.get("workingDir") and os.path.normpath(c["workingDir"]) == os.path.normpath(d)]
+        files = _last_files(d, cs)
+    r = run(ctx, "p_compose", {"dir": d, "action": body.action, "services": body.services, "build": body.build, "pull": body.pull, "noCache": body.noCache, "volumes": body.volumes, "files": files})
+    ctx.audit(f"project.compose.{body.action}", f"{row['name']}{' : ' + ', '.join(body.services) if body.services else ''}{' (+ volumes)' if body.volumes else ''}{' [' + ' + '.join(files) + ']' if len(files) > 1 else ''}")
+    return r
+
+
+class ComposeFilesBody(BaseModel):
+    files: list[str] = Field(default_factory=list, max_length=10)   # vide = automatique
+
+
+@router.put("/{pid}/compose-files")
+def set_compose_files(pid: int, body: ComposeFilesBody, ctx: NodeCtx = Depends(proj_cap("projects.deploy"))):
+    """Mémorise les fichiers compose à utiliser pour ce projet (par exemple le principal + un override). Vide : automatique."""
+    d, row = _dir(ctx, pid)
+    if body.files:
+        run(ctx, "p_project", {"dir": d, "files": body.files})   # refuse un nom inconnu
+    db.run("UPDATE projects SET compose_files=? WHERE id=?", (json.dumps(body.files) if body.files else "", pid))
+    ctx.audit("project.compose.files", f"{row['name']} : {' + '.join(body.files) or 'automatique'}")
+    return {"ok": True, "files": body.files}
+
+
+@router.get("/{pid}/make")
+def make_targets(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
+    d, _ = _dir(ctx, pid)
+    r = run(ctx, "p_make_targets", {"dir": d})
+    r["canRun"] = ctx.can("projects.deploy") and ctx.can("docker.exec") and (ctx.node["kind"] != "remote" or bool(worker_link.feature(ctx.id, "exec")))
+    return r
+
+
+class MakeBody(BaseModel):
+    target: str = Field(min_length=1, max_length=100)
+
+
+@router.post("/{pid}/make")
+def make_run(pid: int, body: MakeBody, ctx: NodeCtx = Depends(proj_cap("projects.deploy"))):
+    """Lance une cible du Makefile du projet. Équivaut à exécuter des commandes dans le dossier : réservé au droit du terminal."""
+    ctx.need("docker.exec")
+    if ctx.node["kind"] == "remote" and not worker_link.feature(ctx.id, "exec"):
+        raise HTTPException(409, "Ce worker n'autorise pas l'exécution de commandes (WORKER_ALLOW_EXEC=true)")
+    d, row = _dir(ctx, pid)
+    r = run(ctx, "p_exec_make_run", {"dir": d, "target": body.target})
+    ctx.audit("project.make", f"{row['name']} : make {body.target}")
     return r
 
 

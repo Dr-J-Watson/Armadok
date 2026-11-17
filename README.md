@@ -660,6 +660,8 @@ Un onglet **Projets** et une page **Docker** s'ajoutent aux nœuds qui gèrent D
 | **Labels ⇄ fichier** | convertit les labels `traefik.*` d'un compose en fichier YAML de Traefik (et l'inverse), avec contrôles croisés |
 | **Publier sur Traefik** | depuis un conteneur : l'assistant de site s'ouvre directement, prérempli (une alerte rappelle si Traefik ne peut pas atteindre le conteneur) |
 | **Installer Traefik** | si le hub n'en détecte aucun, la page Projets propose de créer un projet Traefik (e-mail Let's Encrypt, réseau, HTTPS automatique, protections, journal d'accès…) sans rien démarrer avant relecture |
+| **Plusieurs fichiers compose** | un dossier avec un `override` ou des variantes (`prod`, `dev`…) : par défaut Armadok lance comme `docker compose up` (principal + override) ; sinon il demande quels fichiers fusionner et peut retenir le choix. L'arrêt et le redémarrage reprennent les fichiers du dernier lancement |
+| **Makefile du projet** | onglet qui liste les cibles avec leur description (`cible: ## texte` ou commentaire au-dessus) et les lance, sortie en direct ; droit « terminal » requis (les commandes s'exécutent dans le conteneur d'Armadok : `make`, `docker`, `git`) |
 | **Services « init »** | un service qui s'est arrêté normalement (code 0) est marqué « Terminé » et ne déclenche plus d'alerte |
 
 ### Activer (hub)

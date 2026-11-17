@@ -250,7 +250,7 @@ MIGRATIONS = {
               ("addresses", "TEXT NOT NULL DEFAULT ''")],   # adresses de la machine (IP, noms) : relier ses conteneurs au Traefik d'un AUTRE nœud   # ce que le nœud sait faire : traefik, docker (annoncé par le worker ; calculé pour le nœud local)
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
-    "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0")],
+    "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''")],   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)
     "node_members": [("expires_at", "REAL")],  # accès temporaire : le membre perd son rôle à cette date
     "domain_access": [("types", "TEXT NOT NULL DEFAULT ''"), ("subs", "TEXT NOT NULL DEFAULT ''"), ("no_delete", "INTEGER NOT NULL DEFAULT 0"), ("expires_at", "REAL")],  # suppression douce : le nœud est invisible mais récupérable jusqu'à sa purge
 }

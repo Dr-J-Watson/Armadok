@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, Boxes, SquareTerminal, ExternalLink, FileText, FolderCode, GitBranch, Globe, Image as ImageIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
+import { Activity, Boxes, SquareTerminal, Terminal, ExternalLink, FileText, FolderCode, GitBranch, Globe, Image as ImageIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
 import ComposeBar from '../components/ComposeBar.jsx'
 import ProjectFiles from '../components/ProjectFiles.jsx'
 import ProjectGit from '../components/ProjectGit.jsx'
+import ProjectMake from '../components/ProjectMake.jsx'
 import ProjectImages from '../components/ProjectImages.jsx'
 import { publishNow } from '../lib/publish.js'
 import ContainerModal, { AccessPanel } from '../components/ContainerModal.jsx'
@@ -36,7 +37,7 @@ export default function Project() {
   const p = q.data; const tf = hasModule('traefik') || p.hosts.length > 0; const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const all = [...p.services.flatMap((x) => x.containers), ...p.extra]
   const links = p.services.flatMap((x) => x.links.map((l) => ({ ...l, svc: x.name }))); const uniq = [...new Map(links.map((l) => [l.router, l])).values()]
   const tabs = [{ id: 'overview', label: 'Vue d\'ensemble', icon: <LayoutDashboard size={14} /> }, { id: 'services', label: 'Services', icon: <Boxes size={14} />, count: p.services.length },
-    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
+    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
   const tab = tabs.some((t) => t.id === tab0) ? tab0 : 'overview'
   const cards = [['Services', `${p.running} / ${p.total}`, p.status === 'running' ? 'tous en marche' : p.status === 'partial' ? 'certains ne tournent pas' : 'rien ne tourne'], ['CPU', s ? `${s.cpu.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—', 'tous les conteneurs'], ['Mémoire', s ? fmtSize(s.mem) : '—', s?.limit ? `sur ${fmtSize(s.limit)}` : ''],
     ...(tf ? [['Requêtes', p.access ? fmtNum(p.access.hits) : '—', p.access ? `${p.access.days} derniers jours` : 'journal d\'accès non lu'], ['Erreurs', p.access ? fmtNum(p.access.errors) : '—', ''], ['Visiteurs', p.access ? fmtNum(p.access.visitors) : '—', 'adresses distinctes']] : [])]
@@ -45,7 +46,7 @@ export default function Project() {
       <div className="row wrap" style={{ marginBottom: 14, gap: 10 }}>
         <div className="grow"><div className="row" style={{ gap: 10 }}><h1 style={{ margin: 0 }}>{p.name}</h1><Badge kind={kind}>{lab}</Badge>{p.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>
           <div className="muted small mono">{p.path}</div></div>
-        <ComposeBar id={id} perms={p.perms} onDone={() => q.refetch()} />
+        <ComposeBar id={id} perms={p.perms} compose={p.compose} onDone={() => q.refetch()} />
       </div>
       {p.alerts.map((x, i) => <div key={i} className={'banner ' + (x.level === 'err' ? 'err' : 'warn')}><TriangleAlert size={16} /> {x.text}</div>)}
       <Tabs tabs={tabs} value={tab} onChange={(t) => set({ tab: t, c: null })} />
@@ -75,6 +76,7 @@ export default function Project() {
             </div>))}
             {p.extra.length > 0 && <div className="card col" style={{ gap: 6 }}><b>Conteneurs hors du fichier</b><span className="muted small">Ils portent le nom de ce projet mais ne correspondent plus à un service du compose (service renommé ou retiré).</span>{p.extra.map((c) => <div key={c.id} className="row"><span className="mono small grow">{c.name}</span><Btn small kind="ghost" onClick={() => set({ c: c.name })}>Détails</Btn></div>)}</div>}
           </div>)}
+        {tab === 'make' && <ProjectMake id={id} />}
         {tab === 'images' && <ProjectImages id={id} perms={p.perms} />}
         {tab === 'git' && <ProjectGit id={id} perms={p.perms} />}
         {tab === 'files' && <ProjectFiles id={id} perms={p.perms} canTraefik={tf} onChanged={() => q.refetch()} />}

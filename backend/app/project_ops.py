@@ -65,6 +65,56 @@ def compose_file(d: Path) -> Path | None:
     return None
 
 
+COMPOSE_RE = re.compile(r"^(docker-)?compose([._-][A-Za-z0-9._-]*)?\.ya?ml$")
+
+
+def compose_candidates(d: Path) -> list[str]:
+    """Tous les fichiers compose du dossier (premier niveau) : le principal d'abord, puis l'« override », puis les autres par ordre alphabétique."""
+    try:
+        found = sorted(x.name for x in d.iterdir() if COMPOSE_RE.match(x.name) and x.is_file() and not x.is_symlink())
+    except OSError:
+        return []
+    base = compose_file(d)
+    ov = override_file(d)
+    first = [x for x in (base.name if base else "", ov or "") if x]
+    return first + [x for x in found if x not in first]
+
+
+def override_file(d: Path) -> str:
+    """Le fichier « override » que Docker Compose charge de lui-même avec le principal (docker-compose.override.yml, compose.override.yaml…)."""
+    base = compose_file(d)
+    if not base:
+        return ""
+    stem = base.name.rsplit(".", 1)[0]
+    for ext in (".yml", ".yaml"):
+        if (d / (stem + ".override" + ext)).is_file():
+            return stem + ".override" + ext
+    return ""
+
+
+def default_files(d: Path) -> list[str]:
+    """Ce que fait « docker compose up » sans -f : le fichier principal, plus son override s'il existe."""
+    base = compose_file(d)
+    return [x for x in (base.name if base else "", override_file(d)) if x]
+
+
+def pick_files(d: Path, files) -> list[str]:
+    """Fichiers demandés (noms simples, présents dans le dossier) ; vide = ceux par défaut."""
+    if not files:
+        return default_files(d)
+    ok = set(compose_candidates(d))
+    out = []
+    for x in files if isinstance(files, (list, tuple)) else []:
+        x = str(x)
+        if x not in ok:
+            raise StoreError(f"Fichier compose inconnu : {x[:80]}", 422)
+        if x not in out:
+            out.append(x)
+    if not out or len(out) > 10:
+        raise StoreError("Choisissez entre 1 et 10 fichiers compose", 422)
+    return out
+
+
 def project_name(d: Path, data: dict | None) -> str:
     """Nom du projet pour Compose : « name: » du fichier, sinon le nom du dossier simplifié (minuscules, lettres, chiffres, - et _)."""
     n = (data or {}).get("name") if isinstance(data, dict) else None
@@ -99,21 +149,51 @@ def parse_compose(text: str) -> dict:
     return {"name": data.get("name") if isinstance(data.get("name"), str) else None, "services": out, "error": ""}
 
 
-def read_compose(d: Path) -> tuple[Path | None, dict]:
-    f = compose_file(d)
-    if not f:
+def _merge(parts: list[dict]) -> dict:
+    """Fusionne des fichiers compose lus dans l'ordre (comme -f a -f b) : les services s'additionnent, le dernier fichier l'emporte sur un même réglage."""
+    out: dict = {"name": None, "services": [], "error": ""}
+    by: dict[str, dict] = {}
+    for c in parts:
+        out["error"] = out["error"] or c["error"]
+        out["name"] = c["name"] or out["name"]
+        for sv in c["services"]:
+            cur = by.get(sv["name"])
+            if cur is None:
+                by[sv["name"]] = dict(sv, ports=list(sv["ports"]), profiles=list(sv["profiles"]), traefik=dict(sv["traefik"]))
+                continue
+            for k in ("image", "containerName"):
+                cur[k] = sv[k] or cur[k]
+            cur["build"] = cur["build"] or sv["build"]
+            cur["ports"] = list(dict.fromkeys(cur["ports"] + sv["ports"]))[:12]
+            cur["profiles"] = list(dict.fromkeys(cur["profiles"] + sv["profiles"]))
+            cur["traefik"].update(sv["traefik"])
+    out["services"] = list(by.values())
+    return out
+
+
+def read_compose(d: Path, files=None) -> tuple[Path | None, dict]:
+    base = compose_file(d)
+    if not base:
         return None, {"name": None, "services": [], "error": "Aucun fichier compose dans ce dossier"}
-    try:
-        if f.stat().st_size > MAX_COMPOSE:
-            return f, {"name": None, "services": [], "error": "Fichier compose trop gros"}
-        return f, parse_compose(f.read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        return f, {"name": None, "services": [], "error": "Fichier compose illisible (droits ?)"}
+    parts = []
+    names = pick_files(d, files)
+    for n in names:
+        pre = f"{n} : " if len(names) > 1 else ""   # le nom du fichier n'est utile que s'il y en a plusieurs
+        f = d / n
+        try:
+            if f.stat().st_size > MAX_COMPOSE:
+                parts.append({"name": None, "services": [], "error": f"{pre}fichier trop gros"})
+            else:
+                c = parse_compose(f.read_text(encoding="utf-8", errors="replace"))
+                parts.append(dict(c, error=f"{pre}{c['error']}" if c["error"] else ""))
+        except OSError:
+            parts.append({"name": None, "services": [], "error": f"{pre}fichier illisible (droits ?)"})
+    return base, _merge(parts)
 
 
-def entry(d: Path) -> dict:
-    f, c = read_compose(d)
-    return {"path": str(d), "name": d.name, "composeProject": project_name(d, {"name": c["name"]}), "file": f.name if f else "", "services": c["services"], "error": c["error"],
+def entry(d: Path, files=None) -> dict:
+    f, c = read_compose(d, files)
+    return {"hasMake": make_file(d) is not None, "composeFiles": compose_candidates(d), "defaultFiles": default_files(d), "path": str(d), "name": d.name, "composeProject": project_name(d, {"name": c["name"]}), "file": f.name if f else "", "services": c["services"], "error": c["error"],
             "hasEnv": (d / ".env").is_file(), "hasGit": (d / ".git").exists(), "build": any(s["build"] for s in c["services"]), "mtime": f.stat().st_mtime if f else 0}
 
 
@@ -135,7 +215,8 @@ def p_discover(a: dict) -> dict:
 
 
 def p_project(a: dict) -> dict:
-    return entry(safe_dir(a.get("dir")))
+    d = safe_dir(a.get("dir"))
+    return entry(d, a.get("files") or None)
 
 
 def p_info(_a: dict) -> dict:
@@ -484,7 +565,8 @@ def p_compose(a: dict) -> dict:
     action = str(a.get("action"))
     if action not in COMPOSE_ACTIONS:
         raise StoreError("Action inconnue", 422)
-    f, c = read_compose(d)
+    files = pick_files(d, a.get("files"))
+    f, c = read_compose(d, files)
     if not f or c["error"]:
         raise StoreError(c["error"] or "Aucun fichier compose", 422)
     names = {s["name"] for s in c["services"]}
@@ -500,8 +582,10 @@ def p_compose(a: dict) -> dict:
         args.append("--no-cache")
     if action == "down" and a.get("volumes"):
         args.append("--volumes")
-    argv = [_cli(), "compose", "--project-directory", str(d), "-f", str(f), *args, *svcs]
-    return _spawn(d, argv, " ".join(["compose", *args, *svcs]), action)
+    fargs = [x for n in files for x in ("-f", str(d / n))]
+    argv = [_cli(), "compose", "--project-directory", str(d), *fargs, *args, *svcs]
+    label = " ".join(["compose", *(["-f " + " -f ".join(files)] if len(files) > 1 else []), *args, *svcs])
+    return _spawn(d, argv, label, action)
 
 
 def p_job(a: dict) -> dict:
@@ -521,6 +605,68 @@ def p_destroy(a: dict) -> dict:
         raise StoreError("Ce dossier est une racine de projets (ou en contient une) : il ne se supprime pas", 409)
     shutil.rmtree(d)
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ Makefile du projet
+MAKE_NAMES = ("Makefile", "makefile", "GNUmakefile")
+_TARGET = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_./-]*)\s*:(?![=:])([^#\n]*?)(?:\s*##\s*(.*))?$")
+
+
+def make_file(d: Path) -> Path | None:
+    for n in MAKE_NAMES:
+        f = d / n
+        if f.is_file() and not f.is_symlink():
+            return f
+    return None
+
+
+def parse_make(text: str) -> list[dict]:
+    """Cibles d'un Makefile : {name, doc, deps}. La description vient du « ## texte » en fin de ligne (convention « make help ») ou du commentaire « # texte » juste au-dessus.
+    Les règles à motif (%), les cibles spéciales (.PHONY…), les affectations (:=) et les cibles sans nom simple sont ignorées."""
+    out, seen, prev, phony = [], set(), "", set()
+    for line in text.splitlines()[:5000]:
+        if line.startswith(".PHONY"):
+            phony.update(line.split(":", 1)[-1].split())
+        m = _TARGET.match(line)
+        if m and not line.startswith((".", "\t")):
+            name, deps, doc = m.group(1), m.group(2).strip(), (m.group(3) or "").strip()
+            if name not in seen and "%" not in name:
+                seen.add(name)
+                out.append({"name": name, "doc": doc or prev, "deps": deps.split()[:8]})
+        prev = line[1:].strip()[:200] if line.startswith("#") and not line.startswith("##") else (line[2:].strip()[:200] if line.startswith("##") else "")
+        if line.strip() == "":
+            prev = ""
+    for t in out:
+        t["phony"] = t["name"] in phony
+    return out[:150]
+
+
+def p_make_targets(a: dict) -> dict:
+    d = safe_dir(a.get("dir"))
+    f = make_file(d)
+    if not f:
+        return {"file": "", "targets": []}
+    try:
+        if f.stat().st_size > MAX_COMPOSE:
+            return {"file": f.name, "targets": [], "error": "Makefile trop gros"}
+        text = f.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {"file": f.name, "targets": [], "error": "Makefile illisible (droits ?)"}
+    return {"file": f.name, "targets": parse_make(text), "make": bool(shutil.which("make"))}
+
+
+def p_exec_make_run(a: dict) -> dict:
+    """Lance UNE cible du Makefile du projet (nommée dans le fichier : jamais de commande libre). Exécute des commandes : même niveau de droit que le terminal."""
+    d = safe_dir(a.get("dir"))
+    f = make_file(d)
+    if not f:
+        raise StoreError("Aucun Makefile dans ce projet", 404)
+    if not shutil.which("make"):
+        raise StoreError("La commande make n'est pas installée dans cette image", 501)
+    target = str(a.get("target") or "")
+    if target not in {t["name"] for t in parse_make(f.read_text(encoding="utf-8", errors="replace"))}:
+        raise StoreError("Cible inconnue dans ce Makefile", 422)
+    return _spawn(d, ["make", "-f", f.name, "--no-print-directory", "--", target], f"make {target}", "make")
 
 
 # ------------------------------------------------------------------ Git
@@ -721,7 +867,7 @@ def p_create(a: dict) -> dict:
     return {"path": str(d), "name": name}
 
 
-OPS = {"p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
+OPS = {"p_make_targets": p_make_targets, "p_exec_make_run": p_exec_make_run, "p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
        "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy,
        "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
 
