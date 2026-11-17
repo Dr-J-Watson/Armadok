@@ -6,11 +6,10 @@ export async function publishNow(container, toast, setNode) {
   try {
     const h = await api.get(`/docker/containers/${encodeURIComponent(container)}/publish-hint`)
     const t = h.traefik || {}
-    if (h.via) {   // les sites de cette machine passent par le Traefik d'un autre nœud : on bascule sur ce nœud, l'assistant y crée le site
+    if (h.via) {   // les sites de cette machine passent par le Traefik d'un autre nœud : l'assistant y crée le site
       if (!h.canCreate) return toast?.(`Vous ne pouvez pas créer de site sur « ${h.via.name} »`, 'err')
       if (!h.via.address || !h.via.publicPort) toast?.(!h.via.address ? 'Adresse de cette machine inconnue : complétez l\'adresse cible dans l\'assistant' : 'Ce conteneur ne publie aucun port sur la machine : le Traefik distant ne pourra pas l\'atteindre', 'err')
-      setNode?.(h.via.id)
-      setTimeout(() => window.dispatchEvent(new CustomEvent('new-site', { detail: { name: h.name, url: h.url, dns: true } })), 600)
+      window.dispatchEvent(new CustomEvent('new-site', { detail: { name: h.name, url: h.url, dns: true } }))   // les requêtes Traefik de ce nœud vont déjà au Traefik partagé : pas de changement de nœud
       return
     }
     window.dispatchEvent(new CustomEvent('new-site', { detail: { name: h.name, url: h.url, dns: true } }))

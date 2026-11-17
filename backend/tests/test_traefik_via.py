@@ -44,3 +44,22 @@ def test_domains_of_the_via_node_are_inherited_read_only(pj):
     client.put(f"/api/nodes/{nid}", headers=h, json={"traefikVia": ""})
     assert client.get(f"/api/nodes/{nid}/domains", headers=h).json() == []
     db.run("DELETE FROM nodes WHERE id=?", (nid,))
+
+
+def test_scope_keeps_only_routers_of_the_node_and_what_they_use():
+    from app import traefik_scope as ts
+    from app.perms import Principal
+    items = [
+        {"id": "http/routers/a", "proto": "http", "kind": "routers", "name": "a", "spec": {"rule": "Host(`a.x.fr`)", "service": "sa", "middlewares": ["m1"]}, "file": "f.yml"},
+        {"id": "http/routers/b", "proto": "http", "kind": "routers", "name": "b", "spec": {"rule": "Host(`b.x.fr`)", "service": "sb", "middlewares": ["m2"]}, "file": "f.yml"},
+        {"id": "http/services/sa", "proto": "http", "kind": "services", "name": "sa", "spec": {}, "file": "f.yml"},
+        {"id": "http/services/sb", "proto": "http", "kind": "services", "name": "sb", "spec": {}, "file": "f.yml"},
+        {"id": "http/middlewares/m1", "proto": "http", "kind": "middlewares", "name": "m1", "type": "chain", "spec": {"chain": {"middlewares": ["m3"]}}, "file": "f.yml"},
+        {"id": "http/middlewares/m2", "proto": "http", "kind": "middlewares", "name": "m2", "type": "headers", "spec": {}, "file": "f.yml"},
+        {"id": "http/middlewares/m3", "proto": "http", "kind": "middlewares", "name": "m3", "type": "headers", "spec": {}, "file": "f.yml"},
+    ]
+    p = Principal(id=1, username="u", role="admin", can_add_domains=True, traefik_access="full", node_id="n", node_role="owner", caps=frozenset({"traefik.all"}), scope_routers=frozenset({"a"}))
+    out = ts.scope_items(p, [dict(i) for i in items])
+    assert sorted(i["id"] for i in out) == ["http/middlewares/m1", "http/middlewares/m3", "http/routers/a", "http/services/sa"]      # b, sb, m2 : pas à ce nœud ; m3 : utilisé par m1
+    full = ts.scope_items(Principal(**{**p.__dict__, "scope_routers": None}), [dict(i) for i in items])
+    assert len(full) == len(items)

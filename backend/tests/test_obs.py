@@ -6,6 +6,12 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+
+def _stamp(sec: int) -> str:
+    """Horodatage RÉCENT (il y a une heure) : les statistiques regardent les 7 derniers jours, une date figée finit par sortir de la fenêtre."""
+    import time
+    return time.strftime("%Y-%m-%dT%H:%M:", time.gmtime(time.time() - 3600)) + f"{sec:02d}Z"
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -248,10 +254,10 @@ def test_unreachable_prometheus_is_a_clean_error(world):
 
 # ---------- journal d'accès : adresses IP ----------
 LINES = [
-    json.dumps({"ClientHost": "45.155.205.233", "ClientAddr": "45.155.205.233:5555", "RequestHost": "box.exemple.fr", "RequestPath": "/.env?token=SECRET", "RequestMethod": "GET", "DownstreamStatus": 403, "StartUTC": "2026-11-10T10:00:00Z", "request_User-Agent": "zgrab/0.x"}),
-    json.dumps({"ClientHost": "45.155.205.233", "RequestHost": "box.exemple.fr", "RequestPath": "/wp-login.php", "DownstreamStatus": 404, "StartUTC": "2026-11-10T10:00:01Z"}),
-    json.dumps({"ClientHost": "8.8.4.4", "RequestHost": "app.exemple.fr", "RequestPath": "/", "DownstreamStatus": 200, "StartUTC": "2026-11-10T10:00:02Z"}),
-    json.dumps({"ClientHost": "192.168.1.20", "RequestHost": "app.exemple.fr", "RequestPath": "/", "DownstreamStatus": 200, "StartUTC": "2026-11-10T10:00:03Z"}),
+    json.dumps({"ClientHost": "45.155.205.233", "ClientAddr": "45.155.205.233:5555", "RequestHost": "box.exemple.fr", "RequestPath": "/.env?token=SECRET", "RequestMethod": "GET", "DownstreamStatus": 403, "StartUTC": _stamp(0), "request_User-Agent": "zgrab/0.x"}),
+    json.dumps({"ClientHost": "45.155.205.233", "RequestHost": "box.exemple.fr", "RequestPath": "/wp-login.php", "DownstreamStatus": 404, "StartUTC": _stamp(1)}),
+    json.dumps({"ClientHost": "8.8.4.4", "RequestHost": "app.exemple.fr", "RequestPath": "/", "DownstreamStatus": 200, "StartUTC": _stamp(2)}),
+    json.dumps({"ClientHost": "192.168.1.20", "RequestHost": "app.exemple.fr", "RequestPath": "/", "DownstreamStatus": 200, "StartUTC": _stamp(3)}),
     '2001:db8:aaaa:1::7 - - [10/Nov/2026:10:00:04 +0000] "GET /x HTTP/1.1" 404 10 "-" "curl/8" 5 "r@file" "http://s:80" 2ms',
     "pas du json",
 ]

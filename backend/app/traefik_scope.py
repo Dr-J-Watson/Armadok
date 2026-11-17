@@ -17,6 +17,31 @@ def router_level(p: Principal, spec: dict) -> str | None:
 
 
 def scope_items(p: Principal, items: list[dict]) -> list[dict]:
+    """Ajoute `editable` à chaque élément et ne garde que ce que `p` a le droit de voir. Si la vue est filtrée sur un autre nœud (`scope_routers`), ne garde
+    que les routeurs de ce nœud et ce qu'ils utilisent (services, middlewares, options)."""
+    out = _scope_items(p, items)
+    return _restrict(p, out) if p.scope_routers is not None else out
+
+
+def _restrict(p: Principal, items: list[dict]) -> list[dict]:
+    keep = {i["id"] for i in items if i["proto"] == "http" and i["kind"] == "routers" and i["name"] in p.scope_routers}
+    usage = used_by(items)
+    changed = True
+    while changed:   # un middleware utilisé par un middleware gardé est gardé aussi
+        changed = False
+        for it in items:
+            if it["id"] in keep or it["proto"] != "http" or it["kind"] == "routers":
+                continue
+            if any(u in keep for u in usage.get(it["id"], [])):
+                keep.add(it["id"])
+                changed = True
+    out = [it for it in items if it["id"] in keep]
+    for it in out:
+        it["usedBy"] = [u for u in usage.get(it["id"], []) if u in keep]
+    return out
+
+
+def _scope_items(p: Principal, items: list[dict]) -> list[dict]:
     """Ajoute `editable` à chaque élément et ne garde que ce que `p` a le droit de voir."""
     usage = used_by(items)
     if p.traefik == "full":

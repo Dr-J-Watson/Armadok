@@ -238,6 +238,13 @@ def node_optional(request: Request, p: Principal = Depends(current_user)) -> Nod
         ctx = next((c for c in nodes if c.node["status"] == "active"), nodes[0] if nodes else None)
     if ctx:
         _guard_suspended(ctx)
+        scope = request.headers.get("x-node-scope")
+        if scope and scope != ctx.id:   # vue Traefik d'un nœud qui publie par ce Traefik : on ne garde que ce qui mène à SES conteneurs
+            sc = _ctx_by_id(p, scope)
+            if sc.node.get("traefikVia") != ctx.id:
+                raise HTTPException(403, "Ce nœud ne publie pas ses sites avec ce Traefik")
+            from . import docker_link
+            ctx.p = dataclasses.replace(ctx.p, scope_routers=docker_link.scope_router_names(sc, ctx.id))
     return ctx
 
 

@@ -27,6 +27,7 @@ class Principal:
     node_role: str | None = None  # owner | admin | editor | viewer | dns
     emergency: int | None = None  # identifiant de la session d'accès d'urgence en cours sur ce nœud
     caps: frozenset = frozenset()  # droits fins effectifs sur ce nœud (voir caps.py)
+    scope_routers: frozenset | None = None  # vue filtrée d'un Traefik partagé : seuls ces routeurs (et ce qu'ils utilisent) sont montrés (nœud sans Traefik qui publie par celui-ci)
     mfa_blocked: frozenset = frozenset()  # droits retirés sur ce nœud parce qu'il exige la double authentification et que la personne ne l'a pas activée
 
     @property

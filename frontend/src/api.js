@@ -11,6 +11,12 @@ export const getToken = () => accessToken
 let nodeId = null
 export const setNodeHeader = (id) => (nodeId = id || null)
 
+// Nœud sans Traefik dont les sites passent par celui d'un autre : les requêtes Traefik (sites, certificats, surveillance…) visent CE Traefik (X-Node),
+// filtrées sur les conteneurs du nœud courant (X-Node-Scope). Les autres requêtes (Docker, projets…) visent le nœud courant.
+let traefikRoute = null
+export const setTraefikRoute = (r) => (traefikRoute = r)
+const TRAEFIK_PATH = /^\/(traefik|obs|sync|meta)(\/|\?|$)/
+
 const STATUS_TEXT = {
   400: 'Requête invalide', 401: 'Session expirée : reconnectez-vous', 403: 'Action non autorisée avec vos droits', 404: 'Introuvable',
   405: 'Action non prise en charge', 409: 'Conflit : cet élément existe déjà ou vient de changer', 413: 'Contenu trop volumineux', 422: 'Données invalides',
@@ -54,7 +60,7 @@ async function raw(method, path, body, retry = true) {
     res = await fetch('/api' + path, {
       method,
       credentials: 'same-origin',
-      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(nodeId ? { 'X-Node': nodeId } : {}) },
+      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(traefikRoute && TRAEFIK_PATH.test(path) ? { 'X-Node': traefikRoute.via, ...(traefikRoute.scope && !path.startsWith('/meta') ? { 'X-Node-Scope': traefikRoute.scope } : {}) } : nodeId ? { 'X-Node': nodeId } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {

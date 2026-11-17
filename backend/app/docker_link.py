@@ -168,3 +168,24 @@ def access_stats(ctx, hosts: list[str], days: int = 7) -> dict | None:
             c["ips"] += 1
     return {"days": days, "hosts": sorted(hosts), "hits": int(t["hits"]), "errors": int(t["errors"]), "visitors": int(t["ips"]), "topIps": top, "topPaths": paths,
             "countries": sorted(countries.values(), key=lambda c: -c["ips"])[:5]}
+
+
+_scope_cache: dict[tuple, tuple[float, frozenset]] = {}
+
+
+def scope_router_names(sc, via_id: str) -> frozenset:
+    """Noms des routeurs du Traefik `via_id` qui mènent aux conteneurs du nœud `sc` (sa liste de conteneurs vient de son worker) ; gardé 8 secondes."""
+    import time
+    key = (sc.id, via_id)
+    hit = _scope_cache.get(key)
+    if hit and time.time() - hit[0] < 8:
+        return hit[1]
+    from . import routes_docker
+    try:
+        lst = routes_docker.run(sc, "d_containers", {"all": True})["containers"]
+        links = link_containers(sc, lst)
+        names = frozenset(lk["router"] for c in lst for lk in links.get(c["name"], []) if (lk.get("node") or {}).get("id") == via_id)
+    except Exception:  # noqa: BLE001 - worker injoignable : aucune règle ne lui est attribuée pour l'instant
+        names = frozenset()
+    _scope_cache[key] = (time.time(), names)
+    return names

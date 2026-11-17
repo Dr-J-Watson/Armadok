@@ -17,7 +17,7 @@ const Row = ({ k, children }) => <div className="kv"><span className="muted">{k}
 
 // La fiche d'un conteneur : ce qu'il est (Aperçu), quelles règles Traefik mènent à lui (Traefik), qui y accède (Accès), ses journaux (Logs).
 export default function ContainerModal({ name, tab: first, onClose }) {
-  const { toast, confirm } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode } = useNode()
+  const { toast, confirm } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode, traefikVia } = useNode()
   const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [term, setTerm] = useState(false); const [conv, setConv] = useState(false)
   const q = useQuery({ queryKey: ['docker-c', name], queryFn: () => api.get(`/docker/containers/${enc(name)}`), refetchInterval: 10000 })
   const refresh = () => { qc.invalidateQueries({ queryKey: ['docker-c'] }); qc.invalidateQueries({ queryKey: ['docker-list'] }); qc.invalidateQueries({ queryKey: ['docker-stats'] }) }
@@ -79,7 +79,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
           : <div className="col">{c.links.map((l) => (
             <div key={l.router} className="card col" style={{ gap: 6 }}>
               <div className="row" style={{ gap: 8 }}><b className="mono">{l.router}</b><Badge kind={l.sure ? 'ok' : 'warn'} title={l.sure ? 'Lien certain' : 'Lien probable : le nom ou le port ne correspond pas exactement'}>{l.sure ? 'certain' : 'probable'}</Badge><Badge>{l.provider === 'docker' ? 'labels du conteneur' : 'fichier YAML'}</Badge>{l.node && <Badge kind="info" title="Ce site est servi par le Traefik d'un autre nœud, qui vise l'adresse et le port publié de ce conteneur">sur le nœud « {l.node.name} »</Badge>}
-                {l.item && <Btn small className="right" onClick={() => { if (l.node) { setNode(l.node.id) } go(`/sites?open=${enc(l.router)}`) }}><Globe size={13} /> {l.node ? `Ouvrir sur « ${l.node.name} »` : 'Ouvrir le site'}</Btn>}</div>
+                {l.item && <Btn small className="right" onClick={() => { if (l.node && l.node.id !== traefikVia?.node.id) { setNode(l.node.id) } go(`/sites?open=${enc(l.router)}`) }}><Globe size={13} /> {l.node ? `Ouvrir sur « ${l.node.name} »` : 'Ouvrir le site'}</Btn>}</div>
               <div className="small mono muted" style={{ wordBreak: 'break-all' }}>{l.rule}</div>
               <div className="row wrap" style={{ gap: 6 }}>{l.hosts.map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer"><ExternalLink size={11} /> {h}</a>)}{l.port && <Badge>port {l.port}</Badge>}</div>
             </div>))}</div>)}
