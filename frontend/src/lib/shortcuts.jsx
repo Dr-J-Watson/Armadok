@@ -10,6 +10,11 @@ export const SHORTCUTS = [
     { keys: ['g', 't'], desc: 'Traefik avancé' },
     { keys: ['g', 'c'], desc: 'Certificats' },
   ] },
+  { group: 'Changer de nœud (on reste sur la même page)', items: [
+    { keys: ['g', '1…9'], desc: 'Aller au nœud numéro 1 à 9 (les numéros sont dans le sélecteur de nœud)' },
+    { keys: ['g', 'n'], desc: 'Nœud suivant' },
+    { keys: ['g', 'p'], desc: 'Nœud précédent' },
+  ] },
   { group: 'Agir', items: [
     { keys: ['n'], desc: 'Nouveau site' },
     { keys: ['Échap'], desc: 'Fermer la fenêtre ou le menu ouvert' },

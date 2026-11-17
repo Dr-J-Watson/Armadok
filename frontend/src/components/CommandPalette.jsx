@@ -6,6 +6,7 @@ import { api } from '../api.js'
 import { useFeatures } from '../lib/features.js'
 import { Modal } from './ui.jsx'
 import { useOverview } from '../pages/Traefik.jsx'
+import { useSwitchNode } from '../lib/nav.js'
 import { useAuth } from '../auth.jsx'
 import { useNode } from '../node.jsx'
 import { extractHosts } from '../lib/util.js'
@@ -15,7 +16,7 @@ const PER_GROUP = 6          // sans recherche, pour que la liste reste lisible
 const PER_GROUP_SEARCH = 10
 
 export default function CommandPalette({ onClose, openWizard }) {
-  const nav = useNavigate(); const ov = useOverview(); const { user } = useAuth(); const { hasTraefik, hasDocker, canManage, canNode, can } = useNode()
+  const nav = useNavigate(); const ov = useOverview(); const { user } = useAuth(); const { hasTraefik, hasDocker, canManage, canNode, can } = useNode(); const sw = useSwitchNode()
   const [q, setQ] = useState(''); const [i, setI] = useState(0); const feats = useFeatures()
   const certs = useQuery({ queryKey: ['certs'], queryFn: () => api.get('/traefik/certs'), enabled: hasTraefik && can('certs.view'), staleTime: 60000, retry: false })
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => api.get('/dns/zones'), staleTime: 60000, retry: false })
@@ -25,6 +26,7 @@ export default function CommandPalette({ onClose, openWizard }) {
     const e = []
     const add = (group, label, sub, Icon, run, extra = '') => e.push({ group, label, sub, Icon, run, extra })
     if (can('sites.create')) add('Actions', 'Nouveau site', 'Adresse, protections et destination, pas à pas', Plus, () => openWizard({}))
+    sw.nodes.forEach((n, i) => { if (n.id !== sw.node?.id) add('Nœuds', `Aller au nœud « ${n.name} »`, `${i < 9 ? `g puis ${i + 1} · ` : ''}on reste sur la même page`, Server, () => sw.to(n.id), 'noeud changer basculer') })
     add('Pages', 'Vue d\'ensemble', 'Accueil : chiffres clés et activité', LayoutDashboard, () => nav('/'))
     if (hasTraefik) add('Pages', 'Sites', 'Tous vos sites et leurs protections', Workflow, () => nav('/sites'))
     if (hasDocker && can('projects.view')) add('Pages', 'Projets', 'Dossiers docker compose : état, sites, visiteurs', FolderGit2, () => nav('/projects'))
@@ -54,7 +56,7 @@ export default function CommandPalette({ onClose, openWizard }) {
     for (const z of zones.data || []) add('Domaines (DNS)', z.name, 'Enregistrements de ce domaine', Globe, () => nav(`/dns?zone=${encodeURIComponent(z.name)}`))
     for (const c of certs.data?.certs || []) add('Certificats', c.main, `${c.issuer || '—'} · ${c.daysLeft < 0 ? 'expiré' : c.daysLeft + ' j'}${c.usedBy?.length ? ' · ' + c.usedBy.slice(0, 2).join(', ') : ''}`, Lock, () => nav(`/traefik?tab=certs&host=${encodeURIComponent(c.main)}`), (c.names || []).join(' '))
     return e
-  }, [ov.data, user, canManage, hasTraefik, hasDocker, certs.data, zones.data])
+  }, [ov.data, user, canManage, hasTraefik, hasDocker, certs.data, zones.data, sw.nodes, sw.node?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // regroupe en gardant l'ordre ; `flat` est la liste dans l'ordre d'affichage (pour les flèches du clavier)
   const { groups, flat } = useMemo(() => {

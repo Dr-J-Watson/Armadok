@@ -95,6 +95,7 @@ Une interface web **auto-hébergée** pour gérer au même endroit :
 |---|---|
 | Chercher partout (sites, pages, domaines, certificats, adresse IP) | <kbd>Ctrl</kbd> + <kbd>K</kbd> ou <kbd>/</kbd> |
 | Aller à une page | <kbd>g</kbd> puis <kbd>a</kbd> accueil · <kbd>s</kbd> sites · <kbd>d</kbd> domaines · <kbd>m</kbd> surveillance · <kbd>t</kbd> Traefik · <kbd>c</kbd> certificats |
+| Changer de nœud (on reste sur la même page) | <kbd>g</kbd> puis <kbd>1</kbd>…<kbd>9</kbd> (numéro du nœud dans le sélecteur) · <kbd>n</kbd> suivant · <kbd>p</kbd> précédent, ou le sélecteur et la recherche (<kbd>Ctrl</kbd> + <kbd>K</kbd>) |
 | Créer un site | <kbd>n</kbd> |
 | Voir tous les raccourcis | <kbd>?</kbd> |
 | Agir sur un site | menu **⋯** de la carte : copier l'adresse, ouvrir, tester, statistiques, visiteurs, certificat, enregistrement DNS, dupliquer |

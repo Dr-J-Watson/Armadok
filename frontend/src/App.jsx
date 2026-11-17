@@ -30,7 +30,7 @@ import NodeSwitcher from './components/NodeSwitcher.jsx'
 import ThemeMenu, { useThemePrefs } from './components/ThemeMenu.jsx'
 import SiteBuilder from './components/SiteBuilder.jsx'
 import CommandPalette from './components/CommandPalette.jsx'
-import { backLabel } from './lib/nav.js'
+import { backLabel, useSwitchNode } from './lib/nav.js'
 import { Keys, SHORTCUTS, SHORTCUT_NOTE } from './lib/shortcuts.jsx'
 import { Badge, Btn, Empty, Field, Loading, Modal, useUi, Info } from './components/ui.jsx'
 
@@ -184,7 +184,7 @@ export default function App() {
   const [site, setSite] = useState(null) // { item?, prefill? }
   const [palette, setPalette] = useState(false); const [profile, setProfile] = useState(false); const [keys, setKeys] = useState(false); const nav = useNavigate(); const loc = useLocation(); const [sheet, setSheet] = useState(false)
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get('/meta'), enabled: !!user, staleTime: 60000 })
-  useLiveInvalidate()
+  useLiveInvalidate(); const sw = useSwitchNode()
 
   useEffect(() => {
     const open = () => setProfile(true)
@@ -199,6 +199,10 @@ export default function App() {
       const k = e.key
       if (chord && Date.now() - chord < 1500) {
         chord = 0
+        const dg = /^(?:Digit|Numpad)([1-9])$/.exec(e.code || '')   // par la touche (et non le caractère) : sur un clavier AZERTY, « 1 » demande Maj
+        if (dg) { e.preventDefault(); sw.to(sw.nodes[Number(dg[1]) - 1]?.id); return }
+        if (k === 'n' && sw.nodes.length > 1) { e.preventDefault(); sw.step(1); return }
+        if (k === 'p' && sw.nodes.length > 1) { e.preventDefault(); sw.step(-1); return }
         const to = { a: '/', s: '/sites', d: '/dns', m: '/monitoring', t: '/traefik', c: '/traefik?tab=certs' }[k]
         if (to) { e.preventDefault(); nav(to) }
         return
@@ -209,7 +213,7 @@ export default function App() {
       else if (k === 'n') window.dispatchEvent(new Event('new-site'))
     }
     window.addEventListener('keydown', h); return () => window.removeEventListener('keydown', h)
-  }, [nav])
+  }, [nav, sw.to, sw.step, sw.nodes]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const h = (e) => can('sites.create') && setSite({ prefill: e?.detail || {} }); window.addEventListener('new-site', h); return () => window.removeEventListener('new-site', h) }, [can])
   useEffect(() => { setSheet(false) }, [loc.pathname, loc.search])
   useStackTables()
