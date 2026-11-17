@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, setNodeHeader, setTraefikRoute } from './api.js'
 import { useAuth } from './auth.jsx'
 import { Loading } from './components/ui.jsx'
@@ -36,10 +36,13 @@ export function NodeProvider({ children }) {
   setNodeHeader(node?.id) // avant le rendu des enfants : leurs premières requêtes visent le bon nœud
   // Nœud sans Traefik dont les sites passent par un autre : ses pages Traefik sont celles de cet autre nœud, filtrées (ou non) sur ses conteneurs.
   const viaNode = node?.traefikVia && !(node.modules || []).includes('traefik') ? list.find((n) => n.id === node.traefikVia && (n.modules || []).includes('traefik')) || null : null
+  // Affichage complet : les listes (Docker, projets…) montrent TOUS les nœuds accessibles d'un coup, chaque ligne portant son nœud.
+  const [fullView, setFullViewState] = useState(() => { try { return localStorage.getItem('full-view') === 'on' } catch { return false } })
+  const setFullView = (v) => { try { localStorage.setItem('full-view', v ? 'on' : 'off') } catch { /* */ } setFullViewState(v) }
   const [scopeOn, setScopeOn] = useState(() => { try { return localStorage.getItem('traefik-scope') !== 'off' } catch { return true } })
   const setScope = (v) => { try { localStorage.setItem('traefik-scope', v ? 'on' : 'off') } catch { /* */ } setScopeOn(v) }
   setTraefikRoute(viaNode ? { via: viaNode.id, scope: scopeOn ? node.id : null } : null)
-  const client = useMemo(makeClient, [node?.id, viaNode?.id, scopeOn]) // eslint-disable-line react-hooks/exhaustive-deps
+  const client = useMemo(makeClient, [node?.id, viaNode?.id, scopeOn, fullView]) // eslint-disable-line react-hooks/exhaustive-deps
   const value = useMemo(() => {
     const role = node?.role || null
     const caps = new Set(node?.caps || [])
@@ -49,7 +52,7 @@ export function NodeProvider({ children }) {
     const hasModule = (m) => modules.includes(m)
     const NODE_ADMIN = ['node.settings', 'node.members.view', 'node.connection', 'node.audit', 'node.domains.view']
     return {
-      nodes: list, node, role, loading: nodes.isLoading, can, caps, modules, hasModule, traefikVia: viaNode ? { node: viaNode, scope: scopeOn, setScope } : null,
+      nodes: list, node, role, loading: nodes.isLoading, can, caps, modules, hasModule, traefikVia: viaNode ? { node: viaNode, scope: scopeOn, setScope } : null, fullView: fullView && list.length > 1, setFullView,
       hasTraefik: !!role && can('sites.view') && hasModule('traefik'),   // voit les sites de ce nœud (et le nœud a Traefik)
       hasDocker: !!role && hasModule('docker'),                // le nœud gère Docker (les droits fins viennent avec les pages Docker)
       canManage: can('traefik.all'),                           // voit et agit sur tout Traefik (pas seulement ses domaines)
@@ -58,9 +61,9 @@ export function NodeProvider({ children }) {
       setNode: (id) => { try { localStorage.setItem('node', id) } catch { /* */ } setPref(id) },
       reload: () => nodes.refetch(),
     }
-  }, [nodes.data, node?.id, nodes.isLoading, viaNode?.id, scopeOn]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes.data, node?.id, nodes.isLoading, viaNode?.id, scopeOn, fullView]) // eslint-disable-line react-hooks/exhaustive-deps
   if (user && nodes.isLoading) return <Loading />
-  return <Ctx.Provider value={value}><QueryClientProvider key={`${viaNode?.id || ''}:${scopeOn}`} client={client}>{children}</QueryClientProvider></Ctx.Provider>
+  return <Ctx.Provider value={value}><QueryClientProvider key={`${node?.id || ''}:${viaNode?.id || ''}:${scopeOn}:${fullView}`} client={client}>{children}</QueryClientProvider></Ctx.Provider>
 }
 
 // À placer sous le client du nœud : recharge les écrans concernés par chaque signal. Un signal d'un AUTRE nœud est ignoré.
@@ -74,4 +77,18 @@ export function useLiveInvalidate() {
     topics.forEach((t) => { if (NODE_TOPICS.has(t.t) && t.node && t.node !== id) return; (TOPIC_KEYS[t.t] || []).forEach((k) => keys.add(k)) })
     keys.forEach((k) => c.invalidateQueries({ queryKey: [k] }))
   }), [])
+}
+
+
+// Une liste de ressources : celle du nœud courant, ou — en affichage complet — celles de TOUS les nœuds qui ont le module demandé, fusionnées
+// (chaque ligne reçoit `_node` : {id, name}). `eligible(node)` dit quels nœuds interroger ; un nœud qui ne répond pas est signalé dans `errors`.
+export function useNodeList(key, path, pick, { eligible = () => true, refetchInterval, enabled = true } = {}) {
+  const { nodes, node, fullView } = useNode()
+  const targets = fullView ? nodes.filter((n) => eligible(n) && n.status !== 'suspended') : []
+  const single = useQuery({ queryKey: [key], queryFn: () => api.get(path), refetchInterval, enabled: enabled && !fullView, retry: false })
+  const all = useQueries({ queries: targets.map((n) => ({ queryKey: [key, 'all', n.id], queryFn: () => api.get(path, { node: n.id }), refetchInterval, retry: false, enabled })) })
+  if (!fullView) return { ...single, rows: single.data ? pick(single.data) : [], errors: [], full: false }
+  const rows = all.flatMap((q, i) => (q.data ? pick(q.data).map((r) => ({ ...r, _node: { id: targets[i].id, name: targets[i].name } })) : []))
+  const errors = all.map((q, i) => (q.error ? { node: targets[i], error: q.error } : null)).filter(Boolean)
+  return { data: rows, rows, isLoading: all.some((q) => q.isLoading), error: !rows.length && errors.length === all.length && all.length ? errors[0].error : null, errors, full: true, refetch: () => all.forEach((q) => q.refetch()), current: node?.id }
 }

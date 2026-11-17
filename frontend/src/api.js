@@ -54,13 +54,13 @@ export async function refreshSession() {
   return refreshing
 }
 
-async function raw(method, path, body, retry = true) {
+async function raw(method, path, body, retry = true, node = null) {
   let res
   try {
     res = await fetch('/api' + path, {
       method,
       credentials: 'same-origin',
-      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(traefikRoute && TRAEFIK_PATH.test(path) ? { 'X-Node': traefikRoute.via, ...(traefikRoute.scope && !path.startsWith('/meta') ? { 'X-Node-Scope': traefikRoute.scope } : {}) } : nodeId ? { 'X-Node': nodeId } : {}) },
+      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(node ? { 'X-Node': node } : traefikRoute && TRAEFIK_PATH.test(path) ? { 'X-Node': traefikRoute.via, ...(traefikRoute.scope && !path.startsWith('/meta') ? { 'X-Node-Scope': traefikRoute.scope } : {}) } : nodeId ? { 'X-Node': nodeId } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {
@@ -69,7 +69,7 @@ async function raw(method, path, body, retry = true) {
   if (res.status === 401 && retry && !path.startsWith('/auth/')) {
     try {
       await refreshSession()
-      return raw(method, path, body, false)
+      return raw(method, path, body, false, node)
     } catch {
       onLogout()
       throw new ApiError('Session expirée', 401)
@@ -80,10 +80,11 @@ async function raw(method, path, body, retry = true) {
   return data
 }
 
+// Le dernier argument facultatif `{ node }` vise un nœud précis (affichage complet : les mêmes listes sur tous les nœuds), sans changer de nœud courant.
 export const api = {
-  get: (p) => raw('GET', p),
-  post: (p, b = {}) => raw('POST', p, b),
-  put: (p, b) => raw('PUT', p, b),
-  del: (p) => raw('DELETE', p),
+  get: (p, o) => raw('GET', p, undefined, true, o?.node),
+  post: (p, b = {}, o) => raw('POST', p, b, true, o?.node),
+  put: (p, b, o) => raw('PUT', p, b, true, o?.node),
+  del: (p, o) => raw('DELETE', p, undefined, true, o?.node),
 }
 export const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null)).toString()

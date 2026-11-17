@@ -8,7 +8,8 @@ import { api } from '../api.js'
 import { Badge, Btn, Copyable, Empty, Loading, SearchBox, Seg, Switch, useUi } from '../components/ui.jsx'
 import { usePersist } from '../lib/persist.js'
 import { useToggler } from '../components/Toggle.jsx'
-import { useNode } from '../node.jsx'
+import { useNode, useNodeList } from '../node.jsx'
+import { NodeChip } from '../components/NodeSwitcher.jsx'
 import { certKind, certLabel } from './Certs.jsx'
 import MissingDns from '../components/MissingDns.jsx'
 import { useMeta, useOverview } from './Traefik.jsx'
@@ -19,7 +20,34 @@ import { humanOf, techName } from '../traefik/human.js'
 // Les routeurs que l'interface écrit elle-même (bannissements : zz-webui-…) ne sont pas des sites
 export const isManaged = (i) => /(^|\/)zz-webui-/.test(i.file || '')
 
-export default function Sites({ openSite, openWizard }) {
+// Affichage complet : les sites de TOUS les nœuds qui portent Traefik. Cliquer sur une ligne ouvre le site sur son nœud (les actions restent propres à un nœud).
+function AllSites() {
+  const { node, setNode, setFullView } = useNode(); const go = useGo(); const [q, setQ] = useState('')
+  const list = useNodeList('overview', '/traefik/overview', (d) => d.items, { eligible: (n) => (n.modules || []).includes('traefik') && (n.caps || []).includes('sites.view') })
+  const rows = list.rows.filter((i) => i.kind === 'routers' && i.proto === 'http' && !isManaged(i) && (!q || (i.name + (i.spec?.rule || '') + i._node.name).toLowerCase().includes(q.toLowerCase())))
+    .sort((a, b) => a._node.name.localeCompare(b._node.name) || a.name.localeCompare(b.name))
+  const open = (r) => { setFullView(false); if (r._node.id !== node.id) setNode(r._node.id); go(`/sites?open=${encodeURIComponent(r.name)}`) }
+  if (list.isLoading) return <Loading />
+  return (
+    <>
+      <div className="row wrap" style={{ marginBottom: 14, gap: 10 }}><div className="grow"><h1 style={{ margin: 0 }}>Sites</h1><div className="muted">Affichage complet : les sites de tous vos nœuds. Cliquer sur une ligne ouvre le site sur son nœud.</div></div></div>
+      {list.errors.map((e) => <div key={e.node.id} className="banner warn">« {e.node.name} » ne répond pas : {e.error.message}</div>)}
+      <div className="row" style={{ marginBottom: 10 }}><SearchBox value={q} onChange={setQ} placeholder="Rechercher un site, une règle, un nœud…" /></div>
+      {rows.length === 0 ? <div className="card"><Empty><Globe size={28} /><div>Aucun site.</div></Empty></div> : (
+        <div className="card flush"><table className="t"><thead><tr><th>Nœud</th><th>Site</th><th>Règle</th><th>État</th></tr></thead><tbody>
+          {rows.map((r) => <tr key={r._node.id + ':' + r.id} style={{ cursor: 'pointer' }} onClick={() => open(r)}>
+            <td><NodeChip node={r._node} /></td><td><b>{r.name}</b></td><td className="mono small" style={{ wordBreak: 'break-all' }}>{r.spec?.rule}</td>
+            <td>{r.disabled ? <Badge kind="warn">en pause</Badge> : <Badge kind="ok">actif</Badge>}</td></tr>)}</tbody></table></div>)}
+    </>
+  )
+}
+
+export default function Sites(props) {
+  const { fullView } = useNode()
+  return fullView ? <AllSites /> : <SitesOne {...props} />
+}
+
+function SitesOne({ openSite, openWizard }) {
   const ov = useOverview(); const meta = useMeta(); const qc = useQueryClient(); const { toast, confirm } = useUi()
   const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(''); const [add, setAdd] = useState(null); const [flt, setFlt] = useState('all'); const [view, setView] = usePersist('sites-view', 'cards')

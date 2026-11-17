@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, ChevronsUpDown, Plus, Settings2 } from 'lucide-react'
+import { Check, ChevronsUpDown, LayoutGrid, Plus, Settings2 } from 'lucide-react'
 import { ROLES, useNode } from '../node.jsx'
 import { useAuth } from '../auth.jsx'
 import NewNode from './NewNode.jsx'
@@ -17,7 +17,7 @@ export function NodeAvatar({ node, size = 32 }) {
 }
 
 export default function NodeSwitcher() {
-  const { nodes, node, setNode, canNode } = useNode(); const canManage = canNode; const { user } = useAuth(); const sw = useSwitchNode(); const nav = useNavigate()
+  const { nodes, node, setNode, canNode, fullView, setFullView } = useNode(); const canManage = canNode; const { user } = useAuth(); const sw = useSwitchNode(); const nav = useNavigate()
   const [open, setOpen] = useState(false); const [creating, setCreating] = useState(false); const ref = useRef(null)
   const owned = nodes.filter((n) => n.kind === 'remote' && n.role === 'owner').length
   const canCreate = user.maxNodes !== 0 && (user.maxNodes < 0 || owned < user.maxNodes)
@@ -38,7 +38,7 @@ export default function NodeSwitcher() {
     <div className="nodesw" ref={ref}>
       <button className={'nodebtn ' + (open ? 'open' : '')} onClick={() => setOpen(!open)} aria-haspopup="listbox" aria-expanded={open}>
         <NodeAvatar node={node} />
-        <span className="grow lbl"><b className="ellipsis">{node.name}</b><span className="muted small">{node.roleLabel || ROLES[node.role]?.label}{node.kind === 'local' ? ' · cette machine' : ''}</span></span>
+        <span className="grow lbl"><b className="ellipsis">{node.name}</b><span className="muted small">{fullView ? `Affichage complet · ${nodes.length} nœuds` : <>{node.roleLabel || ROLES[node.role]?.label}{node.kind === 'local' ? ' · cette machine' : ''}</>}</span></span>
         {node.kind === 'remote' && <span className={'dot ' + CONN[node.connection][0]} title={CONN[node.connection][1]} />}
         <ChevronsUpDown size={15} className="muted lbl" />
       </button>
@@ -54,12 +54,19 @@ export default function NodeSwitcher() {
               {n.status === 'suspended' && <span className="dot err" title="Suspendu" />}
               {n.id === node.id && <Check size={15} />}
             {idx < 9 && <kbd className="kbd" title={`Raccourci : g puis ${idx + 1}`} style={{ marginLeft: 6 }}>{idx + 1}</kbd>}</button>))}
-          {(canManage || canCreate) && <div className="sep" />}
+          {(canManage || canCreate || nodes.length > 1) && <div className="sep" />}
           {canManage && <button className="nodeopt" onClick={() => { setOpen(false); nav('/node') }}><Settings2 size={16} /><span className="grow">Réglages du nœud</span></button>}
+          {nodes.length > 1 && <button className={'nodeopt ' + (fullView ? 'active' : '')} role="option" aria-selected={fullView} title="Les listes (Docker, projets…) montrent tous vos nœuds d'un coup" onClick={() => { setOpen(false); setFullView(!fullView) }}><LayoutGrid size={16} /><span className="grow">Affichage complet<span className="muted small">Tous les nœuds à la fois</span></span>{fullView && <Check size={15} />}</button>}
           {canCreate && <button className="nodeopt" onClick={() => { setOpen(false); setCreating(true) }}><Plus size={16} /><span className="grow">Nouveau nœud</span></button>}
         </div>)}
     </div>
     {wizard}
     </>
   )
+}
+
+// Le nœud d'une ligne en affichage complet : sa pastille de couleur et son nom.
+export function NodeChip({ node }) {
+  if (!node) return null
+  return <span className="row" style={{ gap: 6, flexWrap: 'nowrap' }} title={`Nœud « ${node.name} »`}><NodeAvatar node={node} size={18} /><span className="small ellipsis" style={{ maxWidth: 120 }}>{node.name}</span></span>
 }

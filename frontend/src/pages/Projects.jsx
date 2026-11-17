@@ -10,6 +10,8 @@ import { fmtSize } from '../lib/docker.js'
 import { fmtNum } from '../lib/features.js'
 import { usePersist } from '../lib/persist.js'
 import { useGo } from '../lib/nav.js'
+import { useNode, useNodeList } from '../node.jsx'
+import { NodeChip } from '../components/NodeSwitcher.jsx'
 import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
 import NewProject from '../components/NewProject.jsx'
 
@@ -25,7 +27,11 @@ export function useProjectStats() {
 export default function Projects() {
   const go = useGo(); const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(''); const [view, setView] = usePersist('projects-view', 'cards'); const [sel, setSel] = useState([]); const [ask, setAsk] = useState(null); const [clone, setClone] = useState(false)
-  const list = useQuery({ queryKey: ['projects'], queryFn: () => api.get('/projects'), refetchInterval: 20000 })
+  const { fullView, node, setNode } = useNode()
+  const raw = useNodeList('projects', '/projects', (x) => [x], { eligible: (n) => (n.modules || []).includes('docker') && (n.caps || []).includes('projects.view'), refetchInterval: 20000 })
+  // Affichage complet : les projets gérés de TOUS les nœuds (l'import, la découverte et la création restent propres à un nœud)
+  const list = raw.full ? { ...raw, data: raw.isLoading ? undefined : { managed: raw.rows.flatMap((r) => r.managed.map((p) => ({ ...p, _node: r._node }))), discovered: [], ignored: [], roots: ['*'], canImport: false, canGit: false, truncated: false } } : raw
+  const goP = (to, p) => { if (p?._node && p._node.id !== node.id) setNode(p._node.id); go(to) }
   const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false); const [newp, setNewp] = useState(false)
   const { toast } = useUi(); const qc = useQueryClient()
   const tab = ['managed', 'discovered', 'ignored'].includes(params.get('tab')) ? params.get('tab') : 'managed'
@@ -53,7 +59,7 @@ export default function Projects() {
       {d.roots.length === 0 && <div className="banner warn"><FolderOpen size={16} /> Aucun dossier de projets n'est configuré sur ce nœud. Indiquez-les avec la variable <code>PROJECT_ROOTS</code> (chemins absolus, montés à l'identique dans le conteneur).</div>}
       {d.truncated && <div className="banner warn">Beaucoup de projets : la liste est tronquée.</div>}
       {rows.length === 0 ? <div className="card"><Empty><FolderGit2 size={28} /><div>{tab === 'managed' ? <>Aucun projet géré.<br /><span className="muted small">Importez-en depuis l'onglet « Découverts ».</span></> : tab === 'discovered' ? 'Aucun nouveau projet trouvé dans vos dossiers.' : 'Aucun projet ignoré.'}</div></Empty></div>
-        : tab === 'managed' ? (view === 'list' ? <ProjectTable rows={rows} stat={stat} go={go} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} /> : <div className="project-grid">{rows.map((p) => <ProjectCard key={p.id} p={p} stat={stat} go={go} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} />)}</div>)
+        : tab === 'managed' ? (view === 'list' ? <ProjectTable rows={rows} stat={stat} go={goP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} /> : <div className="project-grid">{rows.map((p) => <ProjectCard key={(p._node?.id || '') + ':' + p.id} p={p} stat={stat} go={goP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} />)}</div>)
           : <div className="card flush"><table className="t"><thead><tr>{tab === 'discovered' && d.canImport && <th style={{ width: 30 }}><input type="checkbox" checked={sel.length === rows.length && rows.length > 0} onChange={(e) => setSel(e.target.checked ? rows.map((r) => r.path) : [])} /></th>}<th>Projet</th><th>Services</th><th>État</th><th /></tr></thead><tbody>
             {rows.map((p) => <tr key={p.path}>{tab === 'discovered' && d.canImport && <td><input type="checkbox" checked={sel.includes(p.path)} onChange={(e) => setSel((s) => (e.target.checked ? [...s, p.path] : s.filter((x) => x !== p.path)))} /></td>}
               <td><b>{p.name}</b>{p.hasEnv && <Badge style={{ marginLeft: 6 }}>.env</Badge>}{p.build && <Badge style={{ marginLeft: 6 }}>build</Badge>}{p.hasGit && <Badge style={{ marginLeft: 6 }}>git</Badge>}<div className="muted small mono">{p.path}</div>{p.error && <div className="small" style={{ color: 'var(--err)' }}>{p.error}</div>}</td>
@@ -86,8 +92,8 @@ function Services({ p }) {
 function ProjectCard({ p, stat, go, onRemove }) {
   const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const a = p.access
   return (
-    <div className={'card project ' + (p.missing ? 'off' : '')} onClick={() => !p.missing && go(`/projects/${p.id}`)}>
-      <div className="row"><FolderGit2 size={16} className="muted" /><b className="grow ellipsis">{p.name}</b>{!p.missing && <Badge kind={kind}>{lab}</Badge>}{p.missing && <Badge kind="err">introuvable</Badge>}</div>
+    <div className={'card project ' + (p.missing ? 'off' : '')} onClick={() => !p.missing && go(`/projects/${p.id}`, p)}>
+      <div className="row"><FolderGit2 size={16} className="muted" /><b className="grow ellipsis">{p.name}</b>{p._node && <NodeChip node={p._node} />}{!p.missing && <Badge kind={kind}>{lab}</Badge>}{p.missing && <Badge kind="err">introuvable</Badge>}</div>
       <div className="muted small mono ellipsis" title={p.path}>{p.path}</div>
       <Services p={p} />
       {p.hosts.length > 0 && <div className="row wrap" style={{ gap: 5 }}>{p.hosts.slice(0, 3).map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}><Globe size={11} /> {h}</a>)}{p.hosts.length > 3 && <span className="muted small">+{p.hosts.length - 3}</span>}</div>}
@@ -111,8 +117,8 @@ function ProjectTable({ rows, stat, go, onRemove }) {
   return (
     <div className="card flush"><table className="t"><thead><tr><th>Projet</th><th>État</th><th>Services</th><th>Sites</th><th>CPU</th><th>Mémoire</th><th>Requêtes</th><th>Visiteurs</th><th /></tr></thead><tbody>
       {rows.map((p) => { const s = stat(p.containerIds); const [lab, kind] = STATUS[p.status] || ['', '']; return (
-        <tr key={p.id} style={{ cursor: 'pointer' }} onClick={() => !p.missing && go(`/projects/${p.id}`)}>
-          <td><b>{p.name}</b><div className="muted small mono ellipsis" style={{ maxWidth: 260 }}>{p.path}</div></td><td>{p.missing ? <Badge kind="err">introuvable</Badge> : <Badge kind={kind}>{lab}</Badge>}</td><td><Services p={p} /></td>
+        <tr key={(p._node?.id || '') + ':' + p.id} style={{ cursor: 'pointer' }} onClick={() => !p.missing && go(`/projects/${p.id}`, p)}>
+          <td><b>{p.name}</b>{p._node && <> <NodeChip node={p._node} /></>}<div className="muted small mono ellipsis" style={{ maxWidth: 260 }}>{p.path}</div></td><td>{p.missing ? <Badge kind="err">introuvable</Badge> : <Badge kind={kind}>{lab}</Badge>}</td><td><Services p={p} /></td>
           <td className="small">{p.hosts.slice(0, 2).join(', ') || <span className="muted">—</span>}</td><td>{s ? `${s.cpu.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—'}</td><td>{s ? fmtSize(s.mem) : '—'}</td>
           <td>{p.access ? fmtNum(p.access.hits) : '—'}</td><td>{p.access ? fmtNum(p.access.visitors) : '—'}</td><td className="actions">{p.missing && onRemove && <Btn small kind="ghost" title="Retirer de la liste (rien n'est supprimé sur la machine)" onClick={(e) => { e.stopPropagation(); onRemove(p) }}><Undo2 size={13} /> Retirer</Btn>}</td></tr>) })}</tbody></table></div>
   )
