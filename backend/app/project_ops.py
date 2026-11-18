@@ -627,7 +627,7 @@ def _touches_self(d: Path) -> dict | None:
 
 
 def _sweep_helpers() -> None:
-    """Retire les conteneurs auxiliaires terminés (ceux dont le lanceur a disparu avant de pouvoir le faire)."""
+    """Retire les conteneurs auxiliaires terminés qui traîneraient encore (anciennes versions, Docker qui n'a pas pu les supprimer)."""
     try:
         old = dapi.request("GET", "/containers/json", {"all": 1, "filters": json.dumps({"label": ["armadok.helper=compose"], "status": ["exited", "created", "dead"]})}) or []
         for c in old:
@@ -636,40 +636,62 @@ def _sweep_helpers() -> None:
         pass
 
 
+def sweep_later(delay: float = 30) -> None:
+    """Au démarrage : nettoie les auxiliaires restés derrière un redémarrage (celui qui les lançait est mort avant de pouvoir le faire)."""
+    def go():
+        time.sleep(delay)
+        _sweep_helpers()
+    threading.Thread(target=go, name="helper-sweep", daemon=True).start()
+
+
 def _run_helper_job(job: dict, cid: str) -> None:
+    """Suit un conteneur auxiliaire. Il est créé avec AutoRemove : Docker le supprime tout seul dès qu'il s'arrête, même si CE processus a été
+    remplacé entre-temps (c'est le but : relancer Armadok lui-même). Le code de sortie vient d'un « wait » posé avant le démarrage."""
     def add(line: str) -> None:
         if len(job["lines"]) < MAX_JOB_LINES:
             job["lines"].append(line[:2000])
     seen = 0
     started = time.time()
+    res: dict = {}
+
+    def waiter() -> None:
+        try:
+            res["r"] = dapi.request("POST", f"/containers/{cid}/wait", {"condition": "removed"}, timeout=JOB_TIMEOUT + 10)
+        except dapi.DockerError:
+            pass
+    w = threading.Thread(target=waiter, daemon=True)
+    w.start()
+    time.sleep(0.3)
     try:
         dapi.request("POST", f"/containers/{cid}/start")
-        while True:
-            time.sleep(1)
+        while "r" not in res:
+            time.sleep(0.3)
             try:
                 text = "".join(t for _, t in dapi.demux(dapi.request("GET", f"/containers/{cid}/logs", {"stdout": 1, "stderr": 1}, raw=True) or b""))
-                info = dapi.request("GET", f"/containers/{cid}/json") or {}
             except dapi.DockerError:
-                break
+                break   # déjà supprimé
             lines = text.splitlines()
             for line in lines[seen:]:
                 add(line)
             seen = len(lines)
-            st = info.get("State") or {}
-            if not st.get("Running"):
-                job["code"] = st.get("ExitCode", 0)
-                break
             if time.time() - started > JOB_TIMEOUT:
                 job["code"] = 124
                 add("Délai dépassé")
+                try:
+                    dapi.request("DELETE", f"/containers/{cid}", {"force": 1})
+                except dapi.DockerError:
+                    pass
                 break
     except dapi.DockerError as e:
         add(f"Impossible de lancer la commande : {e}")
         job["code"] = 127
-    try:
-        dapi.request("DELETE", f"/containers/{cid}", {"force": 1})
-    except dapi.DockerError:
-        pass
+        try:
+            dapi.request("DELETE", f"/containers/{cid}", {"force": 1})
+        except dapi.DockerError:
+            pass
+    w.join(3)
+    if job["code"] is None:
+        job["code"] = int((res.get("r") or {}).get("StatusCode", 0))
     job["ended"], job["done"] = time.time(), True
 
 
@@ -687,7 +709,7 @@ def _spawn_detached(me: dict, d: Path, argv: list[str], label: str, action: str)
         "Image": (me.get("Config") or {}).get("Image") or me.get("Image"), "Entrypoint": [argv[0]], "Cmd": argv[1:], "WorkingDir": str(d), "User": f"{os.getuid()}:{os.getgid()}",
         "Env": ["HOME=/tmp", "DOCKER_CONFIG=/tmp/.docker", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROGRESS=plain", "COMPOSE_ANSI=never", "NO_COLOR=1"],
         "Labels": {"armadok.helper": "compose"}, "NetworkDisabled": True,
-        "HostConfig": {"Binds": [f"{sock}:/var/run/docker.sock", f"{d}:{d}:ro"], "GroupAdd": groups, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"], "NetworkMode": "none",
+        "HostConfig": {"AutoRemove": True, "Binds": [f"{sock}:/var/run/docker.sock", f"{d}:{d}:ro"], "GroupAdd": groups, "CapDrop": ["ALL"], "SecurityOpt": ["no-new-privileges:true"], "NetworkMode": "none",
                        "ReadonlyRootfs": True, "Tmpfs": {"/tmp": "rw,size=64m"}, "Memory": 256 * 1024 * 1024, "PidsLimit": 128}}
     try:
         cid = (dapi.request("POST", "/containers/create", {"name": f"armadok-helper-{jid}"}, body=body) or {}).get("Id")

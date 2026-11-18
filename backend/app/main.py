@@ -66,6 +66,8 @@ accesslog.start()
 alerts_engine.start()
 bans_engine.start()
 imagewatch.start()
+from . import project_ops as _po  # noqa: E402
+_po.sweep_later()
 automod_engine.start()
 app = FastAPI(title="Armadok", docs_url=None, redoc_url=None, openapi_url=None)
 for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, hooks_router, terminal_router):
