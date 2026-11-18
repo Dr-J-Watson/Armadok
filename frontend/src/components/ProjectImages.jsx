@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BellRing, CalendarClock, Download, ExternalLink, RefreshCw, Rocket } from 'lucide-react'
 import { api } from '../api.js'
+import { useNode } from '../node.jsx'
+import { useGo } from '../lib/nav.js'
+import { ImageModal } from './DockerDetail.jsx'
 import { Badge, Btn, Empty, Field, Loading, Modal, Switch, useUi } from './ui.jsx'
 import { JobOutput } from './ComposeBar.jsx'
 import { ago } from '../lib/features.js'
@@ -73,7 +76,7 @@ const ST = { latest: ['À jour', 'ok'], update: ['Nouvelle version', 'info'], ab
 
 // Suivi des images d'un projet : comparaison de l'empreinte avec le registre (rien n'est téléchargé pour vérifier).
 export default function ProjectImages({ id, perms }) {
-  const { toast } = useUi(); const qc = useQueryClient(); const [job, setJob] = useState(null); const [edit, setEdit] = useState(false)
+  const { toast } = useUi(); const qc = useQueryClient(); const [job, setJob] = useState(null); const [edit, setEdit] = useState(false); const [detail, setDetail] = useState(null); const { can } = useNode(); const go = useGo(); const canView = can('docker.view')
   const q = useQuery({ queryKey: ['project-images', id], queryFn: () => api.get(`/projects/${id}/images`) })
   const check = useMutation({ mutationFn: () => api.post(`/projects/${id}/images/check`), onSuccess: (r) => { qc.setQueryData(['project-images', id], (o) => ({ ...o, ...r })); const n = r.images.filter((i) => i.status === 'update').length; toast(n ? `${n} image${n > 1 ? 's' : ''} avec une nouvelle version` : 'Tout est à jour') }, onError: (e) => toast(e.message, 'err') })
   const track = useMutation({ mutationFn: (body) => api.put(`/projects/${id}/images/track`, body), onSuccess: (r) => { qc.setQueryData(['project-images', id], (o) => ({ ...o, ...r })); setEdit(false); toast(r.track ? 'Vérification automatique activée' : 'Vérification automatique désactivée') }, onError: (e) => toast(e.message, 'err') })
@@ -96,11 +99,12 @@ export default function ProjectImages({ id, perms }) {
       {d.images.length === 0 ? <div className="card"><Empty><div>Aucun service de ce projet n'utilise d'image du registre (images construites localement).</div></Empty></div> : (
         <div className="card flush"><table className="t"><thead><tr><th>Service</th><th>Image</th><th>État</th><th>Vérifié</th></tr></thead><tbody>
           {d.images.map((i) => { const [lab, kind] = ST[i.status] || ['?', '']; return (
-            <tr key={i.service}><td><b>{i.service}</b></td><td className="mono small">{i.packageUrl ? <a href={i.packageUrl} target="_blank" rel="noreferrer noopener" title="Ouvrir la page de l'image (versions, notes de publication)">{i.image} <ExternalLink size={11} style={{ verticalAlign: -1 }} /></a> : i.image}{i.imageRaw && <div className="muted" title="Valeur lue dans le .env du projet">{i.imageRaw}</div>}{i.local && <div className="muted">locale {i.local}{i.remote ? ` · registre ${i.remote}` : ''}</div>}</td>
+            <tr key={i.service} style={i.local && canView ? { cursor: 'pointer' } : undefined} title={i.local ? (canView ? "Voir le détail de l'image (couches, variables, ports, conteneurs qui l'utilisent)" : undefined) : "Image pas encore téléchargée : pas de détail local"} onClick={() => i.local && canView && setDetail(i.local)}><td><b>{i.service}</b></td><td className="mono small">{i.packageUrl ? <a href={i.packageUrl} onClick={(e) => e.stopPropagation()} target="_blank" rel="noreferrer noopener" title="Ouvrir la page de l'image (versions, notes de publication)">{i.image} <ExternalLink size={11} style={{ verticalAlign: -1 }} /></a> : i.image}{i.imageRaw && <div className="muted" title="Valeur lue dans le .env du projet">{i.imageRaw}</div>}{i.local && <div className="muted">locale {i.local}{i.remote ? ` · registre ${i.remote}` : ''}</div>}</td>
               <td><Badge kind={kind}>{lab}</Badge>{i.newerTag && <Badge kind="info" style={{ marginLeft: 6 }} title={`Une version plus récente existe : ${i.newerImage}. ${i.imageRaw ? `Changez la variable dans le .env (${i.imageRaw}) pour l'utiliser.` : "Changez le tag dans le fichier compose pour l'utiliser."}`}>version {i.newerTag}</Badge>}{i.needsRedeploy && <Badge kind="warn" style={{ marginLeft: 6 }} title="Une version plus récente est téléchargée mais les conteneurs tournent encore avec l'ancienne">à redéployer</Badge>}{i.error && <div className="muted small">{i.error}</div>}</td>
               <td className="muted small">{i.checkedAt ? ago(i.checkedAt) : '—'}</td></tr>) })}</tbody></table></div>)}
       <div className="muted small">La comparaison porte sur l'empreinte du manifeste au registre public, et, quand le tag est un numéro de version (1.27, v2.3.1-alpine…), sur les versions plus hautes publiées ; les registres privés ne sont pas interrogés. Les images construites localement n'ont pas de version au registre.</div>
       {edit && <ScheduleModal id={id} initial={d.schedule} busy={track.isPending} onClose={() => setEdit(false)} onSave={(schedule) => track.mutate({ schedule, enabled: true })} />}
+      {detail && <ImageModal id={detail} onClose={() => setDetail(null)} onOpenContainer={(n) => { setDetail(null); go(`/docker?c=${encodeURIComponent(n)}`) }} />}
       {job && <JobOutput id={id} job={job} onClose={() => { setJob(null); qc.invalidateQueries({ queryKey: ['project-images', id] }) }} />}
     </div>
   )
