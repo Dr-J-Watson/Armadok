@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.4.1...v1.5.0) (2026-11-18)
+
+
+### Nouveautés
+
+* en affichage complet, la liste des sites indique vers quel nœud chaque site mène (ou l'adresse externe : box, autre machine) ([77dfa51](https://github.com/Dr-J-Watson/Armadok/commit/77dfa5142323ed7f3a4553873af45cc49191c4bb))
+* suivi des images — lien vers la page du paquet (ghcr.io, Docker Hub, Quay), détection d'une version plus haute que le tag courant, et planning au choix (toutes les N heures ou jours, certains jours de la semaine, un jour du mois) ([576d367](https://github.com/Dr-J-Watson/Armadok/commit/576d3670600b8a7602d916fa9120282fcfcef841))
+
 ## [1.4.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.4.0...v1.4.1) (2026-11-17)
 
 
