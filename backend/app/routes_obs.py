@@ -6,7 +6,7 @@ import time
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from . import accesslog, alerts, attacks as atk, automod, bans, db, geo, observability as obs, trusted
+from . import accesslog, alerts, attacks as atk, automod, bans, db, geo, obs_scope, observability as obs, trusted
 from .nodes import NodeCtx, node_cap, node_ctx
 from .traefik_store import StoreError
 
@@ -94,12 +94,14 @@ def test(ctx: NodeCtx = Depends(node_cap("node.settings"))):
 # ------------------------------------------------------------------ métriques
 @router.get("/overview")
 def overview(ctx: NodeCtx = Depends(node_cap("metrics.view"))):
-    return _guard(_cached, ("overview", ctx.id), 10, obs.overview, _prom(ctx))
+    sc = obs_scope.of(ctx)
+    return _guard(_cached, ("overview", ctx.id, sc and sc["sel"]), 10, obs.overview, _prom(ctx), sc["sel"] if sc else "")
 
 
 @router.get("/series")
 def series(name: str, range: str = "1h", ctx: NodeCtx = Depends(node_cap("metrics.view"))):
-    return _guard(_cached, ("series", ctx.id, name, range), 15, obs.series, _prom(ctx), name, range)
+    sc = obs_scope.of(ctx)
+    return _guard(_cached, ("series", ctx.id, name, range, sc and sc["sel"]), 15, obs.series, _prom(ctx), name, range, sc["sel"] if sc else "")
 
 
 @router.get("/breakdown")
@@ -108,7 +110,8 @@ def breakdown(range: str = "24h", ctx: NodeCtx = Depends(node_cap("metrics.view"
         seconds = obs.parse_range(range)
     except obs.PromError as e:
         raise HTTPException(e.status, str(e))
-    return _guard(_cached, ("breakdown", ctx.id, seconds), 30, obs.breakdown, _prom(ctx), seconds)
+    sc = obs_scope.of(ctx)
+    return _guard(_cached, ("breakdown", ctx.id, seconds, sc and sc["sel"]), 30, obs.breakdown, _prom(ctx), seconds, sc["sel"] if sc else "")
 
 
 @router.get("/site")
@@ -117,12 +120,16 @@ def site_detail(service: str, range: str = "6h", ctx: NodeCtx = Depends(node_cap
         seconds = obs.parse_range(range)
     except obs.PromError as e:
         raise HTTPException(e.status, str(e))
+    sc = obs_scope.of(ctx)
+    if sc and service.split("@")[0] not in sc["services"]:
+        raise HTTPException(404, "Ce site n'est pas à ce nœud")
     return _guard(_cached, ("site", ctx.id, service, seconds), 15, obs.site_stats, _prom(ctx), service, seconds)
 
 
 @router.get("/services")
 def services(ctx: NodeCtx = Depends(node_cap("metrics.view"))):
-    return _guard(_cached, ("services", ctx.id), 10, obs.services, _prom(ctx))
+    sc = obs_scope.of(ctx)
+    return _guard(_cached, ("services", ctx.id, sc and tuple(sorted(sc["services"]))), 10, obs.services, _prom(ctx), sc["services"] if sc else None)
 
 
 _METRIC = r"[a-zA-Z_:][a-zA-Z0-9_:]*"
@@ -181,12 +188,17 @@ def get_alerts(ctx: NodeCtx = Depends(node_cap("alerts.view"))):
               "available": (f["metrics"]["enabled"] if r["source"] == "prom" else f["ips"]["enabled"]), "source": r["source"], **cfg[k]} for k, r in alerts.RULES.items()]
     native, native_error = [], None
     row = _row(ctx)
-    if row["prometheus_url"] and ctx.node["kind"] == "local":
+    sc = obs_scope.of(ctx)
+    if row["prometheus_url"] and ctx.node["kind"] == "local" and not sc:
         try:
             native = obs.native_alerts(row["prometheus_url"])
         except obs.PromError as e:
             native_error = str(e)
-    return {"rules": rules, "state": _mask_alerts(ctx, alerts.state(ctx.id)), "history": _mask_alerts(ctx, alerts.history(ctx.id)),
+    state, history = alerts.state(ctx.id), alerts.history(ctx.id)
+    if sc:   # vue filtrée : seulement les alertes qui visent ses sites
+        state = [a for a in state if obs_scope.alert_visible(ctx.id, sc, a["key"], a["subject"])]
+        history = [a for a in history if obs_scope.alert_visible(ctx.id, sc, a["key"], a["subject"])]
+    return {"rules": rules, "state": _mask_alerts(ctx, state), "history": _mask_alerts(ctx, history),
             "native": native, "nativeError": native_error, "webhookSet": bool(row["webhook_url"]), "canManage": ctx.can("alerts.manage")}
 
 
@@ -280,7 +292,8 @@ def list_ips(days: int = 7, sort: str = "hits", only: str = "", search: str = ""
     if not accesslog.available(ctx.id):
         raise HTTPException(404, "Le journal d'accès de Traefik n'est pas branché (voir l'aide, « Fonctionnalités facultatives »)")
     reveal = ctx.can("security.ips.reveal")
-    res = accesslog.listing(ctx.id, max(1, min(days, accesslog.RETENTION_DAYS)), sort, only, search if reveal else "", 500, kind)
+    sc = obs_scope.of(ctx)
+    res = accesslog.listing(ctx.id, max(1, min(days, accesslog.RETENTION_DAYS)), sort, only, search if reveal else "", 500, kind, sc["hosts"] if sc else None)
     if search and not reveal:   # sans le droit, on ne cherche pas par adresse (ce serait la deviner) : seulement par site ou chemin
         q = search.strip().lower()
         res["rows"] = [r for r in res["rows"] if q in (r["last_host"] or "").lower() or q in (r["last_path"] or "").lower()]
@@ -307,8 +320,9 @@ def traffic_stats(days: int = 1, ctx: NodeCtx = Depends(node_cap("security.view"
         raise HTTPException(404, "Le journal d'accès de Traefik n'est pas branché (voir l'aide, « Fonctionnalités facultatives »)")
     days = max(1, min(days, accesslog.RETENTION_DAYS))
     reveal = ctx.can("security.ips.reveal")
-    out = accesslog.stats(ctx.id, days)
-    lst = accesslog.listing(ctx.id, days, "hits", "public", "", 5000, "")
+    sc = obs_scope.of(ctx)
+    out = accesslog.stats(ctx.id, days, sc["hosts"] if sc else None)
+    lst = accesslog.listing(ctx.id, days, "hits", "public", "", 5000, "", sc["hosts"] if sc else None)
     rows = _present(ctx, lst["rows"])
     countries: dict[str, dict] = {}
     for r in rows:
@@ -330,7 +344,12 @@ def traffic_stats(days: int = 1, ctx: NodeCtx = Depends(node_cap("security.view"
 @router.get("/ips/{ref}")
 def ip_detail(ref: str, ctx: NodeCtx = Depends(node_cap("security.view"))):
     ip = accesslog.resolve_ref(ctx.id, ref)
+    sc = obs_scope.of(ctx)
+    if sc and ip and ip not in obs_scope.ips_on_hosts(ctx.id, sc):
+        ip = None
     d = accesslog.detail(ctx.id, ip) if ip else None
+    if d and sc:
+        d["paths"] = [p for p in d.get("paths", []) if (p.get("host") or "").lower() in sc["hosts"]]
     if not d:
         raise HTTPException(404, "Adresse inconnue (peut-être purgée après 7 jours)")
     d["ref"] = ref

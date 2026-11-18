@@ -429,13 +429,28 @@ def _attack_rows(node_id: str, cut: float, hits_by_ip: dict[str, int]) -> dict[s
     return out
 
 
-def listing(node_id: str, days: int = RETENTION_DAYS, sort: str = "hits", only: str = "", search: str = "", limit: int = 200, kind: str = "") -> dict:
+def _only_hosts(node_id: str, rows: list[dict], hosts: set, cut: float) -> list[dict]:
+    """Vue filtrée : les adresses vues sur ces noms de domaine, avec les requêtes et erreurs comptées sur ces domaines seulement."""
+    hs = sorted(hosts)
+    if not hs:
+        return []
+    seen = {r["ip"]: r for r in db.rows(f"SELECT ip, SUM(hits) hits, SUM(errors) errors FROM ip_paths WHERE node_id=? AND last_seen>=? AND host IN ({','.join('?' for _ in hs)}) GROUP BY ip", (node_id, cut, *hs))}
+    out = []
+    for r in rows:
+        if r["ip"] in seen:
+            out.append({**r, "hits": seen[r["ip"]]["hits"], "scopedErrors": seen[r["ip"]]["errors"]})
+    return out
+
+
+def listing(node_id: str, days: int = RETENTION_DAYS, sort: str = "hits", only: str = "", search: str = "", limit: int = 200, kind: str = "", hosts: set | None = None) -> dict:
     now = time.time()
     since = int((now - min(days, RETENTION_DAYS) * 86400) // 3600)
     rows = [dict(r) for r in db.rows(
         "SELECT h.ip, SUM(hits) hits, SUM(c2) c2, SUM(c3) c3, SUM(c401) c401, SUM(c403) c403, SUM(c404) c404, SUM(c4) c4, SUM(c5) c5, "
         "s.first_seen, s.last_seen, s.last_host, s.last_path, s.last_status, s.last_ua FROM ip_hits h LEFT JOIN ip_seen s ON s.node_id=h.node_id AND s.ip=h.ip "
         "WHERE h.node_id=? AND h.hour>=? GROUP BY h.ip", (node_id, since))]
+    if hosts is not None:
+        rows = _only_hosts(node_id, rows, hosts, now - min(days, RETENTION_DAYS) * 86400)
     paths = collections.defaultdict(list)
     for r in db.rows("SELECT ip, path FROM ip_paths WHERE node_id=? AND last_seen>=?", (node_id, now - days * 86400)):
         paths[r["ip"]].append(r["path"])
@@ -446,7 +461,7 @@ def listing(node_id: str, days: int = RETENTION_DAYS, sort: str = "hits", only: 
     for r in rows:
         r["attacks"] = attacks_by_ip.get(r["ip"], [])
         probes = [p for p in paths.get(r["ip"], []) if _PROBE.search(p)]
-        r["errors"] = r["c401"] + r["c403"] + r["c404"] + r["c4"]
+        r["errors"] = r["scopedErrors"] if "scopedErrors" in r else r["c401"] + r["c403"] + r["c404"] + r["c4"]
         r["suspicious"] = is_suspicious(r, bool(probes)) or bool(r["attacks"])
         r["leak"] = any(a["kind"] == "leak" for a in r["attacks"])
         r["probes"] = probes[:3]
@@ -488,7 +503,7 @@ def listing(node_id: str, days: int = RETENTION_DAYS, sort: str = "hits", only: 
     return {"rows": out[:limit], "total": total, "kinds": kinds_list, "days": min(days, RETENTION_DAYS)}
 
 
-def stats(node_id: str, days: int = 1) -> dict:
+def stats(node_id: str, days: int = 1, hosts: set | None = None) -> dict:
     """Vue d'ensemble du trafic d'après le journal d'accès : courbe par heure, familles de réponses, sites et chemins les plus demandés."""
     now = time.time()
     days = max(1, min(days, RETENTION_DAYS))
@@ -501,9 +516,17 @@ def stats(node_id: str, days: int = 1) -> dict:
     c = dict(db.one("SELECT SUM(hits) hits, SUM(c2) c2, SUM(c3) c3, SUM(c401) c401, SUM(c403) c403, SUM(c404) c404, SUM(c4) c4, SUM(c5) c5 FROM ip_hits WHERE node_id=? AND hour>=?", (node_id, since)) or {})
     classes = [{"name": n, "value": int(c.get(k) or 0)} for n, k in (("2xx", "c2"), ("3xx", "c3"), ("401", "c401"), ("403", "c403"), ("404", "c404"), ("autres 4xx", "c4"), ("5xx", "c5"))]
     cut = now - days * 86400
-    hosts = [dict(r) for r in db.rows("SELECT host name, SUM(hits) hits, SUM(errors) errors, COUNT(DISTINCT ip) ips FROM ip_paths WHERE node_id=? AND last_seen>=? AND host<>'' GROUP BY host ORDER BY hits DESC LIMIT 10", (node_id, cut))]
-    paths = [dict(r) for r in db.rows("SELECT host, path, SUM(hits) hits, SUM(errors) errors FROM ip_paths WHERE node_id=? AND last_seen>=? GROUP BY host, path ORDER BY hits DESC LIMIT 10", (node_id, cut))]
-    return {"days": days, "timeline": timeline, "classes": classes, "hosts": hosts, "paths": paths, "hits": int(c.get("hits") or 0)}
+    only = ""
+    args: tuple = ()
+    if hosts is not None:   # vue filtrée : le journal ne garde l'heure et la classe de réponse que pour l'ensemble, pas par domaine
+        args = tuple(sorted(hosts))
+        only = f" AND host IN ({','.join('?' for _ in args)})" if args else " AND 0"
+        timeline, classes = [], []
+        tot = db.one(f"SELECT SUM(hits) hits FROM ip_paths WHERE node_id=? AND last_seen>=?{only}", (node_id, cut, *args))
+        c = {"hits": (tot["hits"] if tot else 0) or 0}
+    hs = [dict(r) for r in db.rows(f"SELECT host name, SUM(hits) hits, SUM(errors) errors, COUNT(DISTINCT ip) ips FROM ip_paths WHERE node_id=? AND last_seen>=? AND host<>''{only} GROUP BY host ORDER BY hits DESC LIMIT 10", (node_id, cut, *args))]
+    paths = [dict(r) for r in db.rows(f"SELECT host, path, SUM(hits) hits, SUM(errors) errors FROM ip_paths WHERE node_id=? AND last_seen>=?{only} GROUP BY host, path ORDER BY hits DESC LIMIT 10", (node_id, cut, *args))]
+    return {"days": days, "timeline": timeline, "classes": classes, "hosts": hs, "paths": paths, "hits": int(c.get("hits") or 0), "scoped": hosts is not None}
 
 
 def exempt(node_id: str, ip: str) -> bool:

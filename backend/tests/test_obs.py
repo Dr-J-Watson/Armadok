@@ -419,3 +419,35 @@ def test_ban_stats(world):
         client.delete(f"/api/obs/bans/{i}", headers=root)
     assert client.get("/api/obs/bans", headers=root).json()["stats"]["total"] == 0
     db.run("DELETE FROM ip_hits WHERE node_id=? AND ip=?", (nid, "45.66.77.91"))
+
+
+# ---------- vue filtrée sur un nœud (ses sites seulement) ----------
+def test_scoped_view_keeps_only_that_nodes_sites(world, monkeypatch):
+    from app import obs_scope
+    nid = world["nid"]
+    accesslog.ingest(nid, LINES)
+    # journal d'accès : seules les adresses vues sur ses domaines, comptées sur ces domaines
+    res = accesslog.listing(nid, 7, hosts={"app.exemple.fr"})
+    assert {r["ip"] for r in res["rows"]} == {"8.8.4.4", "192.168.1.20"} and all(r["hits"] >= 1 for r in res["rows"])
+    assert accesslog.listing(nid, 7, hosts=set())["rows"] == []
+    st = accesslog.stats(nid, 7, {"box.exemple.fr"})
+    assert st["scoped"] and st["hits"] >= 2 and [h["name"] for h in st["hosts"]] == ["box.exemple.fr"] and st["timeline"] == []
+    assert accesslog.stats(nid, 7)["hits"] >= 4   # sans filtre : tout
+    # Prometheus : un sélecteur sûr, des requêtes calculées sur les services du nœud
+    sel = obs.scope_sel({"sonarr-svc", "a.b", 'x"} or vector(1) #'})
+    assert sel == 'service=~"(a[.]b|sonarr-svc)@.+"' and obs.scope_sel(set()) == 'service="__aucun__"'
+    inst, ser = obs._scoped(sel)
+    assert sel in inst["reqRate"] and "traefik_entrypoint" not in " ".join([*inst.values(), *ser.values()]) and "connections" not in ser
+    seen = []
+    monkeypatch.setattr(obs, "query", lambda base, expr: seen.append(expr) or [])
+    obs.breakdown("http://x", 3600, sel)
+    assert seen and all(sel in e for e in seen) and not any("entrypoint" in e for e in seen)
+    monkeypatch.setattr(obs, "query", lambda base, expr: [{"labels": {"service": "a@file"}, "value": 1.0}, {"labels": {"service": "b@file"}, "value": 2.0}])
+    assert [s["service"] for s in obs.services("http://x", {"b"})] == ["b@file"]
+    # alertes : celles de ses services, de ses domaines, d'adresses vues chez lui ; pas celles de tout le Traefik
+    sc = {"services": {"sonarr-svc"}, "hosts": {"app.exemple.fr"}, "sel": sel}
+    ok = lambda k, s: obs_scope.alert_visible(nid, sc, k, s)  # noqa: E731
+    assert ok("error_rate", "sonarr-svc@file") and not ok("error_rate", "autre@file")
+    assert ok("cert_expiry", "app.exemple.fr") and not ok("cert_expiry", "box.exemple.fr")
+    assert ok("scan_burst", "8.8.4.4") and not ok("scan_burst", "45.155.205.233")
+    assert not ok("reload_failed", "") and not ok("traffic_spike", "")

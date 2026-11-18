@@ -66,7 +66,8 @@ export function Visitors({ f, onTab }) {
   if (q.error) return <div className="banner err">{q.error.message}</div>
   const d = q.data; const t = d.total
   const cls = Object.fromEntries(d.classes.map((c) => [c.name, c.value]))
-  const errPct = d.hits ? ((cls['401'] + cls['403'] + cls['404'] + cls['autres 4xx'] + cls['5xx']) / d.hits) * 100 : 0
+  const sh = d.hosts.reduce((a, h) => a + h.hits, 0)
+  const errPct = d.scoped ? (sh ? (d.hosts.reduce((a, h) => a + h.errors, 0) / sh) * 100 : 0) : d.hits ? ((cls['401'] + cls['403'] + cls['404'] + cls['autres 4xx'] + cls['5xx']) / d.hits) * 100 : 0
   const peak = d.timeline.reduce((a, b) => (b.hits > a.hits ? b : a), { hits: 0, t: 0 })
   return (
     <div className="col gap-lg">
@@ -77,14 +78,15 @@ export function Visitors({ f, onTab }) {
         <Kpi label="Requêtes" value={big(d.hits)} />
         <Kpi label="Part d'erreurs" value={`${fmtNum(errPct, 1)} %`} kind={errPct > 40 ? 'warn' : ''} hint="401, 403, 404 et autres erreurs, 5xx compris, sur l'ensemble des requêtes." />
         <Kpi to="/monitoring?tab=ips&only=suspicious" label="Adresses suspectes" value={fmtNum(t.suspicious, 0)} kind={t.suspicious ? 'warn' : 'ok'} />
-        <Kpi label="Heure la plus chargée" value={peak.hits ? new Date(peak.t * 1000).toLocaleString('fr-FR', { weekday: days > 1 ? 'short' : undefined, hour: '2-digit', minute: '2-digit' }).replace(/:00$/, ' h') : '—'} hint={peak.hits ? `${fmtNum(peak.hits, 0)} requêtes pendant cette heure` : undefined} />
+        {!d.scoped && <Kpi label="Heure la plus chargée" value={peak.hits ? new Date(peak.t * 1000).toLocaleString('fr-FR', { weekday: days > 1 ? 'short' : undefined, hour: '2-digit', minute: '2-digit' }).replace(/:00$/, ' h') : '—'} hint={peak.hits ? `${fmtNum(peak.hits, 0)} requêtes pendant cette heure` : undefined} />}
         <Kpi to="/monitoring?tab=bans" label="Bannies" value={fmtNum(t.banned, 0)} />
         <Kpi to="/monitoring?tab=trusted" label="Validées" value={fmtNum(t.trusted, 0)} />
       </div>
-      <div className="card"><h3>Requêtes par heure <Info>Chaque bâton est une heure : en bleu les requêtes, en rouge les erreurs.</Info></h3><Bars data={d.timeline} height={90} /></div>
+      {d.scoped && <div className="muted small">Vue limitée aux sites de ce nœud. Le journal d'accès ne garde la répartition par heure et par code de réponse que pour l'ensemble du Traefik : elle n'est pas montrée ici.</div>}
+      {!d.scoped && <div className="card"><h3>Requêtes par heure <Info>Chaque bâton est une heure : en bleu les requêtes, en rouge les erreurs.</Info></h3><Bars data={d.timeline} height={90} /></div>}
       <div className="grid two">
-        <div className="card"><h3>Réponses <Info>Ce que les visiteurs ont reçu.</Info></h3>
-          <StackBar parts={d.classes.map((c) => ({ name: c.name, value: c.value, color: { '2xx': 'var(--ok)', '3xx': 'var(--info)', '401': 'var(--warn)', '403': 'var(--warn)', '404': '#d9a441', 'autres 4xx': '#c27a00', '5xx': 'var(--err)' }[c.name] }))} fmt={big} /></div>
+        {!d.scoped && <div className="card"><h3>Réponses <Info>Ce que les visiteurs ont reçu.</Info></h3>
+          <StackBar parts={d.classes.map((c) => ({ name: c.name, value: c.value, color: { '2xx': 'var(--ok)', '3xx': 'var(--info)', '401': 'var(--warn)', '403': 'var(--warn)', '404': '#d9a441', 'autres 4xx': '#c27a00', '5xx': 'var(--err)' }[c.name] }))} fmt={big} /></div>}
         <div className="card"><h3><Globe size={14} style={{ verticalAlign: -2 }} /> Pays <Info>D'après la base de localisation locale (le pays est fiable). Réseau local exclu.</Info></h3>
           {d.geo.available ? <BarList items={d.countries.map((c) => ({ name: c.name, value: c.hits, sub: `${c.ips} adresse${c.ips > 1 ? 's' : ''}${c.attacks ? ` · ${c.attacks} attaque${c.attacks > 1 ? 's' : ''}` : ''}`, color: countryColor(c.code), title: c.name }))} fmt={big} empty="Aucune adresse localisée." />
             : <Empty><MapPin size={26} /><div>Pas de localisation. <button type="button" className="linklike" onClick={() => onTab?.('ips')}>Télécharger la base</button> (onglet « Adresses IP »).</div></Empty>}</div>

@@ -104,9 +104,31 @@ EP = "traefik_entrypoint_requests_total"
 SVC = "traefik_service_requests_total"
 
 
-def _p(q: float, metric: str, by: str = "") -> str:
-    sel = f"le{', ' + by if by else ''}"
-    return f"histogram_quantile({q}, sum by ({sel}) (rate({metric}_bucket[5m])))"
+def _p(q: float, metric: str, by: str = "", sel: str = "") -> str:
+    grp = f"le{', ' + by if by else ''}"
+    return f"histogram_quantile({q}, sum by ({grp}) (rate({metric}_bucket{{{sel}}}[5m])))" if sel else f"histogram_quantile({q}, sum by ({grp}) (rate({metric}_bucket[5m])))"
+
+
+def scope_sel(services) -> str:
+    """Sélecteur « service » pour une vue filtrée (les services d'un seul nœud) : noms sans fournisseur, validés, donc sans injection."""
+    import re
+    names = sorted(n for n in services if re.fullmatch(r"[A-Za-z0-9_.\-]{1,120}", n or ""))
+    return 'service=~"(' + "|".join(n.replace(".", "[.]") for n in names) + ')@.+"' if names else 'service="__aucun__"'
+
+
+def _scoped(sel: str) -> tuple[dict, dict]:
+    """Les requêtes de la vue d'ensemble, calculées sur les services du nœud (les métriques « point d'entrée » ne savent pas distinguer les sites)."""
+    r = f"{SVC}{{{sel}}}"
+    inst = {
+        "reqRate": f"sum(rate({r}[5m]))", "err4": f'sum(rate({SVC}{{{sel},code=~"4.."}}[5m]))', "err5": f'sum(rate({SVC}{{{sel},code=~"5.."}}[5m]))',
+        "p95": _p(0.95, "traefik_service_request_duration_seconds", sel=sel),
+        "bytesIn": f"sum(rate(traefik_service_requests_bytes_total{{{sel}}}[5m]))", "bytesOut": f"sum(rate(traefik_service_responses_bytes_total{{{sel}}}[5m]))",
+    }
+    ser = {
+        "requests": f"sum by (code) (rate({r}[5m]))", "latency50": _p(0.5, "traefik_service_request_duration_seconds", sel=sel), "latency95": inst["p95"],
+        "latency99": _p(0.99, "traefik_service_request_duration_seconds", sel=sel), "bytesIn": inst["bytesIn"], "bytesOut": inst["bytesOut"],
+    }
+    return inst, ser
 
 
 INSTANT = {
@@ -147,9 +169,9 @@ def parse_range(spec: str) -> int:
     return sec
 
 
-def overview(base: str) -> dict:
+def overview(base: str, sel: str = "") -> dict:
     out: dict = {"instant": {}, "errors": {}}
-    for k, expr in INSTANT.items():
+    for k, expr in (_scoped(sel)[0] if sel else INSTANT).items():
         try:
             r = query(base, expr)
             out["instant"][k] = r[0]["value"] if r else None
@@ -157,6 +179,9 @@ def overview(base: str) -> dict:
             out["errors"][k] = str(e)
             if e.status == 502:   # injoignable : inutile d'insister
                 raise
+    if sel:   # cibles Prometheus, certificats, rechargements : propres à tout le Traefik, pas à un nœud
+        out["targets"], out["scoped"] = [], True
+        return out
     try:
         out["targets"] = targets(base)
     except PromError as e:
@@ -165,10 +190,13 @@ def overview(base: str) -> dict:
     return out
 
 
-def series(base: str, name: str, rng: str) -> list[dict]:
+def series(base: str, name: str, rng: str, sel: str = "") -> list[dict]:
     if name not in SERIES:
         raise PromError("Série inconnue", 422)
-    res = query_range(base, SERIES[name], parse_range(rng))
+    qs = _scoped(sel)[1] if sel else SERIES
+    if name not in qs:   # ex. connexions ouvertes : pas de mesure par service
+        return []
+    res = query_range(base, qs[name], parse_range(rng))
     if name == "requests":   # regroupe par classe (2xx, 3xx, 4xx, 5xx) plutôt que par code exact
         merged: dict[str, dict[float, float]] = {}
         for s in res:
@@ -180,7 +208,7 @@ def series(base: str, name: str, rng: str) -> list[dict]:
     return res
 
 
-def services(base: str) -> list[dict]:
+def services(base: str, only=None) -> list[dict]:
     """Par service : requêtes/s, % d'erreurs serveur (5xx), % d'erreurs client (4xx), latence p95."""
     rate = {r["labels"].get("service", ""): r["value"] for r in query(base, f"sum by (service) (rate({SVC}[5m]))")}
     e5 = {r["labels"].get("service", ""): r["value"] for r in query(base, f'sum by (service) (rate({SVC}{{code=~"5.."}}[5m]))')}
@@ -192,6 +220,8 @@ def services(base: str) -> list[dict]:
     out = []
     for name, r in rate.items():
         out.append({"service": name, "rate": r, "err5": (e5.get(name, 0) / r * 100) if r else 0, "err4": (e4.get(name, 0) / r * 100) if r else 0, "p95": p95.get(name)})
+    if only is not None:   # vue filtrée : les services du nœud seulement (nom sans fournisseur)
+        out = [o for o in out if o["service"].split("@")[0] in only]
     return sorted(out, key=lambda x: -x["rate"])
 
 
@@ -201,19 +231,28 @@ def _group(base: str, expr: str, label: str, top: int = 8) -> list[dict]:
     return sorted(rows, key=lambda r: -r["value"])[:top]
 
 
-def breakdown(base: str, seconds: int) -> dict:
+def breakdown(base: str, seconds: int, sel: str = "") -> dict:
     """Ce qui s'est passé sur la période : totaux et répartitions (sites, codes, méthodes, points d'entrée, protocole, TLS, lenteur). Chaque
-    morceau est indépendant : un morceau qui échoue (métrique absente) est simplement omis."""
+    morceau est indépendant : un morceau qui échoue (métrique absente) est simplement omis. `sel` : vue filtrée sur les services d'un nœud."""
     w = f"{max(60, int(seconds))}s"
     out: dict = {"seconds": int(seconds)}
+
+    def M(metric: str, extra: str = "") -> str:
+        parts = [x for x in (sel, extra) if x]
+        return metric + ("{" + ",".join(parts) + "}" if parts else "")
+    E = SVC if sel else EP
+    five = 'code=~"5.."'
     qs = {
-        "total": f"sum(increase({EP}[{w}]))",
-        "tls": f"sum(increase(traefik_entrypoint_requests_tls_total[{w}]))",
-        "bytesIn": f"sum(increase(traefik_entrypoint_requests_bytes_total[{w}]))",
-        "bytesOut": f"sum(increase(traefik_entrypoint_responses_bytes_total[{w}]))",
-        "reloads": f"sum(increase(traefik_config_reloads_total[{w}]))",
+        "total": f"sum(increase({M(E)}[{w}]))",
+        "tls": None if sel else f"sum(increase(traefik_entrypoint_requests_tls_total[{w}]))",
+        "bytesIn": f"sum(increase({M('traefik_service_requests_bytes_total' if sel else 'traefik_entrypoint_requests_bytes_total')}[{w}]))",
+        "bytesOut": f"sum(increase({M('traefik_service_responses_bytes_total' if sel else 'traefik_entrypoint_responses_bytes_total')}[{w}]))",
+        "reloads": None if sel else f"sum(increase(traefik_config_reloads_total[{w}]))",
     }
     for k, expr in qs.items():
+        if expr is None:
+            out[k] = None
+            continue
         try:
             r = query(base, expr)
             out[k] = r[0]["value"] if r else None
@@ -222,14 +261,15 @@ def breakdown(base: str, seconds: int) -> dict:
                 raise
             out[k] = None
     groups = {
-        "byService": (f"sum by (service) (increase({SVC}[{w}]))", "service", 10),
-        "byCode": (f"sum by (code) (increase({EP}[{w}]))", "code", 30),
-        "byMethod": (f"sum by (method) (increase({SVC}[{w}]))", "method", 8),
-        "byEntrypoint": (f"sum by (entrypoint) (increase({EP}[{w}]))", "entrypoint", 8),
-        "byProtocol": (f"sum by (protocol) (increase({SVC}[{w}]))", "protocol", 5),
-        "errorsByService": (f'sum by (service) (increase({SVC}{{code=~"5.."}}[{w}]))', "service", 8),
-        "slowest": (_p(0.95, "traefik_service_request_duration_seconds", "service").replace("[5m]", f"[{w}]"), "service", 6),
+        "byService": (f"sum by (service) (increase({M(SVC)}[{w}]))", "service", 10),
+        "byCode": (f"sum by (code) (increase({M(E)}[{w}]))", "code", 30),
+        "byMethod": (f"sum by (method) (increase({M(SVC)}[{w}]))", "method", 8),
+        "byProtocol": (f"sum by (protocol) (increase({M(SVC)}[{w}]))", "protocol", 5),
+        "errorsByService": (f"sum by (service) (increase({M(SVC, five)}[{w}]))", "service", 8),
+        "slowest": (_p(0.95, "traefik_service_request_duration_seconds", "service", sel).replace("[5m]", f"[{w}]"), "service", 6),
     }
+    if not sel:
+        groups["byEntrypoint"] = (f"sum by (entrypoint) (increase({EP}[{w}]))", "entrypoint", 8)
     for k, (expr, label, top) in groups.items():
         try:
             out[k] = _group(base, expr, label, top)
@@ -237,6 +277,7 @@ def breakdown(base: str, seconds: int) -> dict:
             if e.status == 502:
                 raise
             out[k] = []
+    out.setdefault("byEntrypoint", [])
     classes: dict[str, float] = {}
     for r in out["byCode"]:
         c = (r["name"][:1] or "?") + "xx"
