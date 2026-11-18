@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.6.0...v1.7.0) (2026-11-18)
+
+
+### Nouveautés
+
+* cliquer sur une image d'un projet ouvre son détail (couches, variables, ports, conteneurs qui l'utilisent) ([7a6f80b](https://github.com/Dr-J-Watson/Armadok/commit/7a6f80b6bc6fb5471623680a2987de185ec15f75))
+
 ## [1.6.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.5.0...v1.6.0) (2026-11-18)
 
 
