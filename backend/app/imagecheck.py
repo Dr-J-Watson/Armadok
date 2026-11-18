@@ -7,7 +7,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from . import db, registry, schedule
+from . import db, project_ops, registry, schedule
 from .alerts import send_webhook
 from .audit import audit
 from .config import settings
@@ -28,6 +28,10 @@ def compute(run, node_id: str, path: str, fetch: bool = False) -> list[dict]:
     for s in proj["services"]:
         if not s["image"]:
             continue
+        if "$" in s["image"] and not s.get("imageRaw"):   # un worker plus ancien n'a pas lu le .env : au moins les valeurs par défaut ${VAR:-défaut}
+            res = project_ops.interpolate(s["image"], {})
+            if res != s["image"]:
+                s = {**s, "imageRaw": s["image"], "image": res}
         ref = registry.parse_ref(s["image"])
         rows.append({"service": s["name"], "image": s["image"], "imageRaw": s.get("imageRaw"), "ref": ref})
         if ref and not ref["digest"]:

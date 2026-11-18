@@ -120,3 +120,11 @@ def test_image_variables_are_read_from_dotenv(tmp_path):
     assert sv["c"]["image"] == "x:${NOPE}" and "imageRaw" not in sv["c"]   # inconnue : laissée telle quelle
     assert sv["d"]["image"] == "y:dflt" and sv["e"]["image"] == "z:fallback"
     assert project_ops.interpolate("a$$b", {}) == "a$b"
+
+
+def test_defaults_resolved_when_the_worker_did_not_read_dotenv():
+    from app import imagecheck
+    calls = {"p_project": {"path": "/p", "composeProject": "p", "services": [{"name": "worker", "image": "${WORKER_IMAGE:-ghcr.io/o/app:latest}"}]},
+             "d_images": {"images": []}, "d_containers": {"containers": []}}
+    rows = imagecheck.compute(lambda op, a: calls[op], "n", "/p")
+    assert rows[0]["image"] == "ghcr.io/o/app:latest" and rows[0]["imageRaw"] == "${WORKER_IMAGE:-ghcr.io/o/app:latest}" and rows[0]["status"] == "absent"
