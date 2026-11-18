@@ -257,7 +257,8 @@ MIGRATIONS = {
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
     "project_templates": [("shared", "INTEGER NOT NULL DEFAULT 1")],   # 0 = privé (son auteur seulement), 1 = partagé ; les modèles d'avant ce réglage restent partagés
-    "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''")],   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)
+    "image_checks": [("latest_tag", "TEXT NOT NULL DEFAULT ''"), ("notified_tag", "TEXT NOT NULL DEFAULT ''")],   # latest_tag : version plus récente trouvée au registre
+    "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''"), ("image_schedule", "TEXT NOT NULL DEFAULT ''"), ("image_last_run", "REAL")],   # image_schedule : planning JSON de la vérification (vide = le réglage par défaut)   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)
     "node_members": [("expires_at", "REAL")],  # accès temporaire : le membre perd son rôle à cette date
     "domain_access": [("types", "TEXT NOT NULL DEFAULT ''"), ("subs", "TEXT NOT NULL DEFAULT ''"), ("no_delete", "INTEGER NOT NULL DEFAULT 0"), ("expires_at", "REAL")],  # suppression douce : le nœud est invisible mais récupérable jusqu'à sa purge
 }

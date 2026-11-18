@@ -611,7 +611,7 @@ def test_image_tracking_notifies_once_per_new_version(pj, fakereg):
         fakereg["digest"] = NEW
         node = dict(db.one("SELECT * FROM nodes WHERE id=?", (nid,)))
         assert imagecheck.check_node(node, host_ops.handle) == 0                                               # rien n'est suivi : rien ne part
-        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": True}).json() == {"track": True}
+        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": True}).json()["track"] is True
         assert client.get(f"/api/projects/{pid}/images", headers=h).json()["track"] is True
         assert imagecheck.check_node(node, host_ops.handle) == 1                                               # nouvelle version : une notification
         time.sleep(0.5)
@@ -619,7 +619,14 @@ def test_image_tracking_notifies_once_per_new_version(pj, fakereg):
         assert imagecheck.check_node(node, host_ops.handle) == 0                                               # la même version ne prévient pas deux fois
         fakereg["digest"] = "sha256:" + "c" * 64
         assert imagecheck.check_node(node, host_ops.handle) == 1                                               # une autre version, si
-        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": False}).json() == {"track": False}
+        # planning : tant que l'échéance n'est pas là, rien ne part ; passée, la vérification a lieu
+        r = client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": True, "schedule": {"kind": "weekly", "days": [0, 1, 2, 3, 4, 5, 6], "time": "03:00"}}).json()
+        assert r["scheduleText"].startswith("Chaque lundi") and r["nextRun"] > time.time()
+        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"schedule": {"kind": "every", "every": 0, "unit": "hours"}}).status_code == 422
+        fakereg["digest"] = "sha256:" + "d" * 64
+        assert imagecheck.check_node(node, host_ops.handle, only_due=True) == 0
+        assert imagecheck.check_node(node, host_ops.handle, only_due=True, now=time.time() + 2 * 86400) == 1
+        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": False}).json()["track"] is False
     finally:
         db.run("UPDATE nodes SET webhook_url='' WHERE id=?", (nid,))
         srv.shutdown()

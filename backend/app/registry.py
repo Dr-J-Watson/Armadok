@@ -129,3 +129,79 @@ def status_of(ref: dict, local: dict | None, remote: str | None, error: str) -> 
     if remote and local["digests"]:
         return "update"
     return "unknown"
+
+
+# ------------------------------------------------------------------ page du paquet, versions plus récentes
+def package_url(ref: dict) -> str | None:
+    """La page publique de l'image : GitHub (ghcr.io), Docker Hub, Quay. None pour un registre qu'on ne sait pas relier."""
+    reg, repo = ref["registry"], ref["repo"]
+    if reg == "ghcr.io":
+        owner, _, name = repo.partition("/")
+        return f"https://github.com/{owner}?tab=packages&q={urllib.parse.quote(name.split('/')[0])}" if name else None
+    if reg == "docker.io":
+        ns, _, name = repo.partition("/")
+        return f"https://hub.docker.com/_/{name}" if ns == "library" else f"https://hub.docker.com/r/{repo}"
+    if reg == "quay.io":
+        return f"https://quay.io/repository/{repo}"
+    return None
+
+
+_VER = re.compile(r"^(?P<pre>v?)(?P<num>\d+(?:\.\d+){0,3})(?P<suf>(?:[-_][A-Za-z0-9._-]+)?)$")
+
+
+def _ver(tag: str):
+    m = _VER.match(tag or "")
+    if not m:
+        return None
+    parts = tuple(int(x) for x in m.group("num").split("."))
+    if any(p > 99999999 for p in parts):
+        return None
+    return m.group("pre"), parts, m.group("suf")
+
+
+def newer_version(tag: str, tags: list[str]) -> str | None:
+    """La plus haute version strictement supérieure au tag courant, de MÊME forme (même préfixe « v », même nombre de composantes, même suffixe : « -alpine »).
+    Un tag qui n'est pas un numéro (latest, dev, stable…) n'a pas de « version suivante » : seule son empreinte compte."""
+    cur = _ver(tag)
+    if not cur:
+        return None
+    best = None
+    for t in tags:
+        v = _ver(t)
+        if v and v[0] == cur[0] and v[2] == cur[2] and len(v[1]) == len(cur[1]) and v[1] > cur[1] and (best is None or v[1] > best[0]):
+            best = (v[1], t)
+    return best[1] if best else None
+
+
+def list_tags(ref: dict) -> tuple[list[str], str]:
+    """(tags, erreur). Docker Hub : les plus récemment publiés (son API publique) ; les autres registres : /v2/…/tags/list, quelques pages au plus."""
+    try:
+        if ref["registry"] == "docker.io":
+            st, _, body = _http("GET", f"https://hub.docker.com/v2/repositories/{ref['repo']}/tags?page_size=100&ordering=last_updated")
+            if st != 200:
+                return [], f"Docker Hub a répondu {st}"
+            return [r["name"] for r in json.loads(body).get("results", []) if isinstance(r, dict) and r.get("name")], ""
+        host = ref["registry"]
+        if not public_host(host):
+            return [], "Registre privé ou injoignable : versions non cherchées"
+        url, auth, tags = f"https://{host}/v2/{ref['repo']}/tags/list?n=1000", {}, []
+        for _ in range(5):
+            st, h, body = _http("GET", url, auth)
+            if st == 401 and "bearer" in h.get("www-authenticate", "").lower() and not auth:
+                tok = _token(h["www-authenticate"], ref["repo"])
+                if not tok:
+                    return [], "Authentification au registre impossible (image privée ?)"
+                auth = {"Authorization": f"Bearer {tok}"}
+                continue
+            if st != 200:
+                return tags, f"Le registre a répondu {st}"
+            tags += [t for t in (json.loads(body).get("tags") or []) if isinstance(t, str)]
+            nxt = re.search(r"<([^>]+)>;\s*rel=\"next\"", h.get("link", ""))
+            if not nxt:
+                break
+            url = urllib.parse.urljoin(url, nxt.group(1))
+            if urllib.parse.urlparse(url).netloc != host:
+                break
+        return tags, ""
+    except (OSError, ValueError):
+        return [], "Registre injoignable"

@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from ruamel.yaml import YAML
 
-from . import compose_convert, crypto, db, project_templates, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops, worker_link
+from . import compose_convert, crypto, db, project_templates, docker_link, gitssh, imagecheck, labels_yaml, linkage, project_ops, schedule, worker_link
 from .config import settings
 from .nodes import NodeCtx, node_ctx
 from .routes_docker import run
@@ -1110,7 +1110,8 @@ def clone_job(jid: str, since: int = 0, ctx: NodeCtx = Depends(proj_cap("project
 def images_state(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     d, row = _dir(ctx, pid)
     rows = imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d)
-    return {"images": rows, "track": bool(row["track_images"]), "canManage": ctx.can("projects.git"), "hours": settings.image_check_hours, "webhook": bool(db.one("SELECT webhook_url FROM nodes WHERE id=? AND webhook_url<>''", (ctx.id,)))}
+    return {"images": rows, "track": bool(row["track_images"]), "canManage": ctx.can("projects.git"), "hours": settings.image_check_hours, "schedule": (sch := imagecheck.project_schedule(row)), "scheduleText": schedule.describe(sch),
+            "nextRun": schedule.next_run(sch, row["image_last_run"] or time.time()) if row["track_images"] else None, "webhook": bool(db.one("SELECT webhook_url FROM nodes WHERE id=? AND webhook_url<>''", (ctx.id,)))}
 
 
 @router.post("/{pid}/images/check")
@@ -1123,16 +1124,29 @@ def images_check(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.git"))):
 
 
 class TrackBody(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    schedule: dict | None = None
 
 
 @router.put("/{pid}/images/track")
 def images_track(pid: int, body: TrackBody, ctx: NodeCtx = Depends(proj_cap("projects.git"))):
-    """Vérification quotidienne de ce projet, avec une notification (webhook du nœud) quand une nouvelle version apparaît."""
+    """Vérification récurrente de ce projet (planning au choix), avec une notification (webhook du nœud) quand une nouvelle version apparaît."""
     _, row = _dir(ctx, pid)
-    db.run("UPDATE projects SET track_images=? WHERE id=?", (1 if body.enabled else 0, pid))
-    ctx.audit("project.images.track", f"{row['name']} : {'activé' if body.enabled else 'désactivé'}")
-    return {"track": body.enabled}
+    track = bool(row["track_images"]) if body.enabled is None else body.enabled
+    sets, args = ["track_images=?"], [1 if track else 0]
+    if body.schedule is not None:
+        try:
+            sch = schedule.validate(body.schedule)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from None
+        sets.append("image_schedule=?"), args.append(json.dumps(sch))
+    else:
+        sch = imagecheck.project_schedule(row)
+    if body.enabled or body.schedule is not None:
+        sets.append("image_last_run=?"), args.append(time.time())   # le décompte repart de maintenant
+    db.run(f"UPDATE projects SET {', '.join(sets)} WHERE id=?", (*args, pid))
+    ctx.audit("project.images.track", f"{row['name']} : {schedule.describe(sch) if track else 'désactivé'}")
+    return {"track": track, "schedule": sch, "scheduleText": schedule.describe(sch), "nextRun": schedule.next_run(sch, time.time()) if track else None}
 
 
 # ------------------------------------------------------------------ webhook public : le dépôt prévient, l'interface récupère
