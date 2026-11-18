@@ -620,12 +620,15 @@ def test_image_tracking_notifies_once_per_new_version(pj, fakereg):
         fakereg["digest"] = "sha256:" + "c" * 64
         assert imagecheck.check_node(node, host_ops.handle) == 1                                               # une autre version, si
         # planning : tant que l'échéance n'est pas là, rien ne part ; passée, la vérification a lieu
-        r = client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": True, "schedule": {"kind": "weekly", "days": [0, 1, 2, 3, 4, 5, 6], "time": "03:00"}}).json()
-        assert r["scheduleText"].startswith("Chaque lundi") and r["nextRun"] > time.time()
-        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"schedule": {"kind": "every", "every": 0, "unit": "hours"}}).status_code == 422
+        r = client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": True, "schedule": [{"kind": "weekly", "days": [0], "time": "03:00"}, {"kind": "monthly", "days": [10], "time": "09:00:00"}]}).json()
+        assert r["scheduleText"] == ["Chaque lundi à 3 h", "Le 10 de chaque mois à 9 h"] and r["nextRun"] > time.time()
+        assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"schedule": [{"kind": "every", "hours": 0, "minutes": 0, "seconds": 5}]}).status_code == 422
+        pv = client.post(f"/api/projects/{pid}/images/schedule/preview", headers=h, json={"schedule": [{"kind": "cron", "expr": "0 0 12 * * *"}]}).json()
+        assert pv["ok"] and len(pv["next"]) == 5 and pv["next"] == sorted(pv["next"])
+        assert client.post(f"/api/projects/{pid}/images/schedule/preview", headers=h, json={"schedule": [{"kind": "cron", "expr": "zzz"}]}).json()["ok"] is False
         fakereg["digest"] = "sha256:" + "d" * 64
         assert imagecheck.check_node(node, host_ops.handle, only_due=True) == 0
-        assert imagecheck.check_node(node, host_ops.handle, only_due=True, now=time.time() + 2 * 86400) == 1
+        assert imagecheck.check_node(node, host_ops.handle, only_due=True, now=time.time() + 8 * 86400) == 1
         assert client.put(f"/api/projects/{pid}/images/track", headers=h, json={"enabled": False}).json()["track"] is False
     finally:
         db.run("UPDATE nodes SET webhook_url='' WHERE id=?", (nid,))

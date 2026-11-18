@@ -1111,7 +1111,7 @@ def images_state(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     d, row = _dir(ctx, pid)
     rows = imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d)
     return {"images": rows, "track": bool(row["track_images"]), "canManage": ctx.can("projects.git"), "hours": settings.image_check_hours, "schedule": (sch := imagecheck.project_schedule(row)), "scheduleText": schedule.describe(sch),
-            "nextRun": schedule.next_run(sch, row["image_last_run"] or time.time()) if row["track_images"] else None, "webhook": bool(db.one("SELECT webhook_url FROM nodes WHERE id=? AND webhook_url<>''", (ctx.id,)))}
+            "nextRun": schedule.next_run(sch, row["image_last_run"] or time.time()) if row["track_images"] else None, "serverTime": time.time(), "webhook": bool(db.one("SELECT webhook_url FROM nodes WHERE id=? AND webhook_url<>''", (ctx.id,)))}
 
 
 @router.post("/{pid}/images/check")
@@ -1125,7 +1125,22 @@ def images_check(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.git"))):
 
 class TrackBody(BaseModel):
     enabled: bool | None = None
-    schedule: dict | None = None
+    schedule: list | dict | None = None
+
+
+class PreviewBody(BaseModel):
+    schedule: list | dict
+
+
+@router.post("/{pid}/images/schedule/preview")
+def images_schedule_preview(pid: int, body: PreviewBody, ctx: NodeCtx = Depends(proj_cap("projects.git"))):
+    """Les prochaines échéances d'un planning en cours d'édition (ou la raison pour laquelle il est refusé)."""
+    _dir(ctx, pid)
+    try:
+        rules = schedule.validate(body.schedule)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "text": schedule.describe(rules), "next": schedule.upcoming(rules, time.time(), 5)}
 
 
 @router.put("/{pid}/images/track")
@@ -1145,7 +1160,7 @@ def images_track(pid: int, body: TrackBody, ctx: NodeCtx = Depends(proj_cap("pro
     if body.enabled or body.schedule is not None:
         sets.append("image_last_run=?"), args.append(time.time())   # le décompte repart de maintenant
     db.run(f"UPDATE projects SET {', '.join(sets)} WHERE id=?", (*args, pid))
-    ctx.audit("project.images.track", f"{row['name']} : {schedule.describe(sch) if track else 'désactivé'}")
+    ctx.audit("project.images.track", f"{row['name']} : {' ; '.join(schedule.describe(sch)) if track else 'désactivé'}")
     return {"track": track, "schedule": sch, "scheduleText": schedule.describe(sch), "nextRun": schedule.next_run(sch, time.time()) if track else None}
 
 

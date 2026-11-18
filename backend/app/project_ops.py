@@ -193,8 +193,48 @@ def read_compose(d: Path, files=None) -> tuple[Path | None, dict]:
     return base, _merge(parts)
 
 
+_VAR = re.compile(r"\$(?:(\$)|(\w+)|\{(\w+)(?:(:?[-+?])([^}]*))?\})")
+
+
+def read_dotenv(d: Path) -> dict[str, str]:
+    """Les variables du .env du projet (ce que Docker Compose utilise pour remplacer ${VAR}) ; {} s'il n'y en a pas."""
+    try:
+        from .project_templates import parse_env
+        return {v["key"]: v["value"] for v in parse_env((d / ".env").read_text(errors="replace"))}
+    except OSError:
+        return {}
+
+
+def interpolate(text: str, env: dict[str, str]) -> str:
+    """${VAR}, $VAR, ${VAR:-défaut}, ${VAR-défaut}, ${VAR:+autre}, $$ (un « $ »). Une variable inconnue sans défaut laisse le texte tel quel."""
+    unresolved = False
+
+    def sub(m):
+        nonlocal unresolved
+        if m.group(1):
+            return "$"
+        name, op, arg = m.group(2) or m.group(3), m.group(4), m.group(5) or ""
+        val = env.get(name)
+        if op in (":-", "-"):
+            return arg if val is None or (op == ":-" and val == "") else val
+        if op in (":+", "+"):
+            return arg if val is not None and not (op == ":+" and val == "") else ""
+        if val is None or op == "?":
+            unresolved = True
+            return m.group(0)
+        return val
+    out = _VAR.sub(sub, text)
+    return text if unresolved else out
+
+
 def entry(d: Path, files=None) -> dict:
     f, c = read_compose(d, files)
+    env = read_dotenv(d) if any("$" in s["image"] for s in c["services"]) else {}
+    for s in c["services"]:   # image: ghcr.io/x/app:${VERSION} → la valeur du .env (l'écriture d'origine reste dans imageRaw)
+        if "$" in s["image"]:
+            res = interpolate(s["image"], env)
+            if res != s["image"]:
+                s["imageRaw"], s["image"] = s["image"], res
     return {"hasMake": make_file(d) is not None, "composeFiles": compose_candidates(d), "defaultFiles": default_files(d), "path": str(d), "name": d.name, "composeProject": project_name(d, {"name": c["name"]}), "file": f.name if f else "", "services": c["services"], "error": c["error"],
             "hasEnv": (d / ".env").is_file(), "hasGit": (d / ".git").exists(), "build": any(s["build"] for s in c["services"]), "mtime": f.stat().st_mtime if f else 0}
 

@@ -29,7 +29,7 @@ def compute(run, node_id: str, path: str, fetch: bool = False) -> list[dict]:
         if not s["image"]:
             continue
         ref = registry.parse_ref(s["image"])
-        rows.append({"service": s["name"], "image": s["image"], "ref": ref})
+        rows.append({"service": s["name"], "image": s["image"], "imageRaw": s.get("imageRaw"), "ref": ref})
         if ref and not ref["digest"]:
             wanted[ref["key"]] = ref
     if fetch and wanted:
@@ -58,7 +58,7 @@ def compute(run, node_id: str, path: str, fetch: bool = False) -> list[dict]:
         out.append({"service": r["service"], "image": r["image"], "status": status, "local": local["id"] if local else None, "remote": ((c["remote_digest"] or "")[7:19] or None) if c else None,
                     "error": (c["error"] if c else "") if status in ("unknown", "absent") else "", "checkedAt": c["checked_at"] if c else None,
                     "needsRedeploy": bool(local and any(x["imageId"] != local["id"] for x in mine)), "key": ref["key"],
-                    "packageUrl": registry.package_url(ref), "newerTag": (c["latest_tag"] or None) if c else None,
+                    "packageUrl": registry.package_url(ref), "imageRaw": r.get("imageRaw"), "newerTag": (c["latest_tag"] or None) if c else None,
                     "newerImage": (f"{r['image'].rsplit(':', 1)[0] if ':' in r['image'].rsplit('/', 1)[-1] else r['image']}:{c['latest_tag']}" if c and c["latest_tag"] else None)})
     return out
 
@@ -89,12 +89,12 @@ def _notify_updates(node: dict, project: str, rows: list[dict]) -> int:
     return n
 
 
-def project_schedule(p) -> dict:
-    """Le planning d'un projet : le sien, sinon l'intervalle par défaut (IMAGE_CHECK_HOURS)."""
+def project_schedule(p) -> list[dict]:
+    """Les règles de planning d'un projet : les siennes, sinon un intervalle par défaut (IMAGE_CHECK_HOURS)."""
     try:
-        return schedule.validate(json.loads(p["image_schedule"])) if p["image_schedule"] else {"kind": "every", "every": max(1, settings.image_check_hours or 24), "unit": "hours"}
-    except (ValueError, TypeError):
-        return dict(schedule.DEFAULT)
+        return schedule.validate(json.loads(p["image_schedule"])) if p["image_schedule"] else schedule.default_rules(settings.image_check_hours)
+    except (ValueError, TypeError, KeyError):
+        return schedule.default_rules(settings.image_check_hours)
 
 
 def check_project(node: dict, run, p) -> int:
@@ -113,7 +113,8 @@ def check_node(node: dict, run, only_due: bool = False, now: float | None = None
             if p["image_last_run"] is None:   # suivi activé avant les plannings : on part de maintenant
                 db.run("UPDATE projects SET image_last_run=? WHERE id=?", (now, p["id"]))
                 continue
-            if schedule.next_run(project_schedule(p), p["image_last_run"]) > now:
+            nxt = schedule.next_run(project_schedule(p), p["image_last_run"])
+            if nxt is None or nxt > now or now - p["image_last_run"] < schedule.MIN_GAP:
                 continue
             db.run("UPDATE projects SET image_last_run=? WHERE id=?", (now, p["id"]))
         sent += check_project(node, run, p)
@@ -130,7 +131,7 @@ def start() -> None:
     _started = True
 
     def loop():
-        time.sleep(60)
+        time.sleep(20)
         while True:
             try:
                 from . import host_ops
@@ -140,5 +141,5 @@ def start() -> None:
                         check_node(dict(row), host_ops.handle, only_due=True)
             except Exception:  # noqa: BLE001
                 pass
-            time.sleep(60)
+            time.sleep(5)   # les plannings ont la précision de la seconde
     threading.Thread(target=loop, name="image-watch", daemon=True).start()
