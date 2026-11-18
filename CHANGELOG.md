@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.5.0...v1.6.0) (2026-11-18)
+
+
+### Nouveautés
+
+* planning de vérification des images à règles multiples (durée en j/h/min/s, chaque jour, jours de la semaine, jours du mois, premier lundi du mois, une fois, expression cron) ; la version d'une image écrite ${VAR} est lue dans le .env du projet ([c014b8d](https://github.com/Dr-J-Watson/Armadok/commit/c014b8de35db21f58cb026c4039deab9419005e9))
+
+
+### Corrections
+
+* la Surveillance d'un nœud qui publie par le Traefik d'un autre ne montre plus que ses sites (métriques, services, journal d'accès, adresses IP, alertes) ([da2e048](https://github.com/Dr-J-Watson/Armadok/commit/da2e048499ff4bfee2ca7c6089044eb043d0006b))
+* le conteneur auxiliaire de relance d'Armadok se supprime tout seul en s'arrêtant (AutoRemove), et les restes d'anciennes relances sont nettoyés au démarrage ([4ef1fec](https://github.com/Dr-J-Watson/Armadok/commit/4ef1fec188bbe019960d38d78b341bad2544f414))
+* une image écrite ${VAR:-défaut} est résolue côté hub avec sa valeur par défaut, même quand le worker n'a pas encore la lecture du .env ([3ec03ea](https://github.com/Dr-J-Watson/Armadok/commit/3ec03ea42d9188cac760ba87c1be06416263cc90))
+
 ## [1.5.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.4.1...v1.5.0) (2026-11-18)
 
 
