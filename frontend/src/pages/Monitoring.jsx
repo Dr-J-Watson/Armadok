@@ -427,6 +427,27 @@ function BanEditModal({ ban, onClose }) {
 }
 
 // ------------------------------------------------------------------ bannissements
+// Compteur « 142 / 2000 » et réglage de la limite de bannissements de ce nœud.
+function BanLimit({ d }) {
+  const { toast } = useUi(); const qc = useQueryClient(); const [edit, setEdit] = useState(false); const [v, setV] = useState('')
+  const save = useMutation({ mutationFn: (limit) => api.put('/obs/bans-limit', { limit }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['obs-bans'] }); setEdit(false); toast('Limite enregistrée', 'ok') }, onError: (e) => toast(e.message, 'err') })
+  const pct = Math.min(100, Math.round((d.count / d.limit) * 100)); const kind = d.count >= d.limit ? 'err' : pct >= 80 ? 'warn' : 'ok'
+  return (
+    <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+      <Badge kind={kind} title="Bannissements enregistrés pour ce nœud / limite autorisée">{fmtNum(d.count, 0)} / {fmtNum(d.limit, 0)} bannissements</Badge>
+      {kind !== 'ok' && <span className="muted small">{d.count >= d.limit ? 'Limite atteinte : plus d\'ajout possible.' : 'Vous approchez de la limite.'}</span>}
+      {d.canBan && !edit && <Btn small kind="ghost" title="Changer la limite de bannissements" onClick={() => { setV(String(d.limit)); setEdit(true) }}><Pencil size={13} /> Limite</Btn>}
+      {edit && <>
+        <input className="input" type="number" min={d.limitRange[0]} max={d.limitRange[1]} step="100" style={{ width: 110 }} value={v} onChange={(e) => setV(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') save.mutate(Number(v)) }} />
+        <Btn small kind="primary" busy={save.isPending} disabled={!v} onClick={() => save.mutate(Number(v))}>Enregistrer</Btn>
+        <Btn small kind="ghost" onClick={() => save.mutate(null)} title={`Revenir à ${d.defaultLimit}`}>Par défaut ({fmtNum(d.defaultLimit, 0)})</Btn>
+        <Btn small kind="ghost" onClick={() => setEdit(false)}>Annuler</Btn>
+        <span className="muted small">Entre {fmtNum(d.limitRange[0], 0)} et {fmtNum(d.limitRange[1], 0)}. Plus il y a d'adresses, plus la règle Traefik est longue à évaluer.</span>
+      </>}
+    </div>
+  )
+}
+
 function Bans({ f }) {
   const { toast, confirm } = useUi(); const qc = useQueryClient(); const [add, setAdd] = useState(false); const [editBan, setEditBan] = useState(null)
   const q = useQuery({ queryKey: ['obs-bans'], queryFn: () => api.get('/obs/bans'), refetchInterval: 60000 })
@@ -445,6 +466,7 @@ function Bans({ f }) {
   ] : []
   return (
     <div className="col">
+      <BanLimit d={q.data} />
       {cards.length > 0 && <div className="grid stats">{cards.map(([l, v, s]) => <div key={l} className="card stat static"><div className="muted">{l}</div><b>{v}</b><div className="sub">{s}</div></div>)}</div>}
       {st.countries.length > 1 && <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}><span className="muted small">Par pays :</span>{st.countries.map((c) => <Badge key={c.code}>{c.name} · {c.n}</Badge>)}</div>}
       <div className="row"><div className="muted grow">Une adresse bannie reçoit une erreur 403 sur tous les sites de ce nœud (règle Traefik, fichier <code>zz-webui-bans.yml</code>). Derrière un autre proxy (Cloudflare…), Traefik voit l'adresse du proxy.</div>

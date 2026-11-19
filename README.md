@@ -498,7 +498,7 @@ Des règles du type *« si le pays est… / l'adresse est suspecte / type d'atta
 
 - **Localisation** : un bouton télécharge la base locale **DB-IP City Lite** (CC BY 4.0, ≈ 130 Mo, dans `DATA_DIR/geoip`, ou `GEOIP_DB`) : rien n'est envoyé à un service tiers.
 - **Source des adresses** : Prometheus ne sait pas compter par visiteur, les adresses viennent du **journal d'accès**. Avec `accesslog.filepath`, Traefik n'écrit plus les accès sur sa sortie standard ; prévoyez une rotation (`copytruncate`). Les accès sur l'entrypoint interne `traefik` sont ignorés.
-- **Garde-fous du bannissement** : jamais d'adresse privée ou locale, jamais celle de la personne qui bannit, réseaux jusqu'à /16 (IPv4) seulement, 200 bannissements au plus.
+- **Garde-fous du bannissement** : jamais d'adresse privée ou locale, jamais celle de la personne qui bannit, réseaux jusqu'à /16 (IPv4) seulement, 2000 bannissements au plus par défaut (réglable par nœud, onglet Bannies, avec un compteur).
 - **Derrière un autre proxy** (Cloudflare…), Traefik voit l'adresse du proxy : configurez ses en-têtes de confiance.
 - **Droits dédiés** : `metrics.view`, `metrics.explore`, `alerts.view`, `alerts.manage`, `security.view`, `security.ips.reveal`, `security.ban`, `security.automod` (par défaut : propriétaire et administrateur ; le rôle *Auditeur* voit tout sauf les adresses).
 - **Portée** : les **métriques** (Prometheus) ne concernent que le nœud principal. Les **adresses IP, statistiques de visiteurs, attaques probables, alertes tirées du journal et règles automatiques** marchent aussi sur un nœud distant dont le worker lit le journal d'accès (`TRAEFIK_ACCESS_LOG`) ; le bannissement marche sur tous les nœuds.

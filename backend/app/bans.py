@@ -6,7 +6,7 @@ Une adresse bannie reçoit donc un 403 sur TOUS les sites de ce nœud, HTTP comm
 derrière un autre proxy (Cloudflare…), c'est l'adresse du proxy ; configurez alors les en-têtes de confiance de Traefik.
 
 Garde-fous : jamais d'adresse privée, locale ou réservée, jamais l'adresse de celui qui bannit, réseaux pas plus larges que /16 (IPv4) ou /48 (IPv6),
-200 bannissements au plus. Les bannissements temporaires expirent seuls."""
+nombre de bannissements limité (2000 par défaut, réglable par nœud). Les bannissements temporaires expirent seuls."""
 import ipaddress
 import threading
 import time
@@ -19,7 +19,22 @@ FILE = "zz-webui-bans.yml"
 MW = "webui-ban-403"
 ROUTERS = ("webui-ban-tls", "webui-ban-plain")
 PRIORITY = 2000000000
-MAX_BANS = 200
+DEFAULT_LIMIT = 2000
+LIMIT_RANGE = (10, 50000)
+
+
+def limit(node_id: str) -> int:
+    """Nombre maximal de bannissements de ce nœud (réglable ; sinon la valeur par défaut)."""
+    r = db.one("SELECT ban_limit FROM nodes WHERE id=?", (node_id,))
+    return int(r["ban_limit"]) if r and r["ban_limit"] else DEFAULT_LIMIT
+
+
+def set_limit(node_id: str, value: int | None) -> int:
+    """Change la limite (None = valeur par défaut). Peut descendre sous le nombre actuel : les bannissements existants restent, seuls les ajouts sont refusés."""
+    if value is not None and not LIMIT_RANGE[0] <= value <= LIMIT_RANGE[1]:
+        raise BanError(f"Limite invalide : entre {LIMIT_RANGE[0]} et {LIMIT_RANGE[1]}")
+    db.run("UPDATE nodes SET ban_limit=? WHERE id=?", (value, node_id))
+    return limit(node_id)
 _NOBODY = "192.0.2.1/32"   # adresse de documentation (RFC 5737) : personne n'en vient, donc l'ipAllowList refuse tout le monde
 
 
@@ -140,8 +155,8 @@ def add(node: dict, store, ip: str, reason: str, hours: float | None, by: str, r
         raise BanError(f"{ip} est validée (ou contient une adresse validée) : retirez d'abord la validation si vous voulez la bannir", 409)
     if db.one("SELECT 1 FROM ip_bans WHERE node_id=? AND ip=?", (node["id"], ip)):
         raise BanError(f"{ip} est déjà bannie", 409)
-    if db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=?", (node["id"],))["c"] >= MAX_BANS:
-        raise BanError(f"Limite de {MAX_BANS} bannissements atteinte : retirez-en avant d'en ajouter")
+    if db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=?", (node["id"],))["c"] >= limit(node["id"]):
+        raise BanError(f"Limite de {limit(node['id'])} bannissements atteinte : retirez-en ou relevez la limite (onglet Bannies)")
     now = time.time()
     exp = now + hours * 3600 if hours else None
     bid = db.run("INSERT INTO ip_bans(node_id,ip,reason,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)", (node["id"], ip, (reason or "").strip()[:200], by, now, exp))

@@ -249,7 +249,7 @@ MIGRATIONS = {
               ("max_nodes", "INTEGER NOT NULL DEFAULT 0"),
               ("token_version", "INTEGER NOT NULL DEFAULT 0")],   # +1 = toutes les sessions ouvertes de la personne sont invalidées  # 0 = ne peut pas créer de nœud, -1 = illimité
     "log_offsets": [("head", "TEXT NOT NULL DEFAULT ''")],
-    "nodes": [("mfa_caps", "TEXT NOT NULL DEFAULT ''"), ("deleted_at", "REAL"), ("prometheus_url", "TEXT NOT NULL DEFAULT ''"), ("webhook_url", "TEXT NOT NULL DEFAULT ''"),
+    "nodes": [("ban_limit", "INTEGER"), ("mfa_caps", "TEXT NOT NULL DEFAULT ''"), ("deleted_at", "REAL"), ("prometheus_url", "TEXT NOT NULL DEFAULT ''"), ("webhook_url", "TEXT NOT NULL DEFAULT ''"),
               ("modules", "TEXT NOT NULL DEFAULT 'traefik'"),
               ("addresses", "TEXT NOT NULL DEFAULT ''"),
               ("addresses_seen", "TEXT NOT NULL DEFAULT ''"),   # adresses annoncées par le worker lui-même (WORKER_ADDRESSES)

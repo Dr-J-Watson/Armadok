@@ -380,7 +380,24 @@ def get_bans(ctx: NodeCtx = Depends(node_cap("security.view"))):
     raw = bans.list_bans(ctx.id)
     bans.attempts(ctx.id, raw)
     rows = _present(ctx, raw)
-    return {"bans": rows, "canBan": ctx.can("security.ban"), "stats": bans.stats(rows)}
+    return {"bans": rows, "canBan": ctx.can("security.ban"), "stats": bans.stats(rows),
+            "limit": bans.limit(ctx.id), "defaultLimit": bans.DEFAULT_LIMIT, "limitRange": list(bans.LIMIT_RANGE),
+            "count": db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=?", (ctx.id,))["c"]}
+
+
+class BanLimitBody(BaseModel):
+    limit: int | None = None   # null = valeur par défaut
+
+
+@router.put("/bans-limit")
+def set_ban_limit(body: BanLimitBody, ctx: NodeCtx = Depends(node_cap("security.ban"))):
+    """Change le nombre maximal de bannissements de ce nœud."""
+    try:
+        n = bans.set_limit(ctx.id, body.limit)
+    except bans.BanError as e:
+        raise HTTPException(e.status, str(e))
+    ctx.audit("ip.ban.limit", f"limite de bannissements : {n}")
+    return {"limit": n}
 
 
 @router.post("/bans")

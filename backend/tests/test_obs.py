@@ -451,3 +451,20 @@ def test_scoped_view_keeps_only_that_nodes_sites(world, monkeypatch):
     assert ok("cert_expiry", "app.exemple.fr") and not ok("cert_expiry", "box.exemple.fr")
     assert ok("scan_burst", "8.8.4.4") and not ok("scan_burst", "45.155.205.233")
     assert not ok("reload_failed", "") and not ok("traffic_spike", "")
+
+
+def test_ban_limit_is_per_node_and_adjustable(world):
+    root = world["root"]
+    d = client.get("/api/obs/bans", headers=root).json()
+    assert d["limit"] == 2000 and d["defaultLimit"] == 2000 and d["count"] == len(d["bans"])
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": 5}).status_code == 422          # trop bas
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": 3000}).json()["limit"] == 3000
+    assert client.get("/api/obs/bans", headers=root).json()["limit"] == 3000
+    assert client.put("/api/obs/bans-limit", headers=world["aud"], json={"limit": 50}).status_code == 403   # droit de bannir requis
+    # la limite est bien celle qui s'applique aux ajouts
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": 10}).json()["limit"] == 10
+    ids = [client.post("/api/obs/bans", headers=root, json={"ip": f"45.77.0.{i}", "hours": 1}).json().get("id") for i in range(1, 12)]
+    assert ids[:10] and all(ids[:10]) and ids[10] is None   # la 11e est refusée
+    for b in ids[:10]:
+        client.delete(f"/api/obs/bans/{b}", headers=root)
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": None}).json()["limit"] == 2000
