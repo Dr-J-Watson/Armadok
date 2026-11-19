@@ -44,13 +44,13 @@ export default function Projects() {
   const done = (r, verb) => { qc.invalidateQueries({ queryKey: ['projects'] }); setSel([]); setAsk(null); toast(r.done.length ? `${r.done.length} projet${r.done.length > 1 ? 's' : ''} ${verb}` : 'Rien à faire') }
   const ignore = useMutation({ mutationFn: (paths) => api.post('/projects/ignore', { paths }), onSuccess: (r) => done(r, 'ignoré(s)'), onError: (e) => toast(e.message, 'err') })
   const unimport = useMutation({ mutationFn: (id) => api.del(`/projects/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet retiré de la liste') }, onError: (e) => toast(e.message, 'err') })
+  const folders = raw.full ? [] : list.data?.folders || []
+  const canMove = !raw.full && list.data?.canImport && tab === 'managed'
+  const nav = useFolderNav({ folders, enabled: canMove, onDrop: (x, target) => regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) })
   if (list.isLoading) return <Loading />
   if (list.error) return <div className="banner err">{list.error.message}</div>
   const d = list.data; const needle = q.trim().toLowerCase()
   const hit = (p) => !needle || [p.name, p.path, ...(p.tags || []), ...(p.hosts || []), ...p.services.map((s) => s.name), ...p.services.map((s) => s.image)].some((x) => String(x || '').toLowerCase().includes(needle))
-  const folders = raw.full ? [] : d.folders || []
-  const canMove = !raw.full && d.canImport && tab === 'managed'
-  const nav = useFolderNav({ folders, enabled: canMove, onDrop: (x, target) => regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) })
   const { byId, cur, crumbs, openFolder, dragOf, dropFor } = nav
   const fid = (p) => (byId[p.folderId] ? p.folderId : null)
   const nested = !needle && tab === 'managed' && !raw.full
