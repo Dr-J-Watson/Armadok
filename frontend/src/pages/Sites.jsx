@@ -129,8 +129,8 @@ function SitesOne({ openSite, openWizard }) {
   return (
     <>
       <div className="page-head"><div><h1>Sites</h1><p>Chaque site relie une adresse, des protections{canManage && <> (<NavLink to="/middlewares">les gérer</NavLink>)</>} et un service.{paused > 0 && <> · <b>{paused}</b> en pause</>}</p></div>
-        {canFold && <Btn title="Créer un dossier pour ranger les sites" onClick={() => setFmodal({ parentId: nav.cur })}><FolderPlus size={14} /> Nouveau dossier</Btn>}
-        {can('sites.create') && <Btn kind="primary" className="right" onClick={() => openWizard({})}><Plus size={15} /> Nouveau site</Btn>}</div>
+        <div className="right row" style={{ gap: 8 }}>{canFold && <Btn title="Créer un dossier pour ranger les sites" onClick={() => setFmodal({ parentId: nav.cur })}><FolderPlus size={14} /> Nouveau dossier</Btn>}
+          {can('sites.create') && <Btn kind="primary" onClick={() => openWizard({})}><Plus size={15} /> Nouveau site</Btn>}</div></div>
       {missing.length > 0 && <div className="banner"><Unlink size={18} />{missing.length} adresse(s) n'ont pas d'enregistrement DNS chez OVH.<Btn small kind="primary" className="right" onClick={() => setAdd(missing)}><Plus size={13} /> Les ajouter</Btn></div>}
       <div className="row wrap" style={{ marginBottom: 14 }}><SearchBox value={q} onChange={setQ} placeholder="Chercher un site…" />
         <Seg options={FILTERS.filter((f) => f[0] === 'all' || counts[f[0]] > 0 || flt === f[0]).map(([id, label]) => ({ id, label: `${label}${id === 'all' ? '' : ' · ' + counts[id]}` }))} value={flt} onChange={setFlt} />
