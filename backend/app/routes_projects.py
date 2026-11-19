@@ -199,6 +199,16 @@ def _choice(row) -> list[str]:
     return [str(x) for x in v] if isinstance(v, list) else []
 
 
+def _stale(e: Exception) -> bool:
+    return isinstance(e, (StoreError, HTTPException)) and "Fichier compose inconnu" in str(getattr(e, "detail", e))
+
+
+def _forget_choice(ctx: NodeCtx, row) -> None:
+    """Un fichier compose choisi pour le lancement n'existe plus (supprimé, renommé) : on oublie le choix, le projet revient à la règle automatique."""
+    db.run("UPDATE projects SET compose_files='' WHERE id=?", (row["id"],))
+    ctx.audit("project.compose.files", f"{row['name']} : fichier choisi disparu, retour à l'automatique")
+
+
 def _last_files(path: str, cs: list[dict]) -> list[str]:
     """Fichiers compose du dernier lancement, relus sur les conteneurs du projet (label com.docker.compose.project.config_files), restreints à son dossier."""
     for c in sorted(cs, key=lambda c: c.get("state") != "running"):
@@ -217,7 +227,14 @@ def _last_files(path: str, cs: list[dict]) -> list[str]:
 def detail(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     row = _row(ctx, pid)
     choice = _choice(row)
-    e = run(ctx, "p_project", {"dir": row["path"], "files": choice})
+    try:
+        e = run(ctx, "p_project", {"dir": row["path"], "files": choice})
+    except (StoreError, HTTPException) as err:
+        if not (choice and _stale(err)):
+            raise
+        _forget_choice(ctx, row)
+        choice = []
+        e = run(ctx, "p_project", {"dir": row["path"], "files": choice})
     containers = run(ctx, "d_containers", {"all": True})["containers"]
     others = [x for x in run(ctx, "p_discover")["projects"] if x["path"] != e["path"]]
     cs = assign([e] + others, containers).get(e["path"], [])
@@ -369,7 +386,15 @@ def compose(pid: int, body: ComposeBody, ctx: NodeCtx = Depends(proj_cap("projec
     if not files and body.action in LAUNCHED_ACTIONS:   # arrêter / redémarrer / supprimer : avec ce qui a servi au dernier lancement, pas forcément le défaut
         cs = [c for c in run(ctx, "d_containers", {"all": True})["containers"] if c.get("workingDir") and os.path.normpath(c["workingDir"]) == os.path.normpath(d)]
         files = _last_files(d, cs)
-    r = run(ctx, "p_compose", {"dir": d, "action": body.action, "services": body.services, "build": body.build, "pull": body.pull, "noCache": body.noCache, "volumes": body.volumes, "files": files})
+    args = {"dir": d, "action": body.action, "services": body.services, "build": body.build, "pull": body.pull, "noCache": body.noCache, "volumes": body.volumes, "files": files}
+    try:
+        r = run(ctx, "p_compose", args)
+    except (StoreError, HTTPException) as err:
+        if body.files or not files or not _stale(err):
+            raise
+        _forget_choice(ctx, row)   # le choix mémorisé n'existe plus : on relance avec la règle automatique
+        files = []
+        r = run(ctx, "p_compose", {**args, "files": files})
     ctx.audit(f"project.compose.{body.action}", f"{row['name']}{' : ' + ', '.join(body.services) if body.services else ''}{' (+ volumes)' if body.volumes else ''}{' [' + ' + '.join(files) + ']' if len(files) > 1 else ''}")
     return r
 

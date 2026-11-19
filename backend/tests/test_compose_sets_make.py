@@ -64,6 +64,29 @@ def test_choice_is_stored_and_restart_follows_last_launch(pj, monkeypatch):
     assert rp._last_files(d, [{"state": "running", "configFiles": "/ailleurs/docker-compose.yml"}]) == []   # hors du dossier : ignoré
 
 
+def test_a_vanished_chosen_file_falls_back_to_automatic(pj, monkeypatch):
+    h, pid = pj["h"], pid_of(pj, "site")
+    d = pj["base"] / "site"
+    (d / "docker-compose.proxy.yml").write_text(PROD)
+    assert client.put(f"/api/projects/{pid}/compose-files", headers=h, json={"files": ["docker-compose.yml", "docker-compose.proxy.yml"]}).status_code == 200
+    (d / "docker-compose.proxy.yml").unlink()                                   # le fichier choisi disparaît
+    r = client.get(f"/api/projects/{pid}", headers=h)
+    assert r.status_code == 200, r.text                                         # le projet reste accessible
+    assert r.json()["compose"]["choice"] == [] and r.json()["compose"]["effective"] == r.json()["compose"]["default"]
+    assert db.one("SELECT compose_files FROM projects WHERE id=?", (pid,))["compose_files"] == ""
+    # même chose au lancement : le choix périmé est oublié et la commande part avec la règle automatique
+    (d / "docker-compose.proxy.yml").write_text(PROD)
+    assert client.put(f"/api/projects/{pid}/compose-files", headers=h, json={"files": ["docker-compose.yml", "docker-compose.proxy.yml"]}).status_code == 200
+    (d / "docker-compose.proxy.yml").unlink()
+    seen = {}
+    monkeypatch.setattr(project_ops, "_spawn", lambda dd, argv, label, action, **k: seen.update(argv=argv) or {"job": "x", "label": label})
+    monkeypatch.setattr(project_ops, "_cli", lambda: "docker")
+    assert client.post(f"/api/projects/{pid}/compose", headers=h, json={"action": "up"}).status_code == 200
+    assert "docker-compose.proxy.yml" not in " ".join(seen["argv"]) and db.one("SELECT compose_files FROM projects WHERE id=?", (pid,))["compose_files"] == ""
+    # un choix demandé explicitement, lui, reste refusé
+    assert client.post(f"/api/projects/{pid}/compose", headers=h, json={"action": "up", "files": ["nope.yml"]}).status_code == 422
+
+
 MAKEFILE = """# Variables
 IMAGE ?= x
 .PHONY: help up build
