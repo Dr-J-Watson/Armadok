@@ -356,6 +356,9 @@ tr.off td:not(.sw):not(.actions), .site.off > :not(.site-actions) { opacity: .55
 .tpl:hover:not(:disabled) { border-color: var(--accent); } .tpl:disabled { opacity: .5; cursor: not-allowed; }
 .linklike { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; font: inherit; }
 
+.ellipsis { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.site > .row:first-child { min-width: 0; } .card.site > .row:first-child > * { flex: none; }
+.card.site > .row:first-child > .copyable { flex: 1 1 0; min-width: 0; } .card.site > .row:first-child .copyable > b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .card.site .rule { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; word-break: break-all; }
 .stat-link { display: inline-flex; color: var(--muted); } .stat-link:hover { color: var(--accent); }
 
