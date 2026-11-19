@@ -682,3 +682,19 @@ def test_folders_need_the_manage_right(pj):
     h = {"Authorization": f"Bearer {tok}", "X-Node": nid}
     assert client.post("/api/projects/folders", headers=h, json={"name": "nope"}).status_code == 403
     assert client.post("/api/projects/regroup", headers=h, json={"folderId": None}).status_code == 403
+
+
+def test_project_resources_group_volumes_and_networks():
+    from app.routes_projects import resources
+    cs = [{"name": "web-1", "service": "web", "networks": {"app_default": {"ip": "172.20.0.2", "aliases": ["web"]}, "proxy": {"ip": "172.21.0.5", "aliases": []}},
+           "mounts": [{"type": "volume", "name": "app_data", "source": "/var/lib/docker/volumes/app_data/_data", "destination": "/data", "rw": True},
+                      {"type": "bind", "name": "", "source": "/srv/app/conf", "destination": "/etc/app", "rw": False}]},
+          {"name": "db-1", "service": "db", "networks": {"app_default": {"ip": "172.20.0.3", "aliases": ["db"]}},
+           "mounts": [{"type": "volume", "name": "app_data", "source": "/var/lib/docker/volumes/app_data/_data", "destination": "/var/lib/db", "rw": True}]}]
+    r = resources(cs)
+    assert [v["name"] or v["source"] for v in r["volumes"]] == ["app_data", "/srv/app/conf"]
+    assert [u["container"] for u in r["volumes"][0]["usedBy"]] == ["web-1", "db-1"]
+    assert r["volumes"][1]["usedBy"][0]["rw"] is False
+    assert [n["name"] for n in r["networks"]] == ["app_default", "proxy"]
+    assert len(r["networks"][0]["usedBy"]) == 2
+    assert resources([]) == {"volumes": [], "networks": []}

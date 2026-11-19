@@ -69,6 +69,23 @@ def _slim(c: dict) -> dict:
             "ports": [p for p in c["ports"] if p["public"]], "protected": c.get("self") and "self" or ""}
 
 
+def resources(cs: list[dict]) -> dict:
+    """Volumes et réseaux utilisés par les conteneurs du projet (déjà présents dans la liste des conteneurs : aucun appel de plus)."""
+    vols: dict[tuple, dict] = {}
+    nets: dict[str, dict] = {}
+    for c in cs:
+        for m in c.get("mounts") or []:
+            kind = m.get("type") or ""
+            ident = m.get("name") if kind == "volume" else m.get("source")
+            if not ident:
+                continue
+            v = vols.setdefault((kind, ident), {"type": kind, "name": m.get("name") or "", "source": m.get("source") or "", "usedBy": []})
+            v["usedBy"].append({"container": c["name"], "service": c.get("service") or "", "destination": m.get("destination") or "", "rw": bool(m.get("rw"))})
+        for n, v in (c.get("networks") or {}).items():
+            nets.setdefault(n, {"name": n, "usedBy": []})["usedBy"].append({"container": c["name"], "service": c.get("service") or "", "ip": v.get("ip") or "", "aliases": v.get("aliases") or []})
+    return {"volumes": sorted(vols.values(), key=lambda v: (v["type"] != "volume", v["name"] or v["source"])), "networks": sorted(nets.values(), key=lambda n: n["name"])}
+
+
 def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]], row=None, access: bool = True) -> dict:
     ctxs = getattr(links, "ctxs", {})
     services = []
@@ -301,6 +318,7 @@ def detail(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     links = docker_link.link_containers(ctx, containers)
     s = summarize(ctx, e, cs, links, row, access=False)
     last = _last_files(e["path"], cs)
+    s.update(resources(cs))
     s["compose"] = {"candidates": e.get("composeFiles", []), "default": e.get("defaultFiles", []), "choice": choice, "last": last,
                     "effective": choice or e.get("defaultFiles", []), "running": any(c["state"] == "running" for c in cs)}
     s["access"] = docker_link.access_for(ctx, [l for sv in s["services"] for l in sv["links"]], getattr(links, "ctxs", {}))

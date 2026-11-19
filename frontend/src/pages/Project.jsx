@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, Boxes, FileStack, SquareTerminal, Terminal, ExternalLink, FileText, FolderCode, GitBranch, Globe, Image as ImageIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
+import { Activity, Boxes, FileStack, SquareTerminal, Terminal, ExternalLink, FileText, FolderCode, GitBranch, Globe, HardDrive, Image as ImageIcon, Network as NetIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
@@ -16,6 +16,7 @@ import { publishNow } from '../lib/publish.js'
 import ContainerModal, { AccessPanel } from '../components/ContainerModal.jsx'
 import TerminalModal from '../components/TerminalModal.jsx'
 import { LogViewer } from '../components/DockerBits.jsx'
+import { NetworkModal, VolumeModal } from '../components/DockerDetail.jsx'
 import { SVC_DOT, STATUS, useProjectStats } from './Projects.jsx'
 import { fmtSize, portLabel } from '../lib/docker.js'
 import { fmtNum } from '../lib/features.js'
@@ -39,7 +40,7 @@ export default function Project() {
   const p = q.data; const via = !!node?.traefikVia; const tf = hasModule('traefik') || p.hosts.length > 0 || via; const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const all = [...p.services.flatMap((x) => x.containers), ...p.extra]
   const links = p.services.flatMap((x) => x.links.map((l) => ({ ...l, svc: x.name }))); const uniq = [...new Map(links.map((l) => [l.router, l])).values()]
   const tabs = [{ id: 'overview', label: 'Vue d\'ensemble', icon: <LayoutDashboard size={14} /> }, { id: 'services', label: 'Services', icon: <Boxes size={14} />, count: p.services.length },
-    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
+    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), { id: 'volumes', label: 'Volumes', icon: <HardDrive size={14} />, count: p.volumes.length || undefined }, { id: 'networks', label: 'Réseaux', icon: <NetIcon size={14} />, count: p.networks.length || undefined }, { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
   const tab = tabs.some((t) => t.id === tab0) ? tab0 : 'overview'
   const cards = [['Services', `${p.running} / ${p.total}`, p.status === 'running' ? 'tous en marche' : p.status === 'partial' ? 'certains ne tournent pas' : 'rien ne tourne'], ['CPU', s ? `${s.cpu.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—', 'tous les conteneurs'], ['Mémoire', s ? fmtSize(s.mem) : '—', s?.limit ? `sur ${fmtSize(s.limit)}` : ''],
     ...(tf ? [['Requêtes', p.access ? fmtNum(p.access.hits) : '—', p.access ? `${p.access.days} derniers jours` : 'journal d\'accès non lu'], ['Erreurs', p.access ? fmtNum(p.access.errors) : '—', ''], ['Visiteurs', p.access ? fmtNum(p.access.visitors) : '—', 'adresses distinctes']] : [])]
@@ -79,6 +80,8 @@ export default function Project() {
             </div>))}
             {p.extra.length > 0 && <div className="card col" style={{ gap: 6 }}><b>Conteneurs hors du fichier</b><span className="muted small">Ils portent le nom de ce projet mais ne correspondent plus à un service du compose (service renommé ou retiré).</span>{p.extra.map((c) => <div key={c.id} className="row"><span className="mono small grow">{c.name}</span><Btn small kind="ghost" onClick={() => set({ c: c.name })}>Détails</Btn></div>)}</div>}
           </div>)}
+        {tab === 'volumes' && <ProjectVolumes list={p.volumes} onContainer={(n) => set({ c: n, ct: null })} />}
+        {tab === 'networks' && <ProjectNetworks list={p.networks} onContainer={(n) => set({ c: n, ct: null })} />}
         {tab === 'make' && <ProjectMake id={id} />}
         {tab === 'images' && <ProjectImages id={id} perms={p.perms} />}
         {tab === 'git' && <ProjectGit id={id} perms={p.perms} />}
@@ -99,6 +102,37 @@ export default function Project() {
       {kill && <Destroy id={id} name={p.path.split('/').pop()} onClose={() => setKill(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); go('/projects') }} />}
       {open && <ContainerModal key={open} name={open} tab={params.get('ct') || undefined} onClose={() => set({ c: null, ct: null })} />}
     </>
+  )
+}
+
+function Users({ rows, onContainer, extra }) {
+  return <div className="col" style={{ gap: 3 }}>{rows.map((u, i) => <div key={i} className="row wrap" style={{ gap: 6 }}>
+    <button type="button" className="linklike mono small" title="Ouvrir la fiche du conteneur" onClick={() => onContainer(u.container)}>{u.container}</button>{extra(u)}</div>)}</div>
+}
+
+function ProjectVolumes({ list, onContainer }) {
+  const [open, setOpen] = useState(null)
+  if (!list.length) return <div className="card"><Empty><HardDrive size={28} /><div>Aucun volume ni dossier monté : aucun conteneur du projet n'en utilise (ou rien ne tourne pour l'instant).</div></Empty></div>
+  return (
+    <div className="card flush"><table className="t"><thead><tr><th>Volume / dossier</th><th>Type</th><th>Utilisé par</th></tr></thead><tbody>
+      {list.map((v) => { const named = v.type === 'volume'
+        return <tr key={v.type + (v.name || v.source)} style={named ? { cursor: 'pointer' } : undefined} title={named ? 'Voir le détail du volume et son contenu' : undefined} onClick={() => named && setOpen(v.name)}>
+          <td><b className="mono">{named ? v.name : v.source}</b>{named && v.source && <div className="muted small mono ellipsis" title={v.source}>{v.source}</div>}</td>
+          <td><Badge>{named ? 'volume' : v.type === 'bind' ? 'dossier monté' : v.type}</Badge></td>
+          <td onClick={(e) => e.stopPropagation()}><Users rows={v.usedBy} onContainer={onContainer} extra={(u) => <><span className="muted small mono">→ {u.destination}</span>{!u.rw && <Badge kind="warn">lecture seule</Badge>}</>} /></td></tr> })}</tbody></table>
+      {open && <VolumeModal name={open} onClose={() => setOpen(null)} onOpenContainer={(n) => { setOpen(null); onContainer(n) }} />}</div>
+  )
+}
+
+function ProjectNetworks({ list, onContainer }) {
+  const [open, setOpen] = useState(null)
+  if (!list.length) return <div className="card"><Empty><NetIcon size={28} /><div>Aucun réseau : aucun conteneur du projet n'existe pour l'instant.</div></Empty></div>
+  return (
+    <div className="card flush"><table className="t"><thead><tr><th>Réseau</th><th>Conteneurs du projet</th></tr></thead><tbody>
+      {list.map((n) => <tr key={n.name} style={{ cursor: 'pointer' }} title="Voir le détail du réseau" onClick={() => setOpen(n.name)}>
+        <td><b className="mono">{n.name}</b></td>
+        <td onClick={(e) => e.stopPropagation()}><Users rows={n.usedBy} onContainer={onContainer} extra={(u) => <>{u.ip && <span className="muted small mono">{u.ip}</span>}{u.aliases.length > 0 && <span className="muted small">alias : {u.aliases.join(', ')}</span>}</>} /></td></tr>)}</tbody></table>
+      {open && <NetworkModal name={open} onClose={() => setOpen(null)} onOpenContainer={(n) => { setOpen(null); onContainer(n) }} />}</div>
   )
 }
 
