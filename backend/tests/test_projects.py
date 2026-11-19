@@ -633,3 +633,52 @@ def test_image_tracking_notifies_once_per_new_version(pj, fakereg):
     finally:
         db.run("UPDATE nodes SET webhook_url='' WHERE id=?", (nid,))
         srv.shutdown()
+
+
+def test_folders_organise_the_list_without_touching_the_disk(pj):
+    h = pj["h"]
+    client.post("/api/projects/import", headers=h, json={"paths": [str(pj["base"] / "site"), str(pj["base"] / "apps" / "blog")]})
+    ps = {p["name"]: p for p in client.get("/api/projects", headers=h).json()["managed"]}
+    site, blog = ps["site"], ps["blog"]
+    assert site["folderId"] is None
+    a = client.post("/api/projects/folders", headers=h, json={"name": "Production", "description": "Les sites en ligne", "color": "green"}).json()["id"]
+    b = client.post("/api/projects/folders", headers=h, json={"name": "Web", "parentId": a}).json()["id"]
+    assert client.post("/api/projects/folders", headers=h, json={"name": "production"}).status_code == 409       # doublon (casse ignorée)
+    assert client.post("/api/projects/folders", headers=h, json={"name": "x", "color": "fuchsia"}).status_code == 422
+    assert client.post("/api/projects/folders", headers=h, json={"name": "x", "parentId": 99999}).status_code == 404
+    assert client.post("/api/projects/folders", headers=h, json={"name": "Web"}).status_code == 200              # même nom mais ailleurs : permis
+    d = client.get("/api/projects", headers=h).json()
+    assert {f["name"] for f in d["folders"]} >= {"Production", "Web"}
+    assert [f for f in d["folders"] if f["id"] == a][0]["description"] == "Les sites en ligne"
+    # ranger (glisser-déposer) : un projet, puis un dossier dans un autre
+    assert client.post("/api/projects/regroup", headers=h, json={"projects": [site["id"]], "folderId": b}).json()["moved"] == 1
+    assert {p["name"]: p["folderId"] for p in client.get("/api/projects", headers=h).json()["managed"]}["site"] == b
+    assert client.post("/api/projects/regroup", headers=h, json={"projects": [blog["id"]], "folderId": 99999}).status_code == 404
+    # pas de boucle : un dossier ne rentre ni dans lui-même ni dans son sous-dossier
+    assert client.post("/api/projects/regroup", headers=h, json={"folders": [a], "folderId": b}).status_code == 422
+    assert client.put(f"/api/projects/folders/{a}", headers=h, json={"name": "Production", "parentId": a}).status_code == 422
+    # renommer / déplacer par la fiche
+    assert client.put(f"/api/projects/folders/{b}", headers=h, json={"name": "Sites web", "description": "d", "color": "blue", "parentId": a}).status_code == 200
+    # supprimer : le contenu remonte d'un niveau
+    assert client.delete(f"/api/projects/folders/{b}", headers=h).status_code == 200
+    assert {p["name"]: p["folderId"] for p in client.get("/api/projects", headers=h).json()["managed"]}["site"] == a
+    assert (pj["base"] / "site" / "docker-compose.yml").exists()                                                 # le disque n'a pas bougé
+    assert client.post("/api/projects/regroup", headers=h, json={"projects": [site["id"]], "folderId": None}).json()["moved"] == 1
+    # profondeur limitée
+    top = None
+    for i in range(8):
+        top = client.post("/api/projects/folders", headers=h, json={"name": f"n{i}", "parentId": top}).json()["id"]
+    assert client.post("/api/projects/folders", headers=h, json={"name": "trop", "parentId": top}).status_code == 422
+    client.delete(f"/api/projects/folders/{a}", headers=h)
+
+
+def test_folders_need_the_manage_right(pj):
+    import app.db as db
+    nid = pj["h"]["X-Node"]
+    client.post("/api/users", headers=pj["h"], json={"username": "fold-v", "password": "Passw0rd!long1"})
+    uid = db.one("SELECT id FROM users WHERE username='fold-v'")["id"]
+    db.run("INSERT INTO node_members(node_id,user_id,role,created_at) VALUES(?,?,?,?)", (nid, uid, "viewer", db.now()))
+    tok = client.post("/api/auth/login", json={"username": "fold-v", "password": "Passw0rd!long1"}).json()["access_token"]
+    h = {"Authorization": f"Bearer {tok}", "X-Node": nid}
+    assert client.post("/api/projects/folders", headers=h, json={"name": "nope"}).status_code == 403
+    assert client.post("/api/projects/regroup", headers=h, json={"folderId": None}).status_code == 403

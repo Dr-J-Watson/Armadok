@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Download, EyeOff, Plus, FolderGit2, GitFork, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
+import { Download, EyeOff, FolderInput, FolderPlus, Plus, FolderGit2, GitFork, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Loading, Modal, SearchBox, Seg, Tabs, useUi } from '../components/ui.jsx'
 import { JobOutput } from '../components/ComposeBar.jsx'
@@ -14,6 +14,7 @@ import { useNode, useNodeList } from '../node.jsx'
 import { NodeChip } from '../components/NodeSwitcher.jsx'
 import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
 import NewProject from '../components/NewProject.jsx'
+import { Breadcrumb, FolderModal, FolderTile, MIME, MoveModal, UpTile, folderStats } from '../components/ProjectFolders.jsx'
 
 export const STATUS = { running: ['En marche', 'ok'], partial: ['Partiel', 'warn'], stopped: ['Arrêté', ''], absent: ['Non démarré', ''] }
 export const SVC_DOT = { running: 'var(--ok)', partial: 'var(--warn)', stopped: 'var(--muted)', absent: 'var(--border)' }
@@ -33,7 +34,12 @@ export default function Projects() {
   const list = raw.full ? { ...raw, data: raw.isLoading ? undefined : { managed: raw.rows.flatMap((r) => r.managed.map((p) => ({ ...p, _node: r._node }))), discovered: [], ignored: [], roots: ['*'], canImport: false, canGit: false, truncated: false } } : raw
   const goP = (to, p) => { if (p?._node && p._node.id !== node.id) setNode(p._node.id); go(to) }
   const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false); const [newp, setNewp] = useState(false)
-  const { toast } = useUi(); const qc = useQueryClient()
+  const { toast, confirm } = useUi(); const qc = useQueryClient()
+  // Dossiers d'organisation : dossier courant dans l'adresse (?g=), glisser-déposer, fenêtres de création / rangement
+  const [over, setOver] = useState(null); const [fmodal, setFmodal] = useState(null); const [moveP, setMoveP] = useState(null)
+  const regroup = useMutation({ mutationFn: (b) => api.post('/projects/regroup', b), onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['projects'] }); setMoveP(null); if (r.moved) toast(`${r.moved} élément${r.moved > 1 ? 's' : ''} rangé${r.moved > 1 ? 's' : ''}`) }, onError: (e) => toast(e.message, 'err') })
+  const saveFolder = useMutation({ mutationFn: ({ id, ...b }) => (id ? api.put(`/projects/folders/${id}`, b) : api.post('/projects/folders', b)), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); setFmodal(null) }, onError: (e) => toast(e.message, 'err') })
+  const delFolder = useMutation({ mutationFn: (id) => api.del(`/projects/folders/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Dossier supprimé : son contenu est remonté d\'un niveau') }, onError: (e) => toast(e.message, 'err') })
   const tab = ['managed', 'discovered', 'ignored'].includes(params.get('tab')) ? params.get('tab') : 'managed'
   const done = (r, verb) => { qc.invalidateQueries({ queryKey: ['projects'] }); setSel([]); setAsk(null); toast(r.done.length ? `${r.done.length} projet${r.done.length > 1 ? 's' : ''} ${verb}` : 'Rien à faire') }
   const ignore = useMutation({ mutationFn: (paths) => api.post('/projects/ignore', { paths }), onSuccess: (r) => done(r, 'ignoré(s)'), onError: (e) => toast(e.message, 'err') })
@@ -42,11 +48,29 @@ export default function Projects() {
   if (list.error) return <div className="banner err">{list.error.message}</div>
   const d = list.data; const needle = q.trim().toLowerCase()
   const hit = (p) => !needle || [p.name, p.path, ...(p.tags || []), ...(p.hosts || []), ...p.services.map((s) => s.name), ...p.services.map((s) => s.image)].some((x) => String(x || '').toLowerCase().includes(needle))
-  const rows = d[tab].filter(hit)
+  const folders = raw.full ? [] : d.folders || []; const byId = Object.fromEntries(folders.map((f) => [f.id, f]))
+  const cur = byId[Number(params.get('g'))] ? Number(params.get('g')) : null
+  const fid = (p) => (byId[p.folderId] ? p.folderId : null)
+  const canMove = !raw.full && d.canImport && tab === 'managed'
+  const crumbs = []; for (let x = cur; x != null && crumbs.length < 20; x = byId[x]?.parentId ?? null) crumbs.unshift(byId[x])
+  const openFolder = (id) => { setOver(null); setParams(id == null ? {} : { g: String(id) }) }
+  const dragOf = (kind, id) => (canMove ? { draggable: true, onDragStart: (e) => { e.dataTransfer.setData(MIME, JSON.stringify({ kind, id })); e.dataTransfer.effectAllowed = 'move' } } : {})
+  const dropFor = (target) => { const key = target ?? 'root'; return { over: over === key, props: canMove ? {
+    onDragOver: (e) => { if (!e.dataTransfer.types.includes(MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver((o) => (o === key ? null : o)) },
+    onDrop: (e) => { e.preventDefault(); setOver(null); let x; try { x = JSON.parse(e.dataTransfer.getData(MIME)) } catch { return } if (!x || (x.kind === 'folder' && x.id === target)) return; regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) } } : {} } }
+  const nested = !needle && tab === 'managed' && !raw.full
+  const rows = d[tab].filter(hit).filter((p) => tab !== 'managed' || raw.full || needle || fid(p) === cur)
+  const subFolders = tab !== 'managed' || raw.full ? [] : folders.filter((f) => (needle ? [f.name, f.description].some((x) => String(x || '').toLowerCase().includes(needle)) : (byId[f.parentId] ? f.parentId : null) === cur))
+  const showUp = nested && cur != null
+  const askDelete = async (f) => { const st = folderStats(folders, d.managed, f.id); if (await confirm({ title: `Supprimer le dossier « ${f.name} » ?`, message: st.total || st.sub ? 'Ses projets et ses sous-dossiers remontent d\'un niveau. Rien n\'est supprimé sur la machine.' : 'Le dossier est vide.', confirmLabel: 'Supprimer' })) delFolder.mutate(f.id) }
+  const dragP = (p) => dragOf('project', p.id)
+  const onMoveP = canMove ? (p) => setMoveP([p]) : null
   return (
     <>
       <div className="row" style={{ marginBottom: 14 }}>
         <div className="grow"><h1 style={{ margin: 0 }}>Projets</h1><div className="muted">Les dossiers docker compose de ce nœud : leur état, leurs sites et leurs visiteurs.</div></div>
+        {canMove && <Btn title="Créer un dossier pour ranger les projets" onClick={() => setFmodal({ parentId: cur })}><FolderPlus size={14} /> Nouveau dossier</Btn>}
         {d.canImport && <Btn kind="primary" title="Créer un projet : vide, modèle de base, depuis un conteneur lancé à la main, depuis un dépôt Git…" onClick={() => setNewp(true)}><Plus size={14} /> Nouveau projet</Btn>}
       </div>
       <div className="row wrap" style={{ gap: 10, marginBottom: 14 }}>
@@ -58,8 +82,13 @@ export default function Projects() {
       {offer.show && <TraefikOffer onOpen={() => setTsetup(true)} onDismiss={() => { offer.dismiss(); toast('D\'accord. Plus tard : Aide → « Installer Traefik avec Armadok », ou le bouton « Créer un projet Traefik » de cette page.') }} />}
       {d.roots.length === 0 && <div className="banner warn"><FolderOpen size={16} /> Aucun dossier de projets n'est configuré sur ce nœud. Indiquez-les avec la variable <code>PROJECT_ROOTS</code> (chemins absolus, montés à l'identique dans le conteneur).</div>}
       {d.truncated && <div className="banner warn">Beaucoup de projets : la liste est tronquée.</div>}
-      {rows.length === 0 ? <div className="card"><Empty><FolderGit2 size={28} /><div>{tab === 'managed' ? <>Aucun projet géré.<br /><span className="muted small">Importez-en depuis l'onglet « Découverts ».</span></> : tab === 'discovered' ? 'Aucun nouveau projet trouvé dans vos dossiers.' : 'Aucun projet ignoré.'}</div></Empty></div>
-        : tab === 'managed' ? (view === 'list' ? <ProjectTable rows={rows} stat={stat} go={goP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} /> : <div className="project-grid">{rows.map((p) => <ProjectCard key={(p._node?.id || '') + ':' + p.id} p={p} stat={stat} go={goP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} />)}</div>)
+      {tab === 'managed' && !raw.full && !needle && (cur != null || folders.length > 0) && <Breadcrumb path={crumbs} onOpen={openFolder} dropFor={dropFor} />}
+      {tab === 'managed' && (subFolders.length > 0 || showUp) && <div className="project-grid folders">
+        {showUp && <UpTile parent={byId[byId[cur]?.parentId]} dnd={dropFor(byId[cur]?.parentId ?? null)} onOpen={() => openFolder(byId[cur]?.parentId ?? null)} />}
+        {subFolders.map((f) => <FolderTile key={f.id} f={f} st={folderStats(folders, d.managed, f.id)} canManage={canMove} dnd={{ ...dropFor(f.id), props: { ...dragOf('folder', f.id), ...dropFor(f.id).props } }} onOpen={() => openFolder(f.id)} onEdit={() => setFmodal({ folder: f })} onDelete={() => askDelete(f)} />)}
+      </div>}
+      {rows.length === 0 ? (subFolders.length > 0 || showUp) && tab === 'managed' ? (subFolders.length === 0 ? <div className="muted" style={{ textAlign: 'center', padding: 18 }}>Ce dossier est vide.{canMove && ' Glissez-y des projets, ou utilisez le bouton « Ranger » d\'une carte.'}</div> : null) : <div className="card"><Empty><FolderGit2 size={28} /><div>{tab === 'managed' ? <>Aucun projet géré.<br /><span className="muted small">Importez-en depuis l'onglet « Découverts ».</span></> : tab === 'discovered' ? 'Aucun nouveau projet trouvé dans vos dossiers.' : 'Aucun projet ignoré.'}</div></Empty></div>
+        : tab === 'managed' ? (view === 'list' ? <ProjectTable rows={rows} stat={stat} go={goP} drag={dragP} onMove={onMoveP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} /> : <div className="project-grid">{rows.map((p) => <ProjectCard key={(p._node?.id || '') + ':' + p.id} p={p} stat={stat} go={goP} drag={dragP} onMove={onMoveP} onRemove={d.canImport ? (x) => unimport.mutate(x.id) : null} />)}</div>)
           : <div className="card flush"><table className="t"><thead><tr>{tab === 'discovered' && d.canImport && <th style={{ width: 30 }}><input type="checkbox" checked={sel.length === rows.length && rows.length > 0} onChange={(e) => setSel(e.target.checked ? rows.map((r) => r.path) : [])} /></th>}<th>Projet</th><th>Services</th><th>État</th><th /></tr></thead><tbody>
             {rows.map((p) => <tr key={p.path}>{tab === 'discovered' && d.canImport && <td><input type="checkbox" checked={sel.includes(p.path)} onChange={(e) => setSel((s) => (e.target.checked ? [...s, p.path] : s.filter((x) => x !== p.path)))} /></td>}
               <td><b>{p.name}</b>{p.hasEnv && <Badge style={{ marginLeft: 6 }}>.env</Badge>}{p.build && <Badge style={{ marginLeft: 6 }}>build</Badge>}{p.hasGit && <Badge style={{ marginLeft: 6 }}>git</Badge>}<div className="muted small mono">{p.path}</div>{p.error && <div className="small" style={{ color: 'var(--err)' }}>{p.error}</div>}</td>
@@ -67,6 +96,8 @@ export default function Projects() {
               <td className="actions">{d.canImport && (tab === 'discovered' ? <Btn title="Ajouter ce projet à la liste" small onClick={() => setAsk([p.path])}><Download size={13} /> Importer</Btn> : <Btn title="Retire ce projet de la liste : ni ses fichiers ni ses conteneurs ne sont touchés" small kind="ghost" onClick={() => unimport.mutate(p.id)}><Undo2 size={13} /> Restaurer</Btn>)}</td></tr>)}</tbody></table></div>}
       {clone && <CloneModal onClose={() => setClone(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); setParams({ tab: 'discovered' }) }} />}
       {ask && <ImportModal paths={ask} onClose={() => setAsk(null)} onDone={(r) => done(r, 'importé(s)')} />}
+      {fmodal && <FolderModal folder={fmodal.folder} parentId={fmodal.parentId} folders={folders} busy={saveFolder.isPending} onClose={() => setFmodal(null)} onSave={(b) => saveFolder.mutate({ id: fmodal.folder?.id, ...b })} />}
+      {moveP && <MoveModal projects={moveP} folders={folders} current={fid(moveP[0])} busy={regroup.isPending} onClose={() => setMoveP(null)} onMove={(to) => regroup.mutate({ projects: moveP.map((x) => x.id), folderId: to })} />}
       {tsetup && <TraefikSetup onClose={() => setTsetup(false)} />}
       {newp && <NewProject onClose={() => setNewp(false)} onClone={() => setClone(true)} onTraefik={() => setTsetup(true)} traefikMissing={offer.missing} />}
     </>
@@ -89,11 +120,11 @@ function Services({ p }) {
   return <div className="row wrap" style={{ gap: 5 }}>{p.services.length ? p.services.slice(0, 8).map((s) => <span key={s.name} className="small row" style={{ gap: 4 }} title={`${s.name} : ${s.state}`}><i className="dot" style={{ background: SVC_DOT[s.state] }} />{s.name}</span>) : <span className="muted small">aucun service</span>}{p.services.length > 8 && <span className="muted small">+{p.services.length - 8}</span>}</div>
 }
 
-function ProjectCard({ p, stat, go, onRemove }) {
+function ProjectCard({ p, stat, go, onRemove, drag, onMove }) {
   const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const a = p.access
   return (
-    <div className={'card project ' + (p.missing ? 'off' : '')} onClick={() => !p.missing && go(`/projects/${p.id}`, p)}>
-      <div className="row"><FolderGit2 size={16} className="muted" /><b className="grow ellipsis">{p.name}</b>{p._node && <NodeChip node={p._node} />}{!p.missing && <Badge kind={kind}>{lab}</Badge>}{p.missing && <Badge kind="err">introuvable</Badge>}</div>
+    <div className={'card project ' + (p.missing ? 'off' : '')} onClick={() => !p.missing && go(`/projects/${p.id}`, p)} {...(drag ? drag(p) : {})}>
+      <div className="row"><FolderGit2 size={16} className="muted" /><b className="grow ellipsis">{p.name}</b>{onMove && <Btn small kind="ghost" icon title="Ranger dans un dossier (ou glissez la carte sur un dossier)" aria-label="Ranger dans un dossier" onClick={(e) => { e.stopPropagation(); onMove(p) }}><FolderInput size={14} /></Btn>}{p._node && <NodeChip node={p._node} />}{!p.missing && <Badge kind={kind}>{lab}</Badge>}{p.missing && <Badge kind="err">introuvable</Badge>}</div>
       <div className="muted small mono ellipsis" title={p.path}>{p.path}</div>
       <Services p={p} />
       {p.hosts.length > 0 && <div className="row wrap" style={{ gap: 5 }}>{p.hosts.slice(0, 3).map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}><Globe size={11} /> {h}</a>)}{p.hosts.length > 3 && <span className="muted small">+{p.hosts.length - 3}</span>}</div>}
@@ -113,14 +144,14 @@ function ProjectCard({ p, stat, go, onRemove }) {
   )
 }
 
-function ProjectTable({ rows, stat, go, onRemove }) {
+function ProjectTable({ rows, stat, go, onRemove, drag, onMove }) {
   return (
     <div className="card flush"><table className="t"><thead><tr><th>Projet</th><th>État</th><th>Services</th><th>Sites</th><th>CPU</th><th>Mémoire</th><th>Requêtes</th><th>Visiteurs</th><th /></tr></thead><tbody>
       {rows.map((p) => { const s = stat(p.containerIds); const [lab, kind] = STATUS[p.status] || ['', '']; return (
-        <tr key={(p._node?.id || '') + ':' + p.id} style={{ cursor: 'pointer' }} onClick={() => !p.missing && go(`/projects/${p.id}`, p)}>
+        <tr key={(p._node?.id || '') + ':' + p.id} style={{ cursor: 'pointer' }} onClick={() => !p.missing && go(`/projects/${p.id}`, p)} {...(drag ? drag(p) : {})}>
           <td><b>{p.name}</b>{p._node && <> <NodeChip node={p._node} /></>}<div className="muted small mono ellipsis" style={{ maxWidth: 260 }}>{p.path}</div></td><td>{p.missing ? <Badge kind="err">introuvable</Badge> : <Badge kind={kind}>{lab}</Badge>}</td><td><Services p={p} /></td>
           <td className="small">{p.hosts.slice(0, 2).join(', ') || <span className="muted">—</span>}</td><td>{s ? `${s.cpu.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—'}</td><td>{s ? fmtSize(s.mem) : '—'}</td>
-          <td>{p.access ? fmtNum(p.access.hits) : '—'}</td><td>{p.access ? fmtNum(p.access.visitors) : '—'}</td><td className="actions">{p.missing && onRemove && <Btn small kind="ghost" title="Retirer de la liste (rien n'est supprimé sur la machine)" onClick={(e) => { e.stopPropagation(); onRemove(p) }}><Undo2 size={13} /> Retirer</Btn>}</td></tr>) })}</tbody></table></div>
+          <td>{p.access ? fmtNum(p.access.hits) : '—'}</td><td>{p.access ? fmtNum(p.access.visitors) : '—'}</td><td className="actions">{onMove && <Btn small kind="ghost" icon title="Ranger dans un dossier" aria-label="Ranger dans un dossier" onClick={(e) => { e.stopPropagation(); onMove(p) }}><FolderInput size={14} /></Btn>}{p.missing && onRemove && <Btn small kind="ghost" title="Retirer de la liste (rien n'est supprimé sur la machine)" onClick={(e) => { e.stopPropagation(); onRemove(p) }}><Undo2 size={13} /> Retirer</Btn>}</td></tr>) })}</tbody></table></div>
   )
 }
 

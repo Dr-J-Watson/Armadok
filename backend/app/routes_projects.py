@@ -121,8 +121,151 @@ def projects(ctx: NodeCtx = Depends(proj_cap("projects.view"))):
         if path not in found and row["state"] == "managed":
             out["managed"].append({"id": row["id"], "path": path, "name": row["name"], "state": "managed", "missing": True, "services": [], "extra": [], "hosts": [], "alerts": [{"level": "err", "text": "Le dossier de ce projet est introuvable"}],
                                    "status": "absent", "running": 0, "total": 0, "tags": [t for t in row["tags"].split(",") if t], "containerIds": [], "access": None})
-    return {**out, "roots": info["roots"], "configuredRoots": info["configuredRoots"], "compose": info["compose"], "truncated": scan["truncated"],
+    for lst in out.values():   # le dossier d'organisation de chaque projet (vide = racine)
+        for x in lst:
+            x["folderId"] = (rows.get(x["path"]) or {"folder_id": None})["folder_id"]
+    return {**out, "folders": folders(ctx.id), "roots": info["roots"], "configuredRoots": info["configuredRoots"], "compose": info["compose"], "truncated": scan["truncated"],
             "canImport": ctx.can("projects.import"), "canDeploy": ctx.can("projects.deploy"), "canGit": ctx.can("projects.git") and ctx.can("projects.import"), "node": ctx.id}
+
+
+# ------------------------------------------------------------------ dossiers d'organisation
+# Purement logiques : rangent la LISTE des projets (comme des dossiers et sous-dossiers) sans rien déplacer sur le disque.
+MAX_FOLDER_DEPTH = 8
+FOLDER_COLORS = {"", "red", "orange", "yellow", "green", "teal", "blue", "purple", "pink", "gray"}
+
+
+def folders(node_id: str) -> list[dict]:
+    return [{"id": r["id"], "parentId": r["parent_id"], "name": r["name"], "description": r["description"], "color": r["color"], "createdBy": r["created_by"], "createdAt": r["created_at"]}
+            for r in db.rows("SELECT * FROM project_folders WHERE node_id=? ORDER BY name COLLATE NOCASE", (node_id,))]
+
+
+def _folder(ctx: NodeCtx, fid: int):
+    r = db.one("SELECT * FROM project_folders WHERE id=? AND node_id=?", (fid, ctx.id))
+    if not r:
+        raise HTTPException(404, "Dossier introuvable")
+    return r
+
+
+def _descendants(node_id: str, fid: int) -> set[int]:
+    kids: dict[int | None, list[int]] = {}
+    for r in db.rows("SELECT id, parent_id FROM project_folders WHERE node_id=?", (node_id,)):
+        kids.setdefault(r["parent_id"], []).append(r["id"])
+    out, todo = set(), [fid]
+    while todo:
+        for k in kids.get(todo.pop(), []):
+            if k not in out:
+                out.add(k)
+                todo.append(k)
+    return out
+
+
+def _depth(node_id: str, fid: int | None) -> int:
+    """Nombre de dossiers de la racine jusqu'à fid compris (0 pour la racine)."""
+    parents = {r["id"]: r["parent_id"] for r in db.rows("SELECT id, parent_id FROM project_folders WHERE node_id=?", (node_id,))}
+    n = 0
+    while fid is not None and n < 100:
+        n += 1
+        fid = parents.get(fid)
+    return n
+
+
+def _height(node_id: str, fid: int) -> int:
+    """Profondeur du sous-arbre de fid (1 s'il n'a pas de sous-dossier)."""
+    kids: dict[int | None, list[int]] = {}
+    for r in db.rows("SELECT id, parent_id FROM project_folders WHERE node_id=?", (node_id,)):
+        kids.setdefault(r["parent_id"], []).append(r["id"])
+    def h(i, d=0):
+        return 1 + max((h(k, d + 1) for k in kids.get(i, []) if d < 100), default=0)
+    return h(fid)
+
+
+def _check_place(ctx: NodeCtx, name: str, parent: int | None, color: str, me: int | None = None) -> str:
+    name = " ".join((name or "").split())
+    if not name:
+        raise HTTPException(422, "Donnez un nom au dossier")
+    if color not in FOLDER_COLORS:
+        raise HTTPException(422, "Couleur inconnue")
+    if parent is not None:
+        _folder(ctx, parent)
+        if me is not None and (parent == me or parent in _descendants(ctx.id, me)):
+            raise HTTPException(422, "Un dossier ne peut pas être rangé dans lui-même ou dans l'un de ses sous-dossiers")
+        if _depth(ctx.id, parent) + (_height(ctx.id, me) if me is not None else 1) > MAX_FOLDER_DEPTH:
+            raise HTTPException(422, f"Trop de niveaux de dossiers ({MAX_FOLDER_DEPTH} au plus)")
+    twin = db.one("SELECT id FROM project_folders WHERE node_id=? AND parent_id IS ? AND LOWER(name)=LOWER(?) AND id != ?", (ctx.id, parent, name, -1 if me is None else me))
+    if twin:
+        raise HTTPException(409, f"Un dossier « {name} » existe déjà ici")
+    return name
+
+
+class FolderBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=500)
+    color: str = Field(default="", max_length=12)
+    parentId: int | None = None
+
+
+@router.post("/folders")
+def create_folder(body: FolderBody, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    name = _check_place(ctx, body.name, body.parentId, body.color)
+    fid = db.run("INSERT INTO project_folders(node_id,parent_id,name,description,color,created_by,created_at) VALUES(?,?,?,?,?,?,?)",
+                 (ctx.id, body.parentId, name, body.description.strip(), body.color, ctx.p.username, db.now()))
+    ctx.audit("project.folder.create", name)
+    return {"id": fid}
+
+
+@router.put("/folders/{fid}")
+def edit_folder(fid: int, body: FolderBody, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Renomme, décrit, colore ou déplace (parentId) un dossier."""
+    _folder(ctx, fid)
+    name = _check_place(ctx, body.name, body.parentId, body.color, me=fid)
+    db.run("UPDATE project_folders SET name=?, description=?, color=?, parent_id=? WHERE id=?", (name, body.description.strip(), body.color, body.parentId, fid))
+    ctx.audit("project.folder.edit", name)
+    return {"ok": True}
+
+
+@router.delete("/folders/{fid}")
+def delete_folder(fid: int, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Supprime le dossier : ses projets et ses sous-dossiers remontent d'un niveau, rien d'autre n'est touché."""
+    row = _folder(ctx, fid)
+    clash = {r["name"].lower() for r in db.rows("SELECT name FROM project_folders WHERE node_id=? AND parent_id IS ? AND id!=?", (ctx.id, row["parent_id"], fid))}
+    for k in db.rows("SELECT id, name FROM project_folders WHERE parent_id=?", (fid,)):
+        if k["name"].lower() in clash:
+            raise HTTPException(409, f"Le sous-dossier « {k['name']} » ferait doublon dans le dossier du dessus : renommez-le d'abord")
+    db.run("UPDATE project_folders SET parent_id=? WHERE parent_id=?", (row["parent_id"], fid))
+    db.run("UPDATE projects SET folder_id=? WHERE folder_id=? AND node_id=?", (row["parent_id"], fid, ctx.id))
+    db.run("DELETE FROM project_folders WHERE id=?", (fid,))
+    ctx.audit("project.folder.delete", row["name"])
+    return {"ok": True}
+
+
+class RegroupBody(BaseModel):
+    projects: list[int] = Field(default_factory=list, max_length=200)
+    folders: list[int] = Field(default_factory=list, max_length=200)
+    folderId: int | None = None   # destination (null = la racine)
+
+
+@router.post("/regroup")
+def regroup(body: RegroupBody, ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Range des projets et/ou des dossiers dans un dossier (ou à la racine) : le glisser-déposer de la liste."""
+    if body.folderId is not None:
+        _folder(ctx, body.folderId)
+    for pid in body.projects:
+        _row(ctx, pid)
+    moved = 0
+    for fid in body.folders:
+        row = _folder(ctx, fid)
+        if row["parent_id"] == body.folderId:
+            continue
+        _check_place(ctx, row["name"], body.folderId, row["color"], me=fid)
+        db.run("UPDATE project_folders SET parent_id=? WHERE id=?", (body.folderId, fid))
+        moved += 1
+    for pid in body.projects:
+        db.run("UPDATE projects SET folder_id=? WHERE id=?", (body.folderId, pid))
+        moved += 1
+    if moved:
+        dest = _folder(ctx, body.folderId)["name"] if body.folderId is not None else "la racine"
+        ctx.audit("project.folder.move", f"{moved} élément(s) → {dest}")
+    return {"moved": moved}
 
 
 class PathsBody(BaseModel):
