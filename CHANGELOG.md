@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.10.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.9.0...v1.10.0) (2026-11-19)
+
+
+### Nouveautés
+
+* fiche d'un projet, onglets Volumes et Réseaux (volumes, dossiers montés, réseaux, IP et alias par conteneur) ([e366c4e](https://github.com/Dr-J-Watson/Armadok/commit/e366c4e5aafb9097db17ea1b0fc8b98be0a06d72))
+* liste des volumes Docker, dossiers montés (bind), colonne Type (nommé, anonyme, dossier monté), chemins dans le conteneur, filtre par type ([82733d9](https://github.com/Dr-J-Watson/Armadok/commit/82733d9c64c619e7d2680a3a29baac12e8f8f3e9))
+
+
+### Corrections
+
+* page Projets blanche (erreur React [#310](https://github.com/Dr-J-Watson/Armadok/issues/310)), le hook de navigation par dossiers était appelé après les retours anticipés ([ba8ccfd](https://github.com/Dr-J-Watson/Armadok/commit/ba8ccfdfe6b44422cf6024974450de15910b4fd1))
+
 ## [1.9.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.8.0...v1.9.0) (2026-11-19)
 
 
