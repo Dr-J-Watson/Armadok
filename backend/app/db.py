@@ -188,8 +188,11 @@ CREATE TABLE IF NOT EXISTS projects (
   track_images INTEGER NOT NULL DEFAULT 0, UNIQUE (node_id, path)
 );
 CREATE TABLE IF NOT EXISTS project_folders (
-  id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, parent_id INTEGER,
+  id INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, parent_id INTEGER, kind TEXT NOT NULL DEFAULT 'projects',
   name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT '', created_by TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS site_folder_items (
+  node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE, router TEXT NOT NULL, folder_id INTEGER NOT NULL, PRIMARY KEY (node_id, router)
 );
 CREATE TABLE IF NOT EXISTS image_checks (
   node_id TEXT NOT NULL, ref TEXT NOT NULL, remote_digest TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', checked_at REAL NOT NULL, notified TEXT NOT NULL DEFAULT '',
@@ -263,6 +266,7 @@ MIGRATIONS = {
     "project_templates": [("shared", "INTEGER NOT NULL DEFAULT 1")],   # 0 = privé (son auteur seulement), 1 = partagé ; les modèles d'avant ce réglage restent partagés
     "image_checks": [("latest_tag", "TEXT NOT NULL DEFAULT ''"), ("notified_tag", "TEXT NOT NULL DEFAULT ''")],   # latest_tag : version plus récente trouvée au registre
     "projects": [("track_images", "INTEGER NOT NULL DEFAULT 0"), ("compose_files", "TEXT NOT NULL DEFAULT ''"), ("image_schedule", "TEXT NOT NULL DEFAULT ''"), ("image_last_run", "REAL"), ("folder_id", "INTEGER")],   # folder_id : dossier d'organisation (vide = à la racine)   # image_schedule : planning JSON de la vérification (vide = le réglage par défaut)   # compose_files : liste JSON des fichiers compose choisis (vide = automatique)
+    "project_folders": [("kind", "TEXT NOT NULL DEFAULT 'projects'")],   # projects | sites : ce que le dossier range
     "node_members": [("expires_at", "REAL")],  # accès temporaire : le membre perd son rôle à cette date
     "domain_access": [("types", "TEXT NOT NULL DEFAULT ''"), ("subs", "TEXT NOT NULL DEFAULT ''"), ("no_delete", "INTEGER NOT NULL DEFAULT 0"), ("expires_at", "REAL")],  # suppression douce : le nœud est invisible mais récupérable jusqu'à sa purge
 }

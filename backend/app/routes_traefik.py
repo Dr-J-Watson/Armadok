@@ -1,12 +1,13 @@
 import os
 
 import bcrypt
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .audit import audit
 from .config import settings
 from . import caps as capmod
+from . import org_folders, db
 from .nodes import NodeCtx, node_optional, node_traefik
 from .perms import LEVELS, Principal, accessible_domains, admin_only, current_user, hosts_min_level, target_allowed
 from .traefik_lint import lint
@@ -99,6 +100,90 @@ def site_check(name: str, ctx: NodeCtx = Depends(node_traefik)):
     if not hosts:
         raise HTTPException(422, "Ce site n'a pas d'adresse précise à tester (règle sans Host)")
     return {"name": name, "results": sitecheck.check(hosts)}
+
+
+# ------------------------------------------------------------------ dossiers de sites (rangement de la liste, voir org_folders)
+def _folder_owner(request: Request, ctx: NodeCtx) -> str:
+    """À qui appartiennent les dossiers de la vue : au nœud dont on regarde les sites. Un nœud qui publie par le Traefik d'un autre (vue filtrée,
+    en-tête X-Node-Scope déjà validé par node_optional) range SES sites dans SES dossiers ; la vue complète de ce Traefik a les siens."""
+    scope = request.headers.get("x-node-scope")
+    return scope if scope and scope != ctx.id else ctx.id
+
+
+class SiteFolderBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    description: str = Field(default="", max_length=500)
+    color: str = Field(default="", max_length=12)
+    parentId: int | None = None
+
+
+class SiteRegroupBody(BaseModel):
+    routers: list[str] = Field(default_factory=list, max_length=300)
+    folders: list[int] = Field(default_factory=list, max_length=200)
+    folderId: int | None = None
+
+
+@router.get("/traefik/site-folders")
+def site_folders(request: Request, ctx: NodeCtx = Depends(node_traefik)):
+    owner = _folder_owner(request, ctx)
+    ctx.need("sites.view")
+    return {"folders": org_folders.listing(owner, "sites"), "canManage": ctx.can("sites.edit"), "scoped": owner != ctx.id,
+            "assign": {r["router"]: r["folder_id"] for r in db.rows("SELECT router, folder_id FROM site_folder_items WHERE node_id=?", (owner,))}}
+
+
+@router.post("/traefik/site-folders")
+def create_site_folder(body: SiteFolderBody, request: Request, ctx: NodeCtx = Depends(node_traefik)):
+    owner = _folder_owner(request, ctx)
+    ctx.need("sites.edit")
+    fid, name = org_folders.create(owner, "sites", ctx.p.username, body.name, body.description, body.color, body.parentId)
+    ctx.audit("site.folder.create", name)
+    return {"id": fid}
+
+
+@router.put("/traefik/site-folders/{fid}")
+def edit_site_folder(fid: int, body: SiteFolderBody, request: Request, ctx: NodeCtx = Depends(node_traefik)):
+    owner = _folder_owner(request, ctx)
+    ctx.need("sites.edit")
+    ctx.audit("site.folder.edit", org_folders.edit(owner, "sites", fid, body.name, body.description, body.color, body.parentId))
+    return {"ok": True}
+
+
+@router.delete("/traefik/site-folders/{fid}")
+def delete_site_folder(fid: int, request: Request, ctx: NodeCtx = Depends(node_traefik)):
+    owner = _folder_owner(request, ctx)
+    """Supprime le dossier : ses sites et sous-dossiers remontent d'un niveau (les sites eux-mêmes ne sont pas touchés)."""
+    ctx.need("sites.edit")
+    name, parent = org_folders.delete(owner, "sites", fid)
+    if parent is None:
+        db.run("DELETE FROM site_folder_items WHERE node_id=? AND folder_id=?", (owner, fid))
+    else:
+        db.run("UPDATE site_folder_items SET folder_id=? WHERE node_id=? AND folder_id=?", (parent, owner, fid))
+    db.run("DELETE FROM project_folders WHERE id=?", (fid,))
+    ctx.audit("site.folder.delete", name)
+    return {"ok": True}
+
+
+@router.post("/traefik/site-folders/regroup")
+def regroup_sites(body: SiteRegroupBody, request: Request, ctx: NodeCtx = Depends(node_traefik)):
+    owner = _folder_owner(request, ctx)
+    """Range des sites (par nom de routeur) et/ou des dossiers dans un dossier, ou à la racine."""
+    ctx.need("sites.edit")
+    dest = org_folders.get(owner, "sites", body.folderId)["name"] if body.folderId is not None else "la racine"
+    items, _ = ctx.store.items()
+    visible = {i["name"] for i in scope_items(ctx.p, [dict(i) for i in items]) if i["kind"] == "routers" and i["proto"] == "http"}
+    unknown = [n for n in body.routers if n not in visible]
+    if unknown:
+        raise HTTPException(404, f"Site introuvable : {unknown[0]}")
+    moved = org_folders.move_folders(owner, "sites", body.folders, body.folderId)
+    for name in body.routers:
+        if body.folderId is None:
+            db.run("DELETE FROM site_folder_items WHERE node_id=? AND router=?", (owner, name))
+        else:
+            db.run("INSERT INTO site_folder_items(node_id,router,folder_id) VALUES(?,?,?) ON CONFLICT(node_id,router) DO UPDATE SET folder_id=excluded.folder_id", (owner, name, body.folderId))
+        moved += 1
+    if moved:
+        ctx.audit("site.folder.move", f"{moved} élément(s) → {dest}")
+    return {"moved": moved}
 
 
 @router.get("/traefik/live")

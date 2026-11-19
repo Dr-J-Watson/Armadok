@@ -98,3 +98,47 @@ def test_api_folders_and_auto_placement():
     client.delete("/api/traefik/item", headers=h, params={"proto": "http", "kind": "routers", "name": "dirtest"})
     client.delete("/api/traefik/file", headers=h, params={"path": "projets/dirtest.yml"})
     assert client.delete("/api/traefik/dir", headers=h, params={"path": "projets"}).status_code == 200
+
+
+def test_site_folders_organise_the_sites_list(tmp_path):
+    """Dossiers de sites : mêmes règles que les dossiers de projets, rangement par nom de routeur, indépendants des dossiers de projets."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.config import settings
+    c = TestClient(app)
+    from app import db
+    from app.nodes import node_out, store_for
+    old = None
+    try:
+        tok = c.post("/api/auth/login", json={"username": "root", "password": "admin-password-1"}).json()["access_token"]
+        nid = next(n["id"] for n in c.get("/api/nodes", headers={"Authorization": f"Bearer {tok}"}).json() if n["kind"] == "local")
+        h = {"Authorization": f"Bearer {tok}", "X-Node": nid}
+        st = store_for(node_out(db.one("SELECT * FROM nodes WHERE id=?", (nid,))))
+        st.upsert("http", "services", "s", {"loadBalancer": {"servers": [{"url": "http://x:1"}]}}, file="sf.yml")
+        for n in ("alpha", "beta"):
+            st.upsert("http", "routers", n, {"rule": f"Host(`{n}.example.com`)", "service": "s"}, file="sf.yml")
+        a = c.post("/api/traefik/site-folders", headers=h, json={"name": "Public", "description": "En ligne", "color": "blue"}).json()["id"]
+        b = c.post("/api/traefik/site-folders", headers=h, json={"name": "Interne", "parentId": a}).json()["id"]
+        assert c.post("/api/traefik/site-folders", headers=h, json={"name": "public"}).status_code == 409
+        r = c.get("/api/traefik/site-folders", headers=h).json()
+        assert {f["name"] for f in r["folders"]} == {"Public", "Interne"} and r["assign"] == {} and r["canManage"]
+        # un dossier de projets de même nom ne gêne pas, et n'apparaît pas ici
+        from app import org_folders; org_folders.create(nid, "projects", "t", "Public", "", "", None)
+        assert {f["name"] for f in c.get("/api/traefik/site-folders", headers=h).json()["folders"]} == {"Public", "Interne"}
+        rr = c.post("/api/traefik/site-folders/regroup", headers=h, json={"routers": ["alpha", "beta"], "folderId": b}); assert rr.status_code == 200, rr.text
+        assert c.get("/api/traefik/site-folders", headers=h).json()["assign"] == {"alpha": b, "beta": b}
+        assert c.post("/api/traefik/site-folders/regroup", headers=h, json={"routers": ["nope"], "folderId": b}).status_code == 404
+        assert c.post("/api/traefik/site-folders/regroup", headers=h, json={"folders": [a], "folderId": b}).status_code == 422   # pas de boucle
+        assert c.delete(f"/api/traefik/site-folders/{b}", headers=h).status_code == 200      # le contenu remonte
+        assert c.get("/api/traefik/site-folders", headers=h).json()["assign"] == {"alpha": a, "beta": a}
+        assert c.post("/api/traefik/site-folders/regroup", headers=h, json={"routers": ["alpha"], "folderId": None}).status_code == 200
+        assert c.get("/api/traefik/site-folders", headers=h).json()["assign"] == {"beta": a}
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException):
+            org_folders.get(nid, "projects", a)   # un dossier de sites n'est pas un dossier de projets
+        org_folders.delete(nid, "projects", org_folders.listing(nid, "projects")[0]["id"])
+        c.delete(f"/api/traefik/site-folders/{a}", headers=h)
+    finally:
+        for n in ("alpha", "beta"):
+            st.delete_item("http", "routers", n)
+        st.delete_item("http", "services", "s")

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ChevronRight, CornerLeftUp, Folder, FolderPlus, Home, Pencil, Trash2 } from 'lucide-react'
 import { Badge, Btn, Field, Modal } from './ui.jsx'
 
@@ -27,10 +28,10 @@ export function descendants(folders, id) {
 export function folderStats(folders, projects, id) {
   const ids = new Set([id, ...descendants(folders, id)])
   const ps = projects.filter((p) => ids.has(p.folderId))
-  return { total: ps.length, running: ps.filter((p) => p.status === 'running').length, partial: ps.filter((p) => p.status === 'partial').length, missing: ps.filter((p) => p.missing).length, sub: ids.size - 1 }
+  return { total: ps.length, running: ps.filter((p) => p.status === 'running').length, partial: ps.filter((p) => p.status === 'partial').length, stopped: ps.filter((p) => p.status === 'stopped').length, missing: ps.filter((p) => p.missing).length, sub: ids.size - 1 }
 }
 
-export function FolderTile({ f, st, canManage, dnd, onOpen, onEdit, onDelete }) {
+export function FolderTile({ f, st, canManage, dnd, onOpen, onEdit, onDelete, noun = 'projet' }) {
   const c = FOLDER_COLORS[f.color]
   return (
     <div className={'card folder-card' + (dnd.over ? ' drop-on' : '')} style={c ? { borderLeft: `4px solid ${c}` } : undefined} onClick={onOpen} {...dnd.props}>
@@ -40,9 +41,9 @@ export function FolderTile({ f, st, canManage, dnd, onOpen, onEdit, onDelete }) 
           <Btn small kind="ghost" icon title="Supprimer le dossier (son contenu remonte d'un niveau)" aria-label="Supprimer le dossier" onClick={(e) => { e.stopPropagation(); onDelete() }}><Trash2 size={13} /></Btn></span>}</div>
       {f.description && <div className="muted small folder-desc">{f.description}</div>}
       <div className="row wrap" style={{ gap: 5, marginTop: 'auto' }}>
-        <Badge>{st.total} projet{st.total > 1 ? 's' : ''}</Badge>
+        <Badge>{st.total} {noun}{st.total > 1 ? 's' : ''}</Badge>
         {st.sub > 0 && <Badge>{st.sub} sous-dossier{st.sub > 1 ? 's' : ''}</Badge>}
-        {st.running > 0 && <Badge kind="ok">{st.running} en marche</Badge>}
+        {st.running > 0 && noun !== 'site' && <Badge kind="ok">{st.running} en marche</Badge>}{st.stopped > 0 && noun === 'site' && <Badge kind="warn">{st.stopped} en pause</Badge>}
         {st.partial > 0 && <Badge kind="warn">{st.partial} partiel{st.partial > 1 ? 's' : ''}</Badge>}
         {st.missing > 0 && <Badge kind="err">{st.missing} introuvable{st.missing > 1 ? 's' : ''}</Badge>}
       </div>
@@ -95,13 +96,30 @@ export function FolderSelect({ folders, value, onChange, skip }) {
   )
 }
 
-export function MoveModal({ projects, folders, current, busy, onMove, onClose }) {
+export function MoveModal({ projects, folders, current, busy, onMove, onClose, noun = 'projet' }) {
   const [to, setTo] = useState(current ?? null)
   return (
-    <Modal small title={`Ranger ${projects.length > 1 ? `${projects.length} projets` : projects[0].name}`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} onClick={() => onMove(to)}>Ranger</Btn></>}>
+    <Modal small title={`Ranger ${projects.length > 1 ? `${projects.length} ${noun}s` : projects[0].name}`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} onClick={() => onMove(to)}>Ranger</Btn></>}>
       <Field label="Dans le dossier"><FolderSelect folders={folders} value={to} onChange={setTo} /></Field>
     </Modal>
   )
 }
 
-export { FolderPlus }
+// Navigation et glisser-déposer communs (projets, sites) : dossier courant dans l'adresse (?g=), onDrop({ kind, id }, dossierCible | null).
+export function useFolderNav({ folders, enabled, onDrop }) {
+  const [params, setParams] = useSearchParams(); const [over, setOver] = useState(null)
+  const byId = Object.fromEntries(folders.map((f) => [f.id, f]))
+  const cur = byId[Number(params.get('g'))] ? Number(params.get('g')) : null
+  const crumbs = []; for (let x = cur; x != null && crumbs.length < 20; x = byId[x]?.parentId ?? null) crumbs.unshift(byId[x])
+  const openFolder = (id) => { setOver(null); setParams((p) => { const n = new URLSearchParams(p); if (id == null) n.delete('g'); else n.set('g', String(id)); return n }) }
+  const dragOf = (kind, id) => (enabled ? { draggable: true, onDragStart: (e) => { e.dataTransfer.setData(MIME, JSON.stringify({ kind, id })); e.dataTransfer.effectAllowed = 'move' } } : {})
+  const dropFor = (target) => {
+    const key = target ?? 'root'
+    return { over: over === key, props: enabled ? {
+      onDragOver: (e) => { if (!e.dataTransfer.types.includes(MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
+      onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver((o) => (o === key ? null : o)) },
+      onDrop: (e) => { e.preventDefault(); setOver(null); let x; try { x = JSON.parse(e.dataTransfer.getData(MIME)) } catch { return } if (!x || (x.kind === 'folder' && x.id === target)) return; onDrop(x, target) } } : {} }
+  }
+  const parentOfCur = byId[cur]?.parentId != null && byId[byId[cur].parentId] ? byId[cur].parentId : null
+  return { cur, byId, crumbs, openFolder, dragOf, dropFor, parentOfCur, inCur: (fid) => (byId[fid] ? fid : null) === cur }
+}

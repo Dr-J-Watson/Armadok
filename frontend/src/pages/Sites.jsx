@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { NavLink, useSearchParams } from 'react-router-dom'
 import { useGo } from '../lib/nav.js'
 import SiteMenu from '../components/SiteMenu.jsx'
-import { Activity, ArrowRight, ExternalLink, Globe, LayoutGrid, List, Lock, Pause, Pencil, Play, Plus, Trash2, Unlink } from 'lucide-react'
+import { Activity, ArrowRight, ExternalLink, Globe, LayoutGrid, List, Lock, Pause, FolderInput, FolderPlus, Pencil, Play, Plus, Trash2, Unlink } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Copyable, Empty, Loading, SearchBox, Seg, Switch, useUi } from '../components/ui.jsx'
 import { usePersist } from '../lib/persist.js'
@@ -16,6 +16,7 @@ import { useMeta, useOverview } from './Traefik.jsx'
 import { extractHosts } from '../lib/util.js'
 import { useFeatures } from '../lib/features.js'
 import { humanOf, techName } from '../traefik/human.js'
+import { Breadcrumb, FolderModal, FolderTile, MoveModal, UpTile, folderStats, useFolderNav } from '../components/ProjectFolders.jsx'
 
 // Les routeurs que l'interface écrit elle-même (bannissements : zz-webui-…) ne sont pas des sites
 export const isManaged = (i) => /(^|\/)zz-webui-/.test(i.file || '')
@@ -82,6 +83,17 @@ function SitesOne({ openSite, openWizard }) {
   const certs = useQuery({ queryKey: ['certs'], queryFn: () => api.get('/traefik/certs'), staleTime: 60000, retry: false })
   const certOf = (r) => (certs.data?.configured ? certs.data.sites.find((c) => c.id === r.id) : null)
   const items = ov.data?.items || []
+  // Dossiers de sites : rangement de la liste (rien ne change dans Traefik). Vue filtrée d'un nœud qui publie par un autre Traefik : ses dossiers à lui.
+  const fq = useQuery({ queryKey: ['site-folders'], queryFn: () => api.get('/traefik/site-folders'), retry: false })
+  const [fmodal, setFmodal] = useState(null); const [moveS, setMoveS] = useState(null)
+  const folders = fq.data?.folders || []; const assign = fq.data?.assign || {}
+  const canFold = !!fq.data?.canManage
+  const inv = () => qc.invalidateQueries({ queryKey: ['site-folders'] })
+  const regroup = useMutation({ mutationFn: (b) => api.post('/traefik/site-folders/regroup', b), onSuccess: (r) => { inv(); setMoveS(null); if (r.moved) toast(`${r.moved} élément${r.moved > 1 ? 's' : ''} rangé${r.moved > 1 ? 's' : ''}`) }, onError: (e) => toast(e.message, 'err') })
+  const saveFolder = useMutation({ mutationFn: ({ id, ...b }) => (id ? api.put(`/traefik/site-folders/${id}`, b) : api.post('/traefik/site-folders', b)), onSuccess: () => { inv(); setFmodal(null) }, onError: (e) => toast(e.message, 'err') })
+  const delFolder = useMutation({ mutationFn: (id) => api.del(`/traefik/site-folders/${id}`), onSuccess: () => { inv(); toast('Dossier supprimé : son contenu est remonté d\'un niveau') }, onError: (e) => toast(e.message, 'err') })
+  const nav = useFolderNav({ folders, enabled: canFold, onDrop: (x, target) => regroup.mutate({ routers: x.kind === 'site' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) })
+  const folderOf = (r) => (nav.byId[assign[r.name]] ? assign[r.name] : null)
 
   useEffect(() => {
     const o = params.get('open')
@@ -97,6 +109,15 @@ function SitesOne({ openSite, openWizard }) {
   const shown = allSites.filter(FILTERS.find((f) => f[0] === flt)[2])
   const svcOf = (r) => items.find((i) => i.kind === 'services' && i.proto === 'http' && i.name === r.spec.service)
   const paused = routers.filter((r) => r.disabled).length
+  // Un filtre ou une recherche cherche dans tous les dossiers ; sinon on ne montre que le dossier courant. Les chiffres d'un dossier ne comptent que les sites VISIBLES ici (vue filtrée comprise).
+  const flat = !!q.trim() || flt !== 'all'
+  const vis = flat || folders.length === 0 ? shown : shown.filter((r) => folderOf(r) === nav.cur)
+  const needle = q.trim().toLowerCase()
+  const subFolders = flat && !needle ? [] : folders.filter((f) => (needle ? [f.name, f.description].some((x) => String(x || '').toLowerCase().includes(needle)) : (nav.byId[f.parentId] ? f.parentId : null) === nav.cur))
+  const showUp = !flat && nav.cur != null
+  const siteItems = routers.map((r) => ({ folderId: folderOf(r), status: r.disabled ? 'stopped' : 'running' }))
+  const askDelete = async (f) => { const st = folderStats(folders, siteItems, f.id); if (await confirm({ title: `Supprimer le dossier « ${f.name} » ?`, message: st.total || st.sub ? 'Ses sites et ses sous-dossiers remontent d\'un niveau. Aucun site n\'est supprimé.' : 'Le dossier est vide.', confirmLabel: 'Supprimer' })) delFolder.mutate(f.id) }
+  const dragS = (r) => nav.dragOf('site', r.name)
   const missing = (sync.data?.rows || []).filter((r) => r.status === 'missing' && r.canEdit)
 
   const del = async (r) => {
@@ -108,23 +129,31 @@ function SitesOne({ openSite, openWizard }) {
   return (
     <>
       <div className="page-head"><div><h1>Sites</h1><p>Chaque site relie une adresse, des protections{canManage && <> (<NavLink to="/middlewares">les gérer</NavLink>)</>} et un service.{paused > 0 && <> · <b>{paused}</b> en pause</>}</p></div>
+        {canFold && <Btn title="Créer un dossier pour ranger les sites" onClick={() => setFmodal({ parentId: nav.cur })}><FolderPlus size={14} /> Nouveau dossier</Btn>}
         {can('sites.create') && <Btn kind="primary" className="right" onClick={() => openWizard({})}><Plus size={15} /> Nouveau site</Btn>}</div>
       {missing.length > 0 && <div className="banner"><Unlink size={18} />{missing.length} adresse(s) n'ont pas d'enregistrement DNS chez OVH.<Btn small kind="primary" className="right" onClick={() => setAdd(missing)}><Plus size={13} /> Les ajouter</Btn></div>}
       <div className="row wrap" style={{ marginBottom: 14 }}><SearchBox value={q} onChange={setQ} placeholder="Chercher un site…" />
         <Seg options={FILTERS.filter((f) => f[0] === 'all' || counts[f[0]] > 0 || flt === f[0]).map(([id, label]) => ({ id, label: `${label}${id === 'all' ? '' : ' · ' + counts[id]}` }))} value={flt} onChange={setFlt} />
         <span className="right"><Seg options={[{ id: 'cards', label: <LayoutGrid size={14} />, hint: 'Cartes' }, { id: 'list', label: <List size={14} />, hint: 'Liste compacte' }]} value={view} onChange={setView} /></span></div>
-      {routers.length === 0 ? <div className="card"><Empty>Aucun site pour l'instant.{can('sites.create') && <><br /><Btn kind="primary" style={{ marginTop: 12 }} onClick={() => openWizard({})}><Plus size={14} /> Créer mon premier site</Btn></>}</Empty></div> : (
+      {(folders.length > 0 || nav.cur != null) && !flat && <Breadcrumb path={nav.crumbs} onOpen={nav.openFolder} dropFor={nav.dropFor} />}
+      {(subFolders.length > 0 || showUp) && <div className="project-grid folders">
+        {showUp && <UpTile parent={nav.byId[nav.parentOfCur]} dnd={nav.dropFor(nav.parentOfCur)} onOpen={() => nav.openFolder(nav.parentOfCur)} />}
+        {subFolders.map((f) => <FolderTile key={f.id} f={f} noun="site" st={folderStats(folders, siteItems, f.id)} canManage={canFold} dnd={{ ...nav.dropFor(f.id), props: { ...nav.dragOf('folder', f.id), ...nav.dropFor(f.id).props } }} onOpen={() => nav.openFolder(f.id)} onEdit={() => setFmodal({ folder: f })} onDelete={() => askDelete(f)} />)}
+      </div>}
+      {routers.length === 0 && !subFolders.length ? <div className="card"><Empty>Aucun site pour l'instant.{can('sites.create') && <><br /><Btn kind="primary" style={{ marginTop: 12 }} onClick={() => openWizard({})}><Plus size={14} /> Créer mon premier site</Btn></>}</Empty></div> : (
         shown.length === 0 ? <div className="card"><Empty>Aucun site ne correspond à ce filtre.<br /><Btn style={{ marginTop: 10 }} onClick={() => setFlt('all')}>Tout afficher</Btn></Empty></div>
+        : vis.length === 0 ? (subFolders.length === 0 ? <div className="muted" style={{ textAlign: 'center', padding: 18 }}>Ce dossier est vide.{canFold && ' Glissez-y des sites, ou utilisez le bouton « Ranger » d\'une carte.'}</div> : null)
         : view === 'list' ? (
         <div className="card flush"><table className="t"><thead><tr><th>Adresse</th><th>Destination</th><th>Protections</th><th>État</th><th /></tr></thead><tbody>
-          {shown.map((r) => { const hosts = extractHosts(r.spec.rule); const svc = svcOf(r); const targets = svc?.spec?.loadBalancer?.servers?.map((x) => x.url).filter(Boolean) || []; const c = certOf(r)
+          {vis.map((r) => { const hosts = extractHosts(r.spec.rule); const svc = svcOf(r); const targets = svc?.spec?.loadBalancer?.servers?.map((x) => x.url).filter(Boolean) || []; const c = certOf(r)
             return (
-              <tr key={r.id} className="click" onClick={() => !r.disabled && openSite(r)} style={{ opacity: r.disabled ? .55 : 1 }}>
+              <tr key={r.id} className="click" onClick={() => !r.disabled && openSite(r)} style={{ opacity: r.disabled ? .55 : 1 }} {...dragS(r)}>
                 <td><Copyable text={hosts[0] || r.name}><b>{hosts[0] || r.name}</b></Copyable>{hosts.length > 1 && <Badge> +{hosts.length - 1}</Badge>}</td>
                 <td className="mono small"><span className="ellipsis" style={{ maxWidth: 240, display: 'inline-block' }}>{targets.join(', ') || r.spec.service}</span></td>
                 <td>{(r.spec.middlewares || []).length === 0 ? <Badge kind="warn"><Lock size={11} /> aucune</Badge> : <span className="small">{r.spec.middlewares.slice(0, 2).join(', ')}{r.spec.middlewares.length > 2 ? ` +${r.spec.middlewares.length - 2}` : ''}</span>}</td>
                 <td><div className="row wrap" style={{ gap: 4 }}>{r.disabled && <Badge kind="warn"><Pause size={10} /> pause</Badge>}{dnsMissing(r) && <Badge kind="warn">DNS manquant</Badge>}{c && !r.disabled && c.worst === 'missing' && <Badge kind="warn">sans certificat</Badge>}{c && !r.disabled && ['expired', 'expiring'].includes(c.worst) && <Badge kind="err">certificat</Badge>}</div></td>
                 <td className="actions" onClick={(e) => e.stopPropagation()}>
+                  {canFold && <Btn small kind="ghost" icon title="Ranger dans un dossier" aria-label="Ranger dans un dossier" onClick={() => setMoveS([r])}><FolderInput size={14} /></Btn>}
                   {r.editable && !r.disabled && can('sites.toggle') && <Switch value title="Mettre ce site en pause" busy={busy} onChange={() => toggle({ ids: [r.id], enable: false, label: `« ${hosts[0] || r.name} »` })} />}
                   {r.editable && r.disabled && can('sites.toggle') && <Btn small kind="primary" busy={busy} onClick={() => toggle({ ids: [r.id], enable: true, label: `« ${hosts[0] || r.name} »` })}><Play size={13} /> Reprendre</Btn>}
                   <SiteMenu site={r} host={hosts[0]} dnsRow={(hosts.map((h) => dnsOf[h]).filter(Boolean))[0]} statsService={statsOn && !r.disabled ? r.spec.service : null} canCerts={can('certs.view')} canDuplicate={can('sites.create')} onDuplicate={() => openWizard({ from: r })} />
@@ -132,15 +161,16 @@ function SitesOne({ openSite, openWizard }) {
               </tr>) })}</tbody></table></div>
         ) : (
         <div className="site-grid">
-          {shown.map((r) => {
+          {vis.map((r) => {
             const hosts = extractHosts(r.spec.rule); const svc = svcOf(r)
             const targets = svc?.spec?.loadBalancer?.servers?.map((s) => s.url).filter(Boolean) || []
             const st = hosts.map((h) => dnsOf[h]).filter(Boolean)
             return (
-              <div className={'card site ' + (r.disabled ? 'off' : '')} key={r.id} onClick={() => !r.disabled && openSite(r)}>
+              <div className={'card site ' + (r.disabled ? 'off' : '')} key={r.id} onClick={() => !r.disabled && openSite(r)} {...dragS(r)}>
                 <div className="row"><Globe size={16} className="muted" /><Copyable text={hosts[0] || r.name} className="grow"><b className="ellipsis">{hosts[0] || r.name}</b></Copyable>{r.disabled && <Badge kind="warn"><Pause size={10} /> en pause</Badge>}{hosts.length > 1 && <Badge>+{hosts.length - 1}</Badge>}
                   {statsOn && r.spec.service && !r.disabled && <a className="stat-link" href={`/monitoring?tab=services&service=${encodeURIComponent(r.spec.service)}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); go(`/monitoring?tab=services&service=${encodeURIComponent(r.spec.service)}`) }} title="Statistiques de ce site (trafic, erreurs, lenteur)"><Activity size={14} /></a>}
                   {hosts[0] && <a href={`https://${hosts[0]}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} title="Ouvrir"><ExternalLink size={14} /></a>}
+                  {canFold && <Btn small kind="ghost" icon title="Ranger dans un dossier (ou glissez la carte sur un dossier)" aria-label="Ranger dans un dossier" onClick={(e) => { e.stopPropagation(); setMoveS([r]) }}><FolderInput size={14} /></Btn>}
                   <SiteMenu site={r} host={hosts[0]} dnsRow={st[0]} statsService={statsOn && !r.disabled ? r.spec.service : null} canCerts={can('certs.view')} canDuplicate={can('sites.create')} onDuplicate={() => openWizard({ from: r })} /></div>
                 <div className="muted small mono rule" title={r.spec.rule}>{r.spec.rule}</div>
                 <div className="row wrap mws" style={{ gap: 5 }}>
@@ -167,6 +197,8 @@ function SitesOne({ openSite, openWizard }) {
           })}
         </div>
       ))}
+      {fmodal && <FolderModal folder={fmodal.folder} parentId={fmodal.parentId} folders={folders} busy={saveFolder.isPending} onClose={() => setFmodal(null)} onSave={(b) => saveFolder.mutate({ id: fmodal.folder?.id, ...b })} />}
+      {moveS && <MoveModal noun="site" projects={moveS.map((r) => ({ id: r.name, name: extractHosts(r.spec.rule)[0] || r.name }))} folders={folders} current={folderOf(moveS[0])} busy={regroup.isPending} onClose={() => setMoveS(null)} onMove={(to) => regroup.mutate({ routers: moveS.map((r) => r.name), folderId: to })} />}
       {add && <MissingDns rows={add} onClose={() => setAdd(null)} />}
     </>
   )

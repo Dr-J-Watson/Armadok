@@ -63,3 +63,31 @@ def test_scope_keeps_only_routers_of_the_node_and_what_they_use():
     assert sorted(i["id"] for i in out) == ["http/middlewares/m1", "http/middlewares/m3", "http/routers/a", "http/services/sa"]      # b, sb, m2 : pas à ce nœud ; m3 : utilisé par m1
     full = ts.scope_items(Principal(**{**p.__dict__, "scope_routers": None}), [dict(i) for i in items])
     assert len(full) == len(items)
+
+
+def test_site_folders_follow_the_scope_of_the_node_that_publishes_through_another_traefik(pj):
+    """Un nœud qui publie par le Traefik d'un autre voit SES sites dans SES dossiers ; la vue complète de ce Traefik a les siens."""
+    h = pj["h"]
+    main = next(n for n in client.get("/api/nodes", headers=h).json() if n["kind"] == "local")
+    wid = client.post("/api/nodes", headers=h, json={"name": "PC-dossiers"}).json()["id"]
+    other = client.post("/api/nodes", headers=h, json={"name": "Autre"}).json()["id"]
+    client.put(f"/api/nodes/{wid}", headers=h, json={"traefikVia": main["id"]})
+    scoped = {**h, "X-Node": main["id"], "X-Node-Scope": wid}
+    full = {**h, "X-Node": main["id"]}
+    f = client.post("/api/traefik/site-folders", headers=scoped, json={"name": "Maison"})
+    assert f.status_code == 200, f.text
+    assert [x["name"] for x in client.get("/api/traefik/site-folders", headers=scoped).json()["folders"]] == ["Maison"]
+    g = client.get("/api/traefik/site-folders", headers=scoped).json()
+    assert g["scoped"] is True
+    v = client.get("/api/traefik/site-folders", headers=full).json()
+    assert v["folders"] == [] and v["scoped"] is False                                                   # la vue complète n'hérite pas
+    client.post("/api/traefik/site-folders", headers=full, json={"name": "Maison"})                       # même nom, autre espace : permis
+    assert client.post("/api/traefik/site-folders", headers=scoped, json={"name": "maison"}).status_code == 409
+    # un site hors du périmètre de ce nœud ne peut pas y être rangé
+    assert client.post("/api/traefik/site-folders/regroup", headers=scoped, json={"routers": ["inconnu"], "folderId": f.json()["id"]}).status_code == 404
+    # un nœud qui ne publie pas par ce Traefik ne peut pas viser ses dossiers
+    assert client.get("/api/traefik/site-folders", headers={**h, "X-Node": main["id"], "X-Node-Scope": other}).status_code == 403
+    for name, hh in (("Maison", scoped), ("Maison", full)):
+        for x in client.get("/api/traefik/site-folders", headers=hh).json()["folders"]:
+            client.delete(f"/api/traefik/site-folders/{x['id']}", headers=hh)
+    db.run("DELETE FROM nodes WHERE id IN (?,?)", (wid, other))

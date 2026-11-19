@@ -14,7 +14,7 @@ import { useNode, useNodeList } from '../node.jsx'
 import { NodeChip } from '../components/NodeSwitcher.jsx'
 import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
 import NewProject from '../components/NewProject.jsx'
-import { Breadcrumb, FolderModal, FolderTile, MIME, MoveModal, UpTile, folderStats } from '../components/ProjectFolders.jsx'
+import { Breadcrumb, FolderModal, FolderTile, MoveModal, UpTile, folderStats, useFolderNav } from '../components/ProjectFolders.jsx'
 
 export const STATUS = { running: ['En marche', 'ok'], partial: ['Partiel', 'warn'], stopped: ['Arrêté', ''], absent: ['Non démarré', ''] }
 export const SVC_DOT = { running: 'var(--ok)', partial: 'var(--warn)', stopped: 'var(--muted)', absent: 'var(--border)' }
@@ -36,7 +36,7 @@ export default function Projects() {
   const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false); const [newp, setNewp] = useState(false)
   const { toast, confirm } = useUi(); const qc = useQueryClient()
   // Dossiers d'organisation : dossier courant dans l'adresse (?g=), glisser-déposer, fenêtres de création / rangement
-  const [over, setOver] = useState(null); const [fmodal, setFmodal] = useState(null); const [moveP, setMoveP] = useState(null)
+  const [fmodal, setFmodal] = useState(null); const [moveP, setMoveP] = useState(null)
   const regroup = useMutation({ mutationFn: (b) => api.post('/projects/regroup', b), onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['projects'] }); setMoveP(null); if (r.moved) toast(`${r.moved} élément${r.moved > 1 ? 's' : ''} rangé${r.moved > 1 ? 's' : ''}`) }, onError: (e) => toast(e.message, 'err') })
   const saveFolder = useMutation({ mutationFn: ({ id, ...b }) => (id ? api.put(`/projects/folders/${id}`, b) : api.post('/projects/folders', b)), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); setFmodal(null) }, onError: (e) => toast(e.message, 'err') })
   const delFolder = useMutation({ mutationFn: (id) => api.del(`/projects/folders/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Dossier supprimé : son contenu est remonté d\'un niveau') }, onError: (e) => toast(e.message, 'err') })
@@ -48,17 +48,11 @@ export default function Projects() {
   if (list.error) return <div className="banner err">{list.error.message}</div>
   const d = list.data; const needle = q.trim().toLowerCase()
   const hit = (p) => !needle || [p.name, p.path, ...(p.tags || []), ...(p.hosts || []), ...p.services.map((s) => s.name), ...p.services.map((s) => s.image)].some((x) => String(x || '').toLowerCase().includes(needle))
-  const folders = raw.full ? [] : d.folders || []; const byId = Object.fromEntries(folders.map((f) => [f.id, f]))
-  const cur = byId[Number(params.get('g'))] ? Number(params.get('g')) : null
-  const fid = (p) => (byId[p.folderId] ? p.folderId : null)
+  const folders = raw.full ? [] : d.folders || []
   const canMove = !raw.full && d.canImport && tab === 'managed'
-  const crumbs = []; for (let x = cur; x != null && crumbs.length < 20; x = byId[x]?.parentId ?? null) crumbs.unshift(byId[x])
-  const openFolder = (id) => { setOver(null); setParams(id == null ? {} : { g: String(id) }) }
-  const dragOf = (kind, id) => (canMove ? { draggable: true, onDragStart: (e) => { e.dataTransfer.setData(MIME, JSON.stringify({ kind, id })); e.dataTransfer.effectAllowed = 'move' } } : {})
-  const dropFor = (target) => { const key = target ?? 'root'; return { over: over === key, props: canMove ? {
-    onDragOver: (e) => { if (!e.dataTransfer.types.includes(MIME)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; if (over !== key) setOver(key) },
-    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver((o) => (o === key ? null : o)) },
-    onDrop: (e) => { e.preventDefault(); setOver(null); let x; try { x = JSON.parse(e.dataTransfer.getData(MIME)) } catch { return } if (!x || (x.kind === 'folder' && x.id === target)) return; regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) } } : {} } }
+  const nav = useFolderNav({ folders, enabled: canMove, onDrop: (x, target) => regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) })
+  const { byId, cur, crumbs, openFolder, dragOf, dropFor } = nav
+  const fid = (p) => (byId[p.folderId] ? p.folderId : null)
   const nested = !needle && tab === 'managed' && !raw.full
   const rows = d[tab].filter(hit).filter((p) => tab !== 'managed' || raw.full || needle || fid(p) === cur)
   const subFolders = tab !== 'managed' || raw.full ? [] : folders.filter((f) => (needle ? [f.name, f.description].some((x) => String(x || '').toLowerCase().includes(needle)) : (byId[f.parentId] ? f.parentId : null) === cur))
