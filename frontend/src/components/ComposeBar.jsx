@@ -1,12 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Download, FileStack, MoreHorizontal, Play, Power, RotateCw, Square } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, FileStack, MoreHorizontal, Play, Power, Rocket, RotateCw, Square } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Modal, useUi } from './ui.jsx'
 import { stripAnsi } from '../lib/docker.js'
 
 const TITLES = { make: 'Commande du Makefile', 'git-pull': 'Récupération des changements (git pull)', 'git-fetch': 'Interrogation du dépôt', 'git-checkout': 'Changement de version', 'git-clone': 'Clonage du dépôt', up: 'Déploiement', recreate: 'Recréation', down: 'Arrêt et suppression des conteneurs', restart: 'Redémarrage', stop: 'Arrêt', start: 'Démarrage', pull: 'Téléchargement des images', build: 'Construction des images', config: 'Configuration résolue', ps: 'État' }
+
+// Petits boutons d'action d'UN service (selon son état) : chaque commande ne vise que lui (docker compose <action> <service>).
+export function ServiceActions({ id, svc, perms, onDone }) {
+  const { toast } = useUi(); const [job, setJob] = useState(null)
+  const run = useMutation({ mutationFn: (action) => api.post(`/projects/${id}/compose`, { action, services: [svc.name] }), onSuccess: (r, action) => setJob({ ...r, action }), onError: (e) => toast(e.message, 'err') })
+  if (!perms.deploy) return null
+  const st = svc.done ? 'done' : svc.state
+  const REDEPLOY = ['up', Rocket, 'Redéployer ce service : applique le fichier compose et recrée le conteneur si sa configuration ou son image a changé']
+  const items = st === 'running' ? [['restart', RotateCw, 'Redémarrer ce service (sans le recréer)'], ['stop', Square, 'Arrêter ce service (son conteneur est gardé)'], REDEPLOY]
+    : st === 'partial' ? [['start', Play, 'Démarrer les conteneurs arrêtés de ce service'], ['restart', RotateCw, 'Redémarrer ce service'], ['stop', Square, 'Arrêter ce service'], REDEPLOY]
+    : st === 'stopped' ? [['start', Play, 'Démarrer ce service'], REDEPLOY]
+    : st === 'done' ? [['up', Play, 'Relancer ce service (il s\'est terminé)']]
+    : [['up', Play, 'Déployer ce service (créer et démarrer son conteneur)']]
+  return (
+    <>
+      {items.map(([action, Icon, tip]) => <Btn key={action} small kind="ghost" title={tip} aria-label={tip} disabled={run.isPending} onClick={() => run.mutate(action)}><Icon size={14} /></Btn>)}
+      {job && <JobOutput id={id} job={job} onClose={() => { setJob(null); onDone?.() }} />}
+    </>
+  )
+}
 
 // Boutons d'action d'un projet (docker compose) ; chaque commande s'exécute en tâche de fond et sa sortie s'affiche en direct.
 export default function ComposeBar({ id, perms, onDone, compose, chipSlot }) {

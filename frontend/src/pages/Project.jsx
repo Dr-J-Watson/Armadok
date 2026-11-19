@@ -5,7 +5,7 @@ import { Activity, Boxes, FileStack, SquareTerminal, Terminal, ExternalLink, Fil
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
-import ComposeBar from '../components/ComposeBar.jsx'
+import ComposeBar, { ServiceActions } from '../components/ComposeBar.jsx'
 import ProjectFiles from '../components/ProjectFiles.jsx'
 import ProjectGit from '../components/ProjectGit.jsx'
 import ProjectMake from '../components/ProjectMake.jsx'
@@ -60,7 +60,7 @@ export default function Project() {
               {p.services.map((x) => <tr key={x.name}><td><b>{x.name}</b>{x.profiles.length > 0 && <Badge style={{ marginLeft: 6 }} title="Démarré seulement avec ce profil">profil {x.profiles.join(', ')}</Badge>}</td>
                 <td><span className="row" style={{ gap: 6 }}><i className="dot" style={{ background: svcDot(x) }} />{svcLabel(x)}</span></td><td className="small">{x.image || (x.build ? 'build local' : '—')}</td>
                 {tf && <td>{x.hosts.length ? <div className="row wrap" style={{ gap: 4 }}>{x.hosts.slice(0, 2).map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer"><Globe size={11} /> {h}</a>)}</div> : <span className="muted">—</span>}</td>}
-                <td className="actions">{x.containers[0] && <Btn title="Ouvrir la fiche du conteneur" small kind="ghost" onClick={() => set({ c: x.containers[0].name, ct: null })}>Détails</Btn>}{x.containers[0] && p.perms.logs && <Btn small kind="ghost" onClick={() => set({ tab: 'logs', lc: x.containers[0].name })}>Logs</Btn>}</td></tr>)}
+                <td className="actions"><ServiceActions id={id} svc={x} perms={p.perms} onDone={() => q.refetch()} />{x.containers[0] && <Btn title="Ouvrir la fiche du conteneur" small kind="ghost" onClick={() => set({ c: x.containers[0].name, ct: null })}>Détails</Btn>}{x.containers[0] && p.perms.logs && <Btn small kind="ghost" onClick={() => set({ tab: 'logs', lc: x.containers[0].name })}>Logs</Btn>}</td></tr>)}
               {p.services.length === 0 && <tr><td colSpan={5} className="muted">{p.error || 'Aucun service dans ce fichier compose.'}</td></tr>}</tbody></table></div>
             {(p.perms.import || p.perms.delete) && <div className="card flush">
               {p.perms.import && p.perms.files && <div className="row" style={{ padding: '12px 16px', gap: 10 }}><span className="muted small grow">Garder ce projet comme modèle (fichiers choisis, secrets vidés) pour en créer d'autres en quelques clics.</span><span className="row" style={{ gap: 6 }}><Btn small title="Enregistre les fichiers de ce projet comme modèle réutilisable" onClick={() => setTpl(true)}><FileStack size={13} /> Enregistrer comme modèle</Btn><Btn small kind="ghost" title="Renommer, décrire, partager ou supprimer vos modèles" onClick={() => setMtpl(true)}>Gérer les modèles</Btn></span></div>}
