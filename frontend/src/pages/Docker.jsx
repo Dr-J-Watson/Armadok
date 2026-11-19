@@ -152,21 +152,40 @@ function Networks({ q, can, onOpen, params, setParams }) {
   )
 }
 
+const VKIND = { named: ['Nommé', '', 'Volume Docker nommé (créé par compose ou « docker volume create »)'], anonymous: ['Anonyme', 'warn', 'Volume sans nom (identifiant aléatoire), créé automatiquement par une image : facile à perdre de vue, souvent orphelin'], bind: ['Dossier monté', 'info', 'Dossier de l\'hôte monté dans un conteneur (« bind mount ») : Docker ne le gère pas, il n\'a ni suppression ni nettoyage ici'] }
+const vkind = (v) => v.kind || (/^[0-9a-f]{64}$/.test(v.name) ? 'anonymous' : 'named')
+const vproject = (v) => v.project ?? v.labels['com.docker.compose.project'] ?? ''
+
+function VolumeUsers({ v, onOpen }) {
+  if (!v.mounts?.length) return <UsedBy names={v.usedBy} onOpen={onOpen} />
+  return <div className="col" style={{ gap: 3 }}>{v.mounts.slice(0, 4).map((m, i) => <div key={i} className="row wrap" style={{ gap: 6 }}>
+    <Badge style={{ cursor: 'pointer' }} onClick={() => onOpen(m.container)}>{m.container}</Badge><span className="muted small mono" title="Chemin dans le conteneur">→ {m.destination}</span>{!m.rw && <Badge kind="warn" title="Monté en lecture seule">lecture seule</Badge>}</div>)}
+    {v.mounts.length > 4 && <span className="muted small">+{v.mounts.length - 4}</span>}</div>
+}
+
 function Volumes({ q, can, onOpen, params, setParams }) {
-  const { node, setNode } = useNode(); const detail = params.get('vo')
+  const { node, setNode } = useNode(); const detail = params.get('vo'); const [tf, setTf] = useState('all')
   const setDetail = (v, from) => { if (from && from.id !== node.id) setNode(from.id); const n = new URLSearchParams(params); if (v) n.set('vo', v); else n.delete('vo'); setParams(n, { replace: !v }) }
   const list = useNodeList('docker-volumes', '/docker/volumes', (d) => d.volumes, { eligible: dockerNode })
   const remove = useRemove('volumes', 'docker-volumes', 'Volume'); const prune = usePrune('volumes', 'volumes inutilisés')
   const needle = q.trim().toLowerCase()
-  const rows = list.rows.filter((v) => !needle || [v.name, v.driver, ...v.usedBy, v.labels['com.docker.compose.project']].some((x) => String(x || '').toLowerCase().includes(needle)))
+  const count = (k) => list.rows.filter((v) => vkind(v) === k).length
+  const rows = list.rows.filter((v) => (tf === 'all' || vkind(v) === tf) && (!needle || [v.name, v.driver, vproject(v), ...v.usedBy, ...(v.mounts || []).map((m) => m.destination)].some((x) => String(x || '').toLowerCase().includes(needle))))
   if (list.isLoading) return <Loading />
   if (list.error) return <div className="banner err">{list.error.message}</div>
   return (
     <div className="col">
-      <div className="row"><span className="muted grow">{rows.length} volume{rows.length > 1 ? 's' : ''}</span>{can('docker.remove') && !list.full && <Btn small kind="ghost" title="Supprimer les volumes qu'aucun conteneur n'utilise : leurs DONNÉES sont perdues" onClick={() => prune(false, 'Tous les volumes qu\'aucun conteneur n\'utilise sont supprimés AVEC LEURS DONNÉES. Irréversible.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
-      <div className="card flush"><table className="t"><thead><tr>{list.full && <th>Nœud</th>}<th>Nom</th><th>Projet</th><th>Utilisé par</th><th>Créé</th><th /></tr></thead><tbody>
-        {rows.map((v) => <tr key={nkey(v, v.name)} style={{ cursor: 'pointer' }} title="Voir le détail du volume et son contenu" onClick={() => setDetail(v.name, v._node)}>{list.full && <td><NodeChip node={v._node} /></td>}<td><Copyable text={v.name}><b className="mono small">{v.name.length > 40 ? v.name.slice(0, 38) + '…' : v.name}</b></Copyable></td><td>{v.labels['com.docker.compose.project'] ? <Badge>{v.labels['com.docker.compose.project']}</Badge> : <span className="muted">—</span>}</td><td><UsedBy names={v.usedBy} onOpen={onOpen} /></td><td className="muted small">{v.created ? v.created.slice(0, 10) : '—'}</td>
-          <td className="actions" onClick={(e) => e.stopPropagation()}>{can('docker.remove') && !list.full && !v.usedBy.length && <Btn small kind="ghost" title="Supprimer ce volume et ses données" onClick={() => remove(v.name, 'Le volume est supprimé AVEC SES DONNÉES. Irréversible.')}><Trash2 size={13} /></Btn>}</td></tr>)}</tbody></table></div>
+      <div className="row wrap" style={{ gap: 8 }}><span className="muted grow">{rows.length} élément{rows.length > 1 ? 's' : ''}</span>
+        <select className="select" value={tf} onChange={(e) => setTf(e.target.value)} aria-label="Type de volume" style={{ width: 'auto' }}>
+          <option value="all">Tous les types ({list.rows.length})</option><option value="named">Nommés ({count('named')})</option><option value="anonymous">Anonymes ({count('anonymous')})</option><option value="bind">Dossiers montés ({count('bind')})</option></select>
+        {can('docker.remove') && !list.full && <Btn small kind="ghost" title="Supprimer les volumes qu'aucun conteneur n'utilise : leurs DONNÉES sont perdues (les dossiers montés ne sont jamais touchés)" onClick={() => prune(false, 'Tous les volumes qu\'aucun conteneur n\'utilise sont supprimés AVEC LEURS DONNÉES. Irréversible.')}><Sparkles size={13} /> Nettoyer</Btn>}</div>
+      <div className="card flush"><table className="t"><thead><tr>{list.full && <th>Nœud</th>}<th>Nom</th><th>Type</th><th>Projet</th><th>Utilisé par</th><th>Créé</th><th /></tr></thead><tbody>
+        {rows.map((v) => { const k = vkind(v); const [kl, kk, kt] = VKIND[k]; const bind = k === 'bind'
+          return <tr key={nkey(v, k + v.name)} style={bind ? undefined : { cursor: 'pointer' }} title={bind ? undefined : 'Voir le détail du volume et son contenu'} onClick={() => !bind && setDetail(v.name, v._node)}>{list.full && <td><NodeChip node={v._node} /></td>}
+            <td><Copyable text={v.name}><b className="mono small" title={v.name}>{v.name.length > 40 ? v.name.slice(0, 38) + '…' : v.name}</b></Copyable></td>
+            <td><span className="row wrap" style={{ gap: 4 }}><Badge kind={kk} title={kt}>{kl}</Badge>{v.driver && v.driver !== 'local' && <Badge title="Pilote du volume (stockage distant ou plugin)">{v.driver}</Badge>}{v.options?.type && <Badge title="Type de système de fichiers">{v.options.type}</Badge>}</span></td>
+            <td>{vproject(v) ? <Badge>{vproject(v)}</Badge> : <span className="muted">—</span>}</td><td onClick={(e) => e.stopPropagation()}><VolumeUsers v={v} onOpen={onOpen} />{!v.usedBy.length && <span className="muted">inutilisé</span>}</td><td className="muted small">{v.created ? v.created.slice(0, 10) : '—'}</td>
+            <td className="actions" onClick={(e) => e.stopPropagation()}>{can('docker.remove') && !list.full && !bind && !v.usedBy.length && <Btn small kind="ghost" title="Supprimer ce volume et ses données" onClick={() => remove(v.name, 'Le volume est supprimé AVEC SES DONNÉES. Irréversible.')}><Trash2 size={13} /></Btn>}</td></tr> })}</tbody></table></div>
       {detail && <VolumeModal name={detail} onClose={() => setDetail(null)} onOpenContainer={(n) => { setDetail(null); onOpen(n) }} />}
     </div>
   )

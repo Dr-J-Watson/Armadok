@@ -120,6 +120,8 @@ def test_images_networks_volumes_and_prune(dk):
     assert client.delete("/api/docker/networks/bridge", headers=h).status_code == 409
     vols = {v["name"]: v for v in client.get("/api/docker/volumes", headers=h).json()["volumes"]}
     assert vols["site_data"]["usedBy"] == ["web-1"] and vols["orphan"]["usedBy"] == [] and vols["orphan"]["labels"] == {}
+    assert vols["site_data"]["kind"] == "named" and vols["site_data"]["project"] == "site" and vols["site_data"]["mounts"] == [{"container": "web-1", "destination": "/data", "rw": True, "project": "site"}]
+    assert vols["/srv/site/conf"]["kind"] == "bind" and vols["/srv/site/conf"]["usedBy"] == ["web-1"] and vols["/srv/site/conf"]["mounts"][0]["rw"] is False and vols["/srv/site/conf"]["project"] == "site"
     assert client.delete("/api/docker/volumes/orphan", headers=h).status_code == 200
     assert client.delete("/api/docker/images/img9zzzzzzzz", headers=h).status_code == 200
     assert client.post("/api/docker/prune", headers=h, json={"what": "images"}).json() == {"deleted": 2, "spaceReclaimed": 123}

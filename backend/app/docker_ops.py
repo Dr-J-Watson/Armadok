@@ -207,16 +207,38 @@ def d_networks(_a: dict) -> dict:
     return {"networks": sorted(out, key=lambda n: n["name"])}
 
 
+_ANON = re.compile(r"^[0-9a-f]{64}$")
+
+
 def d_volumes(_a: dict) -> dict:
-    users: dict[str, list[str]] = {}
+    """Volumes Docker (nommés ou anonymes) + dossiers de l'hôte montés dans des conteneurs (« bind »), que Docker ne liste pas comme volumes."""
+    uses: dict[tuple, list[dict]] = {}
     for c in _list(True):
         for m in c["mounts"]:
-            if m["type"] == "volume" and m["name"]:
-                users.setdefault(m["name"], []).append(c["name"])
+            kind = m["type"]
+            key = (kind, m["name"] if kind == "volume" else m["source"])
+            if kind in ("volume", "bind") and key[1]:
+                uses.setdefault(key, []).append({"container": c["name"], "destination": m["destination"] or "", "rw": m["rw"], "project": c["project"]})
+
+    def users(key):
+        return sorted({u["container"] for u in uses.get(key, [])})
+
+    def project(key, labels):
+        return labels.get("com.docker.compose.project") or next((u["project"] for u in uses.get(key, []) if u["project"]), "")
     vols = (api.request("GET", "/volumes") or {}).get("Volumes") or []
-    return {"volumes": sorted(({"name": v.get("Name") or "", "driver": v.get("Driver") or "", "mountpoint": v.get("Mountpoint") or "", "created": v.get("CreatedAt") or "",
-                                "labels": {k: x for k, x in (v.get("Labels") or {}).items() if k.startswith("com.docker.compose.")}, "usedBy": sorted(users.get(v.get("Name") or "", []))}
-                               for v in vols), key=lambda v: v["name"])}
+    out = []
+    for v in vols:
+        name = v.get("Name") or ""
+        labels = {k: x for k, x in (v.get("Labels") or {}).items() if k.startswith("com.docker.compose.")}
+        key = ("volume", name)
+        out.append({"name": name, "kind": "anonymous" if _ANON.match(name) else "named", "driver": v.get("Driver") or "", "scope": v.get("Scope") or "", "mountpoint": v.get("Mountpoint") or "",
+                    "created": v.get("CreatedAt") or "", "labels": labels, "project": project(key, labels), "options": v.get("Options") or {}, "usedBy": users(key),
+                    "mounts": uses.get(key, [])})
+    out.sort(key=lambda v: v["name"])
+    binds = [{"name": key[1], "kind": "bind", "driver": "", "scope": "", "mountpoint": key[1], "created": "", "labels": {}, "project": project(key, {}), "options": {}, "usedBy": users(key), "mounts": us}
+             for key, us in uses.items() if key[0] == "bind"]
+    binds.sort(key=lambda v: v["name"])
+    return {"volumes": out + binds}
 
 
 def d_remove_image(a: dict) -> dict:

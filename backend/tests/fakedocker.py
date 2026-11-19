@@ -22,7 +22,7 @@ class FakeDocker:
                                  "Ports": [{"IP": "0.0.0.0", "PrivatePort": 80, "PublicPort": 8080, "Type": "tcp"}, {"IP": "::", "PrivatePort": 80, "PublicPort": 8080, "Type": "tcp"}],
                                  "Labels": {"com.docker.compose.project": "site", "com.docker.compose.service": "web", "com.docker.compose.project.working_dir": "/srv/site", "secret.label": "x"},
                                  "NetworkSettings": {"Networks": {"proxy": {"IPAddress": "172.20.0.5", "Aliases": ["web", "web-1"]}}},
-                                 "Mounts": [{"Type": "volume", "Name": "site_data", "Source": "/var/lib/docker/volumes/site_data/_data", "Destination": "/data", "RW": True}]},
+                                 "Mounts": [{"Type": "volume", "Name": "site_data", "Source": "/var/lib/docker/volumes/site_data/_data", "Destination": "/data", "RW": True}, {"Type": "bind", "Name": "", "Source": "/srv/site/conf", "Destination": "/etc/site", "RW": False}]},
             "bbbbbbbbbbbb2222": {"Id": "bbbbbbbbbbbb2222", "Names": ["/blog"], "Image": "ghost:5", "ImageID": "sha256:img2bbbbbbbbbb", "State": "running", "Status": "Up 1 hour", "Created": 1700000100,
                                  "Ports": [], "Labels": {"traefik.http.routers.blog.rule": "Host(`blog.example.org`)", "traefik.http.services.blog.loadbalancer.server.port": "2368"},
                                  "NetworkSettings": {"Networks": {"proxy": {"IPAddress": "172.20.0.6", "Aliases": []}}}, "Mounts": []},
