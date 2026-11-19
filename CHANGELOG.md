@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.8.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.7.0...v1.8.0) (2026-11-19)
+
+
+### Nouveautés
+
+* boutons d'action par service dans un projet (redémarrer, arrêter, démarrer, redéployer selon l'état), en icônes avec infobulle ([f7b6a07](https://github.com/Dr-J-Watson/Armadok/commit/f7b6a07f12db75aa37af8de18d3776100a386f6b))
+* limite de bannissements d'IP portée à 2000 par défaut, réglable par nœud depuis l'onglet Bannies, avec un compteur ([2006d34](https://github.com/Dr-J-Watson/Armadok/commit/2006d34228cc292abe90c79a41cf9a6d5d00d84e))
+* liste des bannies avec recherche, tri et colonne de date de ban ; limite de bannissements illimitée ou chiffrée, avec choix du comportement au débordement (refuser, ou lever d'anciens bannissements d'automod par temps restant ou par date) ([3653176](https://github.com/Dr-J-Watson/Armadok/commit/3653176862dc4b9c76b3600c51533589ae94a448))
+
+
+### Corrections
+
+* un fichier compose choisi pour le lancement qui n'existe plus ne bloque plus le projet — le choix est oublié et la règle automatique reprend (à l'ouverture comme au lancement) ([e7e0149](https://github.com/Dr-J-Watson/Armadok/commit/e7e0149e7164c0380fadb6649be41a83ddc240db))
+
 ## [1.7.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.6.0...v1.7.0) (2026-11-18)
 
 
