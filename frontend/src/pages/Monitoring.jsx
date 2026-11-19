@@ -427,23 +427,50 @@ function BanEditModal({ ban, onClose }) {
 }
 
 // ------------------------------------------------------------------ bannissements
-// Compteur « 142 / 2000 » et réglage de la limite de bannissements de ce nœud.
+// Compteur « 142 / 2 000 » et réglage de la limite de bannissements de ce nœud (nombre ou illimité, et que faire au débordement).
 function BanLimit({ d }) {
-  const { toast } = useUi(); const qc = useQueryClient(); const [edit, setEdit] = useState(false); const [v, setV] = useState('')
-  const save = useMutation({ mutationFn: (limit) => api.put('/obs/bans-limit', { limit }), onSuccess: () => { qc.invalidateQueries({ queryKey: ['obs-bans'] }); setEdit(false); toast('Limite enregistrée', 'ok') }, onError: (e) => toast(e.message, 'err') })
-  const pct = Math.min(100, Math.round((d.count / d.limit) * 100)); const kind = d.count >= d.limit ? 'err' : pct >= 80 ? 'warn' : 'ok'
+  const { toast } = useUi(); const qc = useQueryClient(); const [edit, setEdit] = useState(false)
+  const [unl, setUnl] = useState(false); const [v, setV] = useState(''); const [ov, setOv] = useState(d.overflow)
+  const save = useMutation({ mutationFn: (b) => api.put('/obs/bans-limit', b), onSuccess: () => { qc.invalidateQueries({ queryKey: ['obs-bans'] }); setEdit(false); toast('Limite enregistrée', 'ok') }, onError: (e) => toast(e.message, 'err') })
+  const open = () => { setUnl(d.limit === 0); setV(String(d.limit || d.defaultLimit)); setOv(d.overflow); setEdit(true) }
+  const unlimited = d.limit === 0
+  const pct = unlimited ? 0 : Math.min(100, Math.round((d.count / d.limit) * 100)); const kind = unlimited ? 'ok' : d.count >= d.limit ? 'err' : pct >= 80 ? 'warn' : 'ok'
+  const rule = d.overflow.mode === 'refuse' ? 'les nouvelles adresses sont refusées' : `les bannissements d'automod ${d.overflow.by === 'oldest' ? 'les plus anciens' : 'les moins longs à courir'} sont levés${d.overflow.permanent ? ' (définitifs compris)' : ''}`
   return (
-    <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-      <Badge kind={kind} title="Bannissements enregistrés pour ce nœud / limite autorisée">{fmtNum(d.count, 0)} / {fmtNum(d.limit, 0)} bannissements</Badge>
-      {kind !== 'ok' && <span className="muted small">{d.count >= d.limit ? 'Limite atteinte : plus d\'ajout possible.' : 'Vous approchez de la limite.'}</span>}
-      {d.canBan && !edit && <Btn small kind="ghost" title="Changer la limite de bannissements" onClick={() => { setV(String(d.limit)); setEdit(true) }}><Pencil size={13} /> Limite</Btn>}
-      {edit && <>
-        <input className="input" type="number" min={d.limitRange[0]} max={d.limitRange[1]} step="100" style={{ width: 110 }} value={v} onChange={(e) => setV(e.target.value)} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') save.mutate(Number(v)) }} />
-        <Btn small kind="primary" busy={save.isPending} disabled={!v} onClick={() => save.mutate(Number(v))}>Enregistrer</Btn>
-        <Btn small kind="ghost" onClick={() => save.mutate(null)} title={`Revenir à ${d.defaultLimit}`}>Par défaut ({fmtNum(d.defaultLimit, 0)})</Btn>
-        <Btn small kind="ghost" onClick={() => setEdit(false)}>Annuler</Btn>
-        <span className="muted small">Entre {fmtNum(d.limitRange[0], 0)} et {fmtNum(d.limitRange[1], 0)}. Plus il y a d'adresses, plus la règle Traefik est longue à évaluer.</span>
-      </>}
+    <div className="col" style={{ gap: 8 }}>
+      <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+        <Badge kind={kind} title="Bannissements enregistrés pour ce nœud / limite autorisée">{unlimited ? `${fmtNum(d.count, 0)} bannissements · illimité` : `${fmtNum(d.count, 0)} / ${fmtNum(d.limit, 0)} bannissements`}</Badge>
+        {!unlimited && <span className="muted small">{d.count >= d.limit ? `Limite atteinte : ${rule}.` : pct >= 80 ? `Vous approchez de la limite (au-delà : ${rule}).` : `Au-delà : ${rule}.`}</span>}
+        {d.canBan && !edit && <Btn small kind="ghost" title="Changer la limite de bannissements" onClick={open}><Pencil size={13} /> Limite</Btn>}
+      </div>
+      {edit && <div className="card col" style={{ gap: 10 }}>
+        <div className="row" style={{ gap: 14, flexWrap: 'wrap' }}>
+          <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={unl} onChange={(e) => setUnl(e.target.checked)} /> Illimité</label>
+          {!unl && <label className="row" style={{ gap: 6 }}>Limite <input className="input" type="number" min={d.limitRange[0]} max={d.limitRange[1]} step="100" style={{ width: 120 }} value={v} onChange={(e) => setV(e.target.value)} autoFocus /></label>}
+          {!unl && <span className="muted small">Entre {fmtNum(d.limitRange[0], 0)} et {fmtNum(d.limitRange[1], 0)}.</span>}
+        </div>
+        {unl ? <div className="muted small">Aucune limite : plus il y a d'adresses, plus la règle Traefik est longue à évaluer à chaque requête.</div> : <>
+          <Field label="Quand la limite est atteinte">
+            <select className="select" value={ov.mode} onChange={(e) => setOv({ ...ov, mode: e.target.value })}>
+              <option value="refuse">Ne pas bannir les nouvelles adresses</option>
+              <option value="evict">Bannir les nouvelles et lever d'anciens bannissements d'automod</option>
+            </select></Field>
+          {ov.mode === 'evict' && <>
+            <Field label="Lever en premier">
+              <select className="select" value={ov.by} onChange={(e) => setOv({ ...ov, by: e.target.value })}>
+                <option value="remaining">Ceux qui ont le moins de temps de ban restant</option>
+                <option value="oldest">Les plus anciens (date du ban)</option>
+              </select></Field>
+            <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={ov.permanent} onChange={(e) => setOv({ ...ov, permanent: e.target.checked })} /> Peut aussi lever les bannissements définitifs d'automod</label>
+            <div className="muted small">Seuls les bannissements posés par l'automod peuvent être levés ; ceux posés à la main restent toujours. S'il n'y en a plus à lever, la nouvelle adresse est refusée.</div>
+          </>}
+        </>}
+        <div className="row" style={{ gap: 8 }}>
+          <Btn small kind="primary" busy={save.isPending} disabled={!unl && !v} onClick={() => save.mutate({ limit: unl ? 0 : Number(v), overflow: ov })}>Enregistrer</Btn>
+          <Btn small kind="ghost" onClick={() => save.mutate({ limit: null, overflow: { mode: 'refuse', by: 'remaining', permanent: false } })} title={`Revenir à ${d.defaultLimit}, nouvelles adresses refusées`}>Par défaut ({fmtNum(d.defaultLimit, 0)})</Btn>
+          <Btn small kind="ghost" onClick={() => setEdit(false)}>Annuler</Btn>
+        </div>
+      </div>}
     </div>
   )
 }
@@ -451,6 +478,10 @@ function BanLimit({ d }) {
 function Bans({ f }) {
   const { toast, confirm } = useUi(); const qc = useQueryClient(); const [add, setAdd] = useState(false); const [editBan, setEditBan] = useState(null)
   const q = useQuery({ queryKey: ['obs-bans'], queryFn: () => api.get('/obs/bans'), refetchInterval: 60000 })
+  const [bs, setBs] = useState('')
+  const needle = bs.trim().toLowerCase()
+  const shown = (q.data?.bans || []).filter((b) => !needle || [b.ip, b.reason, b.created_by, b.geo?.city, b.geo?.countryName, fmtDate(b.created_at * 1000)].some((x) => x && String(x).toLowerCase().includes(needle)))
+  const { rows: sortedBans, th } = useSort(shown, { key: 'created', dir: -1 }, { ip: (b) => b.ip, reason: (b) => b.reason || '', by: (b) => b.created_by, created: (b) => b.created_at, attempts: (b) => b.attempts, until: (b) => b.expires_at || Infinity })
   const del = useMutation({ mutationFn: (id) => api.del(`/obs/bans/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['obs-bans'] }); qc.invalidateQueries({ queryKey: ['obs-ips'] }); toast('Bannissement levé') }, onError: (e) => toast(e.message, 'err') })
   if (q.isLoading) return <Loading />
   if (q.error) return <div className="banner err">{q.error.message}</div>
@@ -469,11 +500,12 @@ function Bans({ f }) {
       <BanLimit d={q.data} />
       {cards.length > 0 && <div className="grid stats">{cards.map(([l, v, s]) => <div key={l} className="card stat static"><div className="muted">{l}</div><b>{v}</b><div className="sub">{s}</div></div>)}</div>}
       {st.countries.length > 1 && <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}><span className="muted small">Par pays :</span>{st.countries.map((c) => <Badge key={c.code}>{c.name} · {c.n}</Badge>)}</div>}
-      <div className="row"><div className="muted grow">Une adresse bannie reçoit une erreur 403 sur tous les sites de ce nœud (règle Traefik, fichier <code>zz-webui-bans.yml</code>). Derrière un autre proxy (Cloudflare…), Traefik voit l'adresse du proxy.</div>
+      <div className="row"><SearchBox value={bs} onChange={setBs} placeholder="Adresse, raison, auteur, pays, date…" /><div className="muted grow">Une adresse bannie reçoit une erreur 403 sur tous les sites de ce nœud (règle Traefik, fichier <code>zz-webui-bans.yml</code>). Derrière un autre proxy (Cloudflare…), Traefik voit l'adresse du proxy.</div>
         {q.data.bans.length > 0 && <Btn small kind="ghost" title="Télécharger la liste (CSV)" onClick={() => downloadCsv('adresses-bannies.csv', ['Adresse', 'Raison', 'Par', 'Depuis', 'Jusqu\'au'], q.data.bans.map((b) => [b.ip, b.reason || '', b.created_by, new Date(b.created_at * 1000).toISOString(), b.expires_at ? new Date(b.expires_at * 1000).toISOString() : 'définitif']))}><FileDown size={14} /> CSV</Btn>}{f.bans.manage && f.ips.reveal && <Btn kind="primary" onClick={() => setAdd(true)}><Ban size={14} /> Bannir une adresse</Btn>}</div>
       {q.data.bans.length === 0 ? <div className="card"><Empty><Ban size={28} /><div>Aucune adresse bannie.</div>{f.bans.manage && f.ips.reveal && <Btn kind="primary" style={{ marginTop: 10 }} onClick={() => setAdd(true)}><Ban size={14} /> Bannir une adresse</Btn>}</Empty></div> : (
-        <div className="card flush"><table className="t"><thead><tr><th>Adresse</th><th>Raison</th><th>Par</th><th>Depuis</th><th>Tentatives</th><th>Jusqu'au</th><th /></tr></thead><tbody>
-          {q.data.bans.map((b) => <tr key={b.id}><td className="mono"><Copyable text={b.ip}><b>{b.ip}</b></Copyable>{b.geo && <div className="muted small">{[b.geo.city, b.geo.countryName].filter(Boolean).join(', ')}</div>}</td><td>{b.reason || <span className="muted">—</span>}</td><td className="muted">{b.created_by.startsWith('automod:') ? <Badge kind="info"><Bot size={11} /> automod</Badge> : b.created_by}</td><td className="muted small">{ago(b.created_at)}</td><td className="small">{b.attempts == null ? <span className="muted" title="Réseau : les requêtes de ses adresses ne sont pas comptées une à une">—</span> : b.attempts ? <span title={`Dernière : ${ago(b.last_attempt)}`}>{fmtNum(b.attempts)}</span> : <span className="muted">0</span>}</td><td className="small">{b.expires_at ? <span title={fmtDate(b.expires_at * 1000)}>{inFuture(b.expires_at)}<div className="muted small">{fmtDate(b.expires_at * 1000)}</div></span> : <Badge kind="err">définitif</Badge>}</td>
+        <div className="card flush"><table className="t"><thead><tr><th>{th('ip', 'Adresse')}</th><th>{th('reason', 'Raison')}</th><th>{th('by', 'Par')}</th><th>{th('created', 'Banni le')}</th><th>{th('attempts', 'Tentatives')}</th><th>{th('until', "Jusqu'au")}</th><th /></tr></thead><tbody>
+          {sortedBans.length === 0 && <tr><td colSpan={7} className="muted" style={{ textAlign: 'center' }}>Aucun bannissement ne correspond à « {bs} ».</td></tr>}
+          {sortedBans.map((b) => <tr key={b.id}><td className="mono"><Copyable text={b.ip}><b>{b.ip}</b></Copyable>{b.geo && <div className="muted small">{[b.geo.city, b.geo.countryName].filter(Boolean).join(', ')}</div>}</td><td>{b.reason || <span className="muted">—</span>}</td><td className="muted">{b.created_by.startsWith('automod:') ? <Badge kind="info"><Bot size={11} /> automod</Badge> : b.created_by}</td><td className="small" title={ago(b.created_at)}>{fmtDate(b.created_at * 1000)}<div className="muted small">{ago(b.created_at)}</div></td><td className="small">{b.attempts == null ? <span className="muted" title="Réseau : les requêtes de ses adresses ne sont pas comptées une à une">—</span> : b.attempts ? <span title={`Dernière : ${ago(b.last_attempt)}`}>{fmtNum(b.attempts)}</span> : <span className="muted">0</span>}</td><td className="small">{b.expires_at ? <span title={fmtDate(b.expires_at * 1000)}>{inFuture(b.expires_at)}<div className="muted small">{fmtDate(b.expires_at * 1000)}</div></span> : <Badge kind="err">définitif</Badge>}</td>
             <td className="actions">{q.data.canBan && <><Btn small kind="ghost" title="Changer la durée" onClick={() => setEditBan(b)}><Pencil size={13} /> Durée</Btn><Btn small kind="ghost" onClick={() => unban(b)}><Trash2 size={13} /> Lever</Btn></>}</td></tr>)}</tbody></table></div>)}
       {add && <BanModal manual onClose={() => setAdd(false)} />}
       {editBan && <BanEditModal ban={editBan} onClose={() => setEditBan(null)} />}

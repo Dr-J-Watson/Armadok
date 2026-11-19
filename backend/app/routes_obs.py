@@ -381,23 +381,31 @@ def get_bans(ctx: NodeCtx = Depends(node_cap("security.view"))):
     bans.attempts(ctx.id, raw)
     rows = _present(ctx, raw)
     return {"bans": rows, "canBan": ctx.can("security.ban"), "stats": bans.stats(rows),
-            "limit": bans.limit(ctx.id), "defaultLimit": bans.DEFAULT_LIMIT, "limitRange": list(bans.LIMIT_RANGE),
-            "count": db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=?", (ctx.id,))["c"]}
+            "limit": bans.limit(ctx.id), "overflow": bans.overflow(ctx.id), "defaultLimit": bans.DEFAULT_LIMIT, "limitRange": list(bans.LIMIT_RANGE),
+            "count": len(raw)}
+
+
+class OverflowBody(BaseModel):
+    mode: str | None = None          # refuse | evict
+    by: str | None = None            # remaining | oldest
+    permanent: bool | None = None    # lever aussi les définitifs d'automod
 
 
 class BanLimitBody(BaseModel):
-    limit: int | None = None   # null = valeur par défaut
+    limit: int | None = Field(default=None, ge=0)   # null = valeur par défaut, 0 = illimité
+    overflow: OverflowBody | None = None
 
 
 @router.put("/bans-limit")
 def set_ban_limit(body: BanLimitBody, ctx: NodeCtx = Depends(node_cap("security.ban"))):
     """Change le nombre maximal de bannissements de ce nœud."""
     try:
-        n = bans.set_limit(ctx.id, body.limit)
+        n = bans.set_limit(ctx.id, body.limit, body.overflow.model_dump() if body.overflow else None)
     except bans.BanError as e:
         raise HTTPException(e.status, str(e))
-    ctx.audit("ip.ban.limit", f"limite de bannissements : {n}")
-    return {"limit": n}
+    ov = bans.overflow(ctx.id)
+    ctx.audit("ip.ban.limit", f"limite de bannissements : {n or 'illimitée'}" + ("" if not n else f" · au débordement : {'refuser' if ov['mode'] == 'refuse' else 'lever ' + ('les plus anciens' if ov['by'] == 'oldest' else 'les moins longs') + ' bannissements d\'automod' + (' (définitifs inclus)' if ov['permanent'] else '')}"))
+    return {"limit": n, "overflow": ov}
 
 
 @router.post("/bans")
@@ -419,8 +427,10 @@ def add_ban(body: BanBody, request: Request, ctx: NodeCtx = Depends(node_cap("se
         raise HTTPException(e.status, str(e))
     except StoreError as e:
         raise HTTPException(e.status, f"Impossible d'écrire la règle dans Traefik : {e}")
+    if r.get("evicted"):
+        ctx.audit("ip.ban.evict", f"{len(r['evicted'])} bannissement(s) d'automod levé(s) pour faire de la place (limite atteinte)")
     ctx.audit("ip.ban", f"{r['ip']}{' · ' + body.reason if body.reason else ''}{' · ' + str(body.hours) + ' h' if body.hours else ' · définitif'}")
-    return {**r, "ip": r["ip"] if ctx.can("security.ips.reveal") else accesslog.mask_ip(r["ip"].split("/")[0])}
+    return {**r, "evicted": len(r.get("evicted") or []), "ip": r["ip"] if ctx.can("security.ips.reveal") else accesslog.mask_ip(r["ip"].split("/")[0])}
 
 
 # ------------------------------------------------------------------ adresses validées

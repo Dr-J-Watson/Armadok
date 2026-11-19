@@ -468,3 +468,47 @@ def test_ban_limit_is_per_node_and_adjustable(world):
     for b in ids[:10]:
         client.delete(f"/api/obs/bans/{b}", headers=root)
     assert client.put("/api/obs/bans-limit", headers=root, json={"limit": None}).json()["limit"] == 2000
+
+
+def test_ban_overflow_policies(world):
+    root = world["root"]
+    node = {**node_row(world), "entrypoints": ["websecure"]}
+    from app import bans
+    from app.nodes import store_for, node_out
+    row = db.one("SELECT * FROM nodes WHERE id=?", (world["nid"],))
+    n = node_out(row); st = store_for(n)
+    db.run("DELETE FROM ip_bans WHERE node_id=?", (world["nid"],))
+    now = time.time()
+    def put(ip, by, created, exp):
+        db.run("INSERT INTO ip_bans(node_id,ip,reason,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)", (world["nid"], ip, "", by, created, exp))
+    put("45.1.0.1", "automod:1", now - 300, now + 7200)    # le plus ancien, longue durée
+    put("45.1.0.2", "automod:1", now - 200, now + 600)     # le moins de temps restant
+    put("45.1.0.3", "automod:1", now - 100, None)          # définitif
+    put("45.1.0.4", "root", now - 400, now + 60)           # à la main : jamais touché
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": 10, "overflow": {"mode": "evict", "by": "remaining"}}).status_code == 200
+    db.run("UPDATE nodes SET ban_limit=4 WHERE id=?", (world["nid"],))   # (sous le minimum d'interface, pour le test)
+    ips = lambda: {r["ip"] for r in db.rows("SELECT ip FROM ip_bans WHERE node_id=?", (world["nid"],))}
+    # par temps restant : 45.1.0.2 part (le définitif et le bannissement manuel restent)
+    r = bans.add(n, st, "45.9.0.1", "", 1, "root"); assert r["evicted"] == ["45.1.0.2"] and "45.1.0.2" not in ips() and "45.1.0.3" in ips()
+    # par date : le plus ancien d'automod, 45.1.0.1
+    bans.set_limit(world["nid"], 10, {"mode": "evict", "by": "oldest"}); db.run("UPDATE nodes SET ban_limit=4 WHERE id=?", (world["nid"],))
+    r = bans.add(n, st, "45.9.0.2", "", 1, "root"); assert r["evicted"] == ["45.1.0.1"]
+    # il ne reste que le définitif d'automod : refusé tant que « définitifs inclus » n'est pas coché
+    try:
+        bans.add(n, st, "45.9.0.3", "", 1, "root"); assert False
+    except bans.BanError as e:
+        assert "automod" in str(e)
+    bans.set_limit(world["nid"], 10, {"permanent": True}); db.run("UPDATE nodes SET ban_limit=4 WHERE id=?", (world["nid"],))
+    assert bans.add(n, st, "45.9.0.3", "", 1, "root")["evicted"] == ["45.1.0.3"]
+    assert "45.1.0.4" in ips()   # jamais le bannissement manuel
+    # « refuser » : rien n'est levé
+    bans.set_limit(world["nid"], 10, {"mode": "refuse"}); db.run("UPDATE nodes SET ban_limit=4 WHERE id=?", (world["nid"],))
+    try:
+        bans.add(n, st, "45.9.0.4", "", 1, "root"); assert False
+    except bans.BanError as e:
+        assert "Limite de 4" in str(e)
+    # illimité
+    assert client.put("/api/obs/bans-limit", headers=root, json={"limit": 0}).json()["limit"] == 0
+    assert bans.add(n, st, "45.9.0.4", "", 1, "root")["evicted"] == []
+    client.put("/api/obs/bans-limit", headers=root, json={"limit": None, "overflow": {"mode": "refuse", "by": "remaining", "permanent": False}})
+    db.run("DELETE FROM ip_bans WHERE node_id=?", (world["nid"],)); bans.sync(n, st)

@@ -20,21 +20,60 @@ MW = "webui-ban-403"
 ROUTERS = ("webui-ban-tls", "webui-ban-plain")
 PRIORITY = 2000000000
 DEFAULT_LIMIT = 2000
-LIMIT_RANGE = (10, 50000)
+LIMIT_RANGE = (10, 1000000)
+OVERFLOW_DEFAULT = {"mode": "refuse", "by": "remaining", "permanent": False}
 
 
 def limit(node_id: str) -> int:
-    """Nombre maximal de bannissements de ce nœud (réglable ; sinon la valeur par défaut)."""
+    """Nombre maximal de bannissements de ce nœud : réglable, 0 = illimité, sinon la valeur par défaut."""
     r = db.one("SELECT ban_limit FROM nodes WHERE id=?", (node_id,))
-    return int(r["ban_limit"]) if r and r["ban_limit"] else DEFAULT_LIMIT
+    if not r or r["ban_limit"] is None:
+        return DEFAULT_LIMIT
+    return int(r["ban_limit"])
 
 
-def set_limit(node_id: str, value: int | None) -> int:
-    """Change la limite (None = valeur par défaut). Peut descendre sous le nombre actuel : les bannissements existants restent, seuls les ajouts sont refusés."""
-    if value is not None and not LIMIT_RANGE[0] <= value <= LIMIT_RANGE[1]:
-        raise BanError(f"Limite invalide : entre {LIMIT_RANGE[0]} et {LIMIT_RANGE[1]}")
+def overflow(node_id: str) -> dict:
+    """Que faire quand la limite est atteinte : « refuse » (ne pas bannir la nouvelle adresse) ou « evict » (la bannir et lever d'anciens
+    bannissements d'AUTOMOD, les moins longs à courir (« remaining ») ou les plus anciens (« oldest ») ; « permanent » : les définitifs peuvent aussi partir)."""
+    import json
+    r = db.one("SELECT ban_overflow FROM nodes WHERE id=?", (node_id,))
+    try:
+        d = json.loads(r["ban_overflow"]) if r and r["ban_overflow"] else {}
+    except ValueError:
+        d = {}
+    return {"mode": d.get("mode") if d.get("mode") in ("refuse", "evict") else "refuse",
+            "by": d.get("by") if d.get("by") in ("remaining", "oldest") else "remaining",
+            "permanent": bool(d.get("permanent"))}
+
+
+def set_limit(node_id: str, value: int | None, ov: dict | None = None) -> int:
+    """Change la limite (None = valeur par défaut, 0 = illimité) et, si fourni, le comportement au débordement. Peut descendre sous le nombre actuel :
+    les bannissements existants restent, seuls les ajouts sont concernés."""
+    import json
+    if value is not None and value != 0 and not LIMIT_RANGE[0] <= value <= LIMIT_RANGE[1]:
+        raise BanError(f"Limite invalide : entre {LIMIT_RANGE[0]} et {LIMIT_RANGE[1]}, ou illimitée")
     db.run("UPDATE nodes SET ban_limit=? WHERE id=?", (value, node_id))
+    if ov is not None:
+        cur = {**overflow(node_id), **{k: v for k, v in ov.items() if k in OVERFLOW_DEFAULT and v is not None}}
+        if cur["mode"] not in ("refuse", "evict") or cur["by"] not in ("remaining", "oldest"):
+            raise BanError("Comportement au débordement invalide")
+        db.run("UPDATE nodes SET ban_overflow=? WHERE id=?", (json.dumps({**cur, "permanent": bool(cur["permanent"])}), node_id))
     return limit(node_id)
+
+
+def _victims(node_id: str, need: int, now: float) -> list | None:
+    """Les « need » bannissements d'automod à lever pour faire de la place, ou None s'il n'y en a pas assez (les bannissements posés à la main ne sont jamais touchés)."""
+    cfg = overflow(node_id)
+    cand = [dict(r) for r in db.rows("SELECT * FROM ip_bans WHERE node_id=? AND created_by LIKE 'automod:%' AND (expires_at IS NULL OR expires_at>?)", (node_id, now))]
+    if not cfg["permanent"]:
+        cand = [c for c in cand if c["expires_at"]]
+    if cfg["by"] == "oldest":
+        cand.sort(key=lambda c: c["created_at"])
+    else:   # le moins de temps restant d'abord ; les définitifs (temps infini) en dernier
+        cand.sort(key=lambda c: (c["expires_at"] is None, c["expires_at"] or 0, c["created_at"]))
+    return cand[:need] if len(cand) >= need else None
+
+
 _NOBODY = "192.0.2.1/32"   # adresse de documentation (RFC 5737) : personne n'en vient, donc l'ipAllowList refuse tout le monde
 
 
@@ -155,18 +194,29 @@ def add(node: dict, store, ip: str, reason: str, hours: float | None, by: str, r
         raise BanError(f"{ip} est validée (ou contient une adresse validée) : retirez d'abord la validation si vous voulez la bannir", 409)
     if db.one("SELECT 1 FROM ip_bans WHERE node_id=? AND ip=?", (node["id"], ip)):
         raise BanError(f"{ip} est déjà bannie", 409)
-    if db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=?", (node["id"],))["c"] >= limit(node["id"]):
-        raise BanError(f"Limite de {limit(node['id'])} bannissements atteinte : retirez-en ou relevez la limite (onglet Bannies)")
     now = time.time()
+    cap = limit(node["id"])
+    used = db.one("SELECT COUNT(*) c FROM ip_bans WHERE node_id=? AND (expires_at IS NULL OR expires_at>?)", (node["id"], now))["c"]
+    victims: list[dict] = []
+    if cap and used >= cap:
+        if overflow(node["id"])["mode"] == "evict":
+            victims = _victims(node["id"], used - cap + 1, now) or []
+        if not victims:
+            raise BanError(f"Limite de {cap} bannissements atteinte : retirez-en ou relevez la limite (onglet Bannies)"
+                           + (" — aucun bannissement d'automod ne peut être levé pour faire de la place" if overflow(node["id"])["mode"] == "evict" else ""))
+        for v in victims:
+            db.run("DELETE FROM ip_bans WHERE id=?", (v["id"],))
     exp = now + hours * 3600 if hours else None
     bid = db.run("INSERT INTO ip_bans(node_id,ip,reason,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)", (node["id"], ip, (reason or "").strip()[:200], by, now, exp))
     try:
         sync(node, store)
     except StoreError:
-        db.run("DELETE FROM ip_bans WHERE id=?", (bid,))   # pas écrit dans Traefik : on ne prétend pas avoir banni
+        db.run("DELETE FROM ip_bans WHERE id=?", (bid,))   # pas écrit dans Traefik : on ne prétend pas avoir banni, et on rend ce qu'on avait levé
+        for v in victims:
+            db.run("INSERT INTO ip_bans(node_id,ip,reason,created_by,created_at,expires_at) VALUES(?,?,?,?,?,?)", (v["node_id"], v["ip"], v["reason"], v["created_by"], v["created_at"], v["expires_at"]))
         raise
     publish("security", node["id"])
-    return {"id": bid, "ip": ip, "expires_at": exp}
+    return {"id": bid, "ip": ip, "expires_at": exp, "evicted": [v["ip"] for v in victims]}
 
 
 def update(node_id: str, bid: int, hours: float | None, reason: str | None = None, now: float | None = None) -> dict | None:
