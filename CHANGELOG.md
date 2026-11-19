@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.9.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.8.0...v1.9.0) (2026-11-19)
+
+
+### Nouveautés
+
+* dossiers et sous-dossiers pour ranger les projets (nom, description, couleur), glisser-déposer, fil d'Ariane et dossier « .. » pour remonter, bouton Ranger ([ef16940](https://github.com/Dr-J-Watson/Armadok/commit/ef169401bf7987bc478d43dc3217fe0d828e40ee))
+* dossiers et sous-dossiers pour ranger les sites (même fonctionnement que pour les projets) ; vue filtrée d'un nœud qui publie par un autre Traefik : ses propres dossiers, seuls ses sites sont comptés ([2469894](https://github.com/Dr-J-Watson/Armadok/commit/2469894487a44a0c00adf0800a9752a25c76d21e))
+
+
+### Corrections
+
+* bouton « Nouveau dossier » des sites placé à droite, à côté de « Nouveau site » ([62b70c4](https://github.com/Dr-J-Watson/Armadok/commit/62b70c42b479a3492414652d2c32492468e01d40))
+* carte de site, un nom de domaine long est coupé par « … » au lieu de passer sous les icônes ([aeb85cf](https://github.com/Dr-J-Watson/Armadok/commit/aeb85cfb25dd44b65cc316b2ebe467f7014afc1e))
+
 ## [1.8.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.7.0...v1.8.0) (2026-11-19)
 
 
