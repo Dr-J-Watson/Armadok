@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.11.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.11.0...v1.11.1) (2026-11-20)
+
+
+### Corrections
+
+* **sécurité:** élargir un rôle respecte le plafond de chaque nœud où il est attribué ([aca270e](https://github.com/Dr-J-Watson/Armadok/commit/aca270edc5d182be36030afb3c16ea9032f5498f))
+* **sécurité:** enregistrer un site n'écrase plus un service sans les droits Services ([55b09b1](https://github.com/Dr-J-Watson/Armadok/commit/55b09b1738dd13546a565f438b906c8925d761d1))
+* **sécurité:** IP masquées dans le journal du nœud sans le droit de les voir, identifiants d'URL traités comme secrets dans les modèles de projet ([132acee](https://github.com/Dr-J-Watson/Armadok/commit/132aceeb69096bca6dcea371fd5469f9b9877fd8))
+* **sécurité:** l'état en direct de Traefik ne montre que les routeurs de la portée de la personne ([f17e6fa](https://github.com/Dr-J-Watson/Armadok/commit/f17e6faa1daa49d270dd0df15ff5a9851557c3cd))
+* **sécurité:** les valeurs du .env ne sortent plus (images, validation compose) sans le droit « variables .env » ([762d290](https://github.com/Dr-J-Watson/Armadok/commit/762d290e61451fd848eefb04bcdf77c0504d5327))
+* **sécurité:** retirer un membre depuis la page Droits respecte les rangs et la suspension du nœud ([07614e4](https://github.com/Dr-J-Watson/Armadok/commit/07614e499f58992db16243a1c3e1fb05b36c1f8a))
+* **sécurité:** un nom de service compose ne peut plus être lu comme une option (--volumes) ([cd2b9b7](https://github.com/Dr-J-Watson/Armadok/commit/cd2b9b7f3bff948db7fb04fee6f94e66ac78f151))
+
 ## [1.11.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.10.0...v1.11.0) (2026-11-20)
 
 
