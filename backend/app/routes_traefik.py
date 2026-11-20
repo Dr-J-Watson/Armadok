@@ -188,7 +188,13 @@ def regroup_sites(body: SiteRegroupBody, request: Request, ctx: NodeCtx = Depend
 
 @router.get("/traefik/live")
 def traefik_live(ctx: NodeCtx = Depends(node_traefik)):
-    return live_status(ctx.node)
+    live = live_status(ctx.node)
+    if ctx.p.traefik == "full" or not live.get("routers"):
+        return live
+    items, _ = ctx.store.items()   # accès limité à ses domaines : pas la carte des routeurs des autres (noms, fournisseurs, erreurs)
+    mine = {i["name"] for i in scope_items(ctx.p, [dict(i) for i in items]) if i["proto"] == "http" and i["kind"] == "routers"}
+    keep = {k: v for k, v in live["routers"].items() if k.split("/", 1)[0] == "http" and k.split("/", 1)[-1].split("@", 1)[0] in mine}
+    return {**live, "routers": keep}
 
 
 # ------------------------------------------------------------------ sites (routeur + service) : tous les profils Traefik

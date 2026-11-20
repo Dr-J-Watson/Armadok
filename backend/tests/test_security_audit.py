@@ -93,3 +93,17 @@ def _site_vs_service(sa):
     # le service de la victime n'a pas bougé ; sans corps de service, la création d'un routeur reste possible
     ok = client.put("/api/traefik/site", headers=h, json={"name": "sa-autre", "router": {"rule": "Host(`ok.example.com`)", "service": "sa-bank-svc"}})
     assert ok.status_code == 200, ok.text
+
+
+# ---------- 6 : la carte des routeurs en direct suit la portée de la personne ----------
+def test_live_routers_are_limited_to_the_callers_scope(sa, monkeypatch):
+    from app import routes_traefik
+    fake = {"available": True, "version": "3", "entrypoints": ["web"], "routers": {"http/sa-secret@file": {"status": "enabled", "provider": "file", "error": None},
+                                                                                   "http/autre@docker": {"status": "enabled", "provider": "docker", "error": None}}}
+    monkeypatch.setattr(routes_traefik, "live_status", lambda node: fake)
+    hn = {"X-Node": sa["nid"]}
+    full = client.get("/api/traefik/live", headers={**sa["h_sa-owner"], **hn}).json()
+    assert set(full["routers"]) == set(fake["routers"])                      # tout Traefik : la carte complète
+    scoped = client.get("/api/traefik/live", headers={**sa["h_sa-editor"], **hn})
+    assert scoped.status_code == 200 and scoped.json()["routers"] == {}      # restreint à ses domaines : aucun routeur d'autrui
+    assert scoped.json()["version"] == "3" and fake["routers"]               # le reste de l'état est conservé, le cache n'est pas modifié
