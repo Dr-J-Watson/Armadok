@@ -1,4 +1,4 @@
-"""Correctifs de l'audit de sécurité : un test par faille (chaque test échouait avant le correctif)."""
+"""Correctifs de l'audit de sécurité (AUDIT-SECURITE.md) : un test par faille."""
 import shutil
 
 import pytest
@@ -21,7 +21,7 @@ def login(username, password=PW):
 @pytest.fixture(scope="module")
 def sa():
     root = login("root", "admin-password-1")
-    names = ("sa-owner", "sa-admin", "sa-editor", "sa-viewer", "sa-ops", "sa-svc")
+    names = ("sa-owner", "sa-admin", "sa-editor", "sa-viewer", "sa-ops", "sa-svc", "sa-noenv")
     for n in names:
         client.post("/api/users", headers=root, json={"username": n, "password": PW, "canAddDomains": True, "maxNodes": 3})
     ids = {r["username"]: r["id"] for r in db.rows("SELECT id, username FROM users")}
@@ -127,3 +127,37 @@ def test_widening_a_role_respects_the_ceiling_of_every_node_it_is_granted_on(sa)
     # retirer ou ajouter un droit qu'il a sur ce nœud reste permis
     assert client.put(f"/api/rights/roles/{rid}", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view", "sites.create"]}).status_code == 200
     assert client.put(f"/api/rights/roles/{rid}", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view"]}).status_code == 200
+
+
+# ---------- 3 et 4 : sans « variables .env », aucune valeur du .env ne sort (image remplacée, message de validation) ----------
+def test_env_values_do_not_leak_to_people_without_the_env_right(sa, pj, fakecli):
+    nid, h_root = sa["nid"], pj["h"]
+    d = pj["base"] / "envsite"
+    d.mkdir(exist_ok=True)
+    (d / "docker-compose.yml").write_text("services:\n  web:\n    image: \"reg.example/app:${SECRET_TAG}\"\n")
+    (d / ".env").write_text("SECRET_TAG=hunter2\n")
+    pid = None
+    try:
+        pid = pid_of(pj, "envsite")
+        role = client.post("/api/rights/roles", headers=sa["h_sa-owner"], json={"name": "Voit sans .env", "description": "", "caps": ["docker.view", "projects.view", "projects.files"]})
+        assert role.status_code == 200, role.text
+        g = client.post("/api/rights/grants", headers=sa["h_sa-owner"], json={"subjectType": "user", "subjectId": sa["ids"]["sa-noenv"], "roleId": role.json()["id"], "nodeId": nid})
+        assert g.status_code == 200, g.text
+        h = {**login("sa-noenv"), "X-Node": nid}
+        for url in (f"/api/projects/{pid}", "/api/projects", f"/api/projects/{pid}/images"):
+            r = client.get(url, headers=h)
+            assert r.status_code == 200, (url, r.text)
+            assert "hunter2" not in r.text, url
+        img = next(sv["image"] for sv in client.get(f"/api/projects/{pid}", headers=h).json()["services"])
+        assert img == "reg.example/app:${SECRET_TAG}"
+        root_img = next(sv["image"] for sv in client.get(f"/api/projects/{pid}", headers={**h_root, "X-Node": nid}).json()["services"])
+        assert root_img == "reg.example/app:hunter2"                                   # qui a le droit voit toujours la valeur remplacée
+        content = "services:\n  x: {image: alpine}\n"
+        low = client.post(f"/api/projects/{pid}/validate", headers=h, json={"content": content}).json()
+        assert "--env-file" in low["message"]                                          # le « docker » factice recopie ses arguments : le .env n'est pas chargé
+        high = client.post(f"/api/projects/{pid}/validate", headers={**h_root, "X-Node": nid}, json={"content": content}).json()
+        assert "--env-file" not in high["message"]
+    finally:
+        if pid:
+            client.delete(f"/api/projects/{pid}", headers=h_root)
+        shutil.rmtree(d, ignore_errors=True)

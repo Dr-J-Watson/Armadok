@@ -548,7 +548,8 @@ def p_validate(a: dict) -> dict:
     if not shutil.which("docker"):
         return {"ok": True, "message": "Syntaxe correcte (la validation complète demande la commande docker compose)", "services": [s["name"] for s in c["services"]], "full": False}
     try:
-        r = subprocess.run([_cli(), "compose", "--project-directory", str(d), "-f", "-", "config", "-q"], input=content, capture_output=True, text=True, timeout=30, cwd=d, env=_env())
+        envf = ["--env-file", os.devnull] if a.get("noEnv") else []   # appelant sans « variables .env » : on ne charge pas le .env (une erreur citerait la valeur remplacée)
+        r = subprocess.run([_cli(), "compose", "--project-directory", str(d), *envf, "-f", "-", "config", "-q"], input=content, capture_output=True, text=True, timeout=30, cwd=d, env=_env())
     except subprocess.TimeoutExpired:
         raise StoreError("La validation a pris trop de temps", 504)
     msg = (r.stderr or r.stdout or "").strip()[:1500]

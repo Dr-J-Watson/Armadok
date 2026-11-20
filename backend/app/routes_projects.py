@@ -86,6 +86,21 @@ def resources(cs: list[dict]) -> dict:
     return {"volumes": sorted(vols.values(), key=lambda v: (v["type"] != "volume", v["name"] or v["source"])), "networks": sorted(nets.values(), key=lambda n: n["name"])}
 
 
+def _show_raw_image(ctx: NodeCtx, services: list[dict]) -> list[dict]:
+    """Sans « variables .env », l'image reste écrite comme dans le fichier compose (${VAR}) : la valeur remplacée viendrait du .env."""
+    if ctx.can("projects.env"):
+        return services
+    return [{**{k: v for k, v in s.items() if k != "imageRaw"}, "image": s["imageRaw"]} if s.get("imageRaw") else s for s in services]
+
+
+def _hide_env_images(ctx: NodeCtx, rows: list[dict]) -> list[dict]:
+    """Suivi des images : une ligne dont l'image vient du .env est masquée (nom, version et erreurs du registre citeraient la valeur)."""
+    if ctx.can("projects.env"):
+        return rows
+    return [{"service": r["service"], "image": r["imageRaw"], "status": "unresolved", "local": None, "remote": None, "error": "Image définie par le .env : droit « variables .env » requis pour la suivre",
+             "checkedAt": None, "needsRedeploy": False, "packageUrl": None, "newerTag": None, "newerImage": None} if r.get("imageRaw") else r for r in rows]
+
+
 def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]], row=None, access: bool = True) -> dict:
     ctxs = getattr(links, "ctxs", {})
     services = []
@@ -98,6 +113,7 @@ def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]
         lk = [l for c in mine for l in links.get(c["name"], [])]
         done = bool(mine) and not run_n and all(str(c.get("status") or "").startswith("Exited (0)") for c in mine)   # service « init » / ponctuel terminé normalement : arrêté exprès
         services.append({**s, "state": state, "done": done, "containers": [_slim(c) for c in mine], "links": lk, "hosts": linkage.hosts_of(lk)})
+    services = _show_raw_image(ctx, services)
     extra = [c for c in cs if c["id"] not in seen]
     expected = [s for s in services if not s["profiles"] and not s["done"]]
     running = sum(1 for s in expected if s["state"] == "running")
@@ -436,7 +452,7 @@ class ValidateBody(BaseModel):
 @router.post("/{pid}/validate")
 def validate(pid: int, body: ValidateBody, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
     d, _ = _dir(ctx, pid)
-    return run(ctx, "p_validate", {"dir": d, "content": body.content})
+    return run(ctx, "p_validate", {"dir": d, "content": body.content, "noEnv": not ctx.can("projects.env")})   # sans ce droit, le .env n'est pas lu : un message d'erreur ne peut pas en citer les valeurs
 
 
 # ------------------------------------------------------------------ déploiement
@@ -1214,7 +1230,7 @@ def clone_job(jid: str, since: int = 0, ctx: NodeCtx = Depends(proj_cap("project
 @router.get("/{pid}/images")
 def images_state(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     d, row = _dir(ctx, pid)
-    rows = imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d)
+    rows = _hide_env_images(ctx, imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d))
     return {"images": rows, "track": bool(row["track_images"]), "canManage": ctx.can("projects.git"), "hours": settings.image_check_hours, "schedule": (sch := imagecheck.project_schedule(row)), "scheduleText": schedule.describe(sch),
             "nextRun": schedule.next_run(sch, row["image_last_run"] or time.time()) if row["track_images"] else None, "serverTime": time.time(), "webhook": bool(db.one("SELECT webhook_url FROM nodes WHERE id=? AND webhook_url<>''", (ctx.id,)))}
 
@@ -1223,7 +1239,7 @@ def images_state(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
 def images_check(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.git"))):
     """Interroge les registres (sans rien télécharger) pour savoir s'il existe de nouvelles versions."""
     d, row = _dir(ctx, pid)
-    rows = imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d, fetch=True)
+    rows = _hide_env_images(ctx, imagecheck.compute(lambda op, a: run(ctx, op, a), ctx.id, d, fetch=True))
     ctx.audit("project.images.check", row["name"])
     return {"images": rows, "track": bool(row["track_images"])}
 
