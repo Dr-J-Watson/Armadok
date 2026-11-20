@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.11.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.10.0...v1.11.0) (2026-11-20)
+
+
+### Nouveautés
+
+* cibles de Makefile avec arguments (détection des obligatoires, saisie avant lancement, transmis comme données) ([9534d97](https://github.com/Dr-J-Watson/Armadok/commit/9534d97cbd944906fb1411c63edd711e55474ec5))
+
+
+### Corrections
+
+* le bandeau « lancé avec … » disparaît quand on a choisi explicitement les fichiers compose ([5e6f21f](https://github.com/Dr-J-Watson/Armadok/commit/5e6f21f788ac7e1afef6e1b500c26d35a74211ca))
+
 ## [1.10.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.9.0...v1.10.0) (2026-11-19)
 
 
