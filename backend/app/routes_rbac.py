@@ -9,7 +9,7 @@ from . import caps as capmod
 from . import db, events, rbac
 from .audit import audit
 from .auth import current_user
-from .nodes import ROLE_LABEL, NodeCtx, _ctx_by_id, accessible_nodes
+from .nodes import ROLE_LABEL, NodeCtx, _ctx_by_id, _guard_suspended, _target_member, accessible_nodes
 from .perms import Principal
 
 router = APIRouter(prefix="/api/rights")
@@ -314,9 +314,8 @@ def delete_grant(gid: str, p: Principal = Depends(current_user)):
         _, nid, uid = gid.split(":")
         ctx = _ctx_by_id(p, nid)
         ctx.need("node.members.remove")
-        m = db.one("SELECT role FROM node_members WHERE node_id=? AND user_id=?", (nid, int(uid)))
-        if not m or m["role"] == "owner":
-            raise HTTPException(400, "Ce membre ne peut pas être retiré ici")
+        _guard_suspended(ctx)
+        _target_member(ctx, int(uid))   # mêmes garde-fous que la page Membres : ni le propriétaire, ni un rang égal ou supérieur au sien
         db.run("DELETE FROM node_members WHERE node_id=? AND user_id=?", (nid, int(uid)))
         _notify_users([int(uid)])
         ctx.audit("node.member.remove", f"user#{uid} (page Droits)")
