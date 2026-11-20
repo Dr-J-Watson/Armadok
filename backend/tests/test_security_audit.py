@@ -21,7 +21,7 @@ def login(username, password=PW):
 @pytest.fixture(scope="module")
 def sa():
     root = login("root", "admin-password-1")
-    names = ("sa-owner", "sa-admin", "sa-editor", "sa-viewer", "sa-ops")
+    names = ("sa-owner", "sa-admin", "sa-editor", "sa-viewer", "sa-ops", "sa-svc")
     for n in names:
         client.post("/api/users", headers=root, json={"username": n, "password": PW, "canAddDomains": True, "maxNodes": 3})
     ids = {r["username"]: r["id"] for r in db.rows("SELECT id, username FROM users")}
@@ -65,3 +65,31 @@ def test_removing_a_member_from_the_rights_page_respects_ranks(sa):
     # un administrateur ne retire pas un pair non plus, mais retire bien un rang inférieur
     assert client.delete(f"/api/rights/grants/m:{nid}:{ids['sa-owner']}", headers=sa["h_sa-admin"]).status_code in (400, 403)
     assert client.delete(f"/api/rights/grants/m:{nid}:{ids['sa-viewer']}", headers=sa["h_sa-admin"]).status_code == 200
+
+
+# ---------- 1 : « tout Traefik » + sites.* ne suffit pas à réécrire un service ----------
+def test_saving_a_site_cannot_rewrite_a_service_without_service_rights(sa):
+    try:
+        _site_vs_service(sa)
+    finally:   # ne laisse rien derrière : d'autres tests comptent les routeurs de la zone
+        for n in ("sa-bank", "sa-autre"):
+            client.post("/api/traefik/site/delete", headers={**sa["h_sa-owner"], "X-Node": sa["nid"]}, json={"name": n, "deleteService": True})
+
+
+def _site_vs_service(sa):
+    nid = sa["nid"]
+    hn = {"X-Node": nid}
+    victim = {"name": "sa-bank", "router": {"rule": "Host(`bank.example.com`)", "service": "sa-bank-svc"}, "serviceName": "sa-bank-svc",
+              "service": {"loadBalancer": {"servers": [{"url": "http://bank:80"}]}}}
+    assert client.put("/api/traefik/site", headers={**sa["h_sa-owner"], **hn}, json=victim).status_code == 200
+    role = client.post("/api/rights/roles", headers=sa["h_sa-owner"], json={"name": "Sites sans services", "description": "", "caps": ["traefik.all", "sites.view", "sites.create", "sites.edit"]})
+    assert role.status_code == 200, role.text
+    client.post("/api/rights/grants", headers=sa["h_sa-owner"], json={"subjectType": "user", "subjectId": sa["ids"]["sa-svc"], "roleId": role.json()["id"], "nodeId": nid})
+    h = {**login("sa-svc"), **hn}
+    evil = {"name": "sa-jetable", "router": {"rule": "Host(`x.attaquant.tld`)", "service": "sa-bank-svc"}, "serviceName": "sa-bank-svc",
+            "service": {"loadBalancer": {"servers": [{"url": "http://attaquant:8080"}]}}}
+    r = client.put("/api/traefik/site", headers=h, json=evil)
+    assert r.status_code == 403 and "services" in r.text
+    # le service de la victime n'a pas bougé ; sans corps de service, la création d'un routeur reste possible
+    ok = client.put("/api/traefik/site", headers=h, json={"name": "sa-autre", "router": {"rule": "Host(`ok.example.com`)", "service": "sa-bank-svc"}})
+    assert ok.status_code == 200, ok.text

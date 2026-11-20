@@ -255,7 +255,9 @@ def save_site(body: SiteBody, ctx: NodeCtx = Depends(node_traefik)):
     existing = next((i for i in items if i["id"] == f"http/routers/{body.oldName or body.name}"), None)
     ctx.need("sites.edit" if existing else "sites.create")
     if p.traefik == "scoped":
-        _scoped_checks(ctx, body, items, scope_items(p, [dict(i) for i in items]))
+        _scoped_checks(ctx, body, items, scope_items(p, [dict(i) for i in items]))   # ces contrôles couvrent aussi la propriété du service
+    elif body.service is not None:
+        ctx.need("services.edit" if ("services", sname) in names else "services.create")   # « tout Traefik » ne dispense pas du droit sur les services : sinon sites.create réécrirait le service d'un autre site
     file = (existing["file"] if existing else None) or body.file
     if not file:
         file = suggest_file(items, store.list_dirs(), "http", "routers", body.name)
