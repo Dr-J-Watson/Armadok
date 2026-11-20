@@ -502,6 +502,7 @@ def make_targets(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
 
 class MakeBody(BaseModel):
     target: str = Field(min_length=1, max_length=100)
+    vars: dict[str, str] = Field(default_factory=dict, max_length=20)   # arguments du Makefile (NOM=valeur) : seulement ceux que la cible attend
 
 
 @router.post("/{pid}/make")
@@ -511,8 +512,9 @@ def make_run(pid: int, body: MakeBody, ctx: NodeCtx = Depends(proj_cap("projects
     if ctx.node["kind"] == "remote" and not worker_link.feature(ctx.id, "exec"):
         raise HTTPException(409, "Ce worker n'autorise pas l'exécution de commandes (WORKER_ALLOW_EXEC=true)")
     d, row = _dir(ctx, pid)
-    r = run(ctx, "p_exec_make_run", {"dir": d, "target": body.target})
-    ctx.audit("project.make", f"{row['name']} : make {body.target}")
+    r = run(ctx, "p_exec_make_run", {"dir": d, "target": body.target, "vars": body.vars})
+    names = sorted(k for k, v in body.vars.items() if v)   # les noms seulement : une valeur peut être un secret
+    ctx.audit("project.make", f"{row['name']} : make {body.target}" + (f" ({', '.join(names)})" if names else ""))
     return r
 
 

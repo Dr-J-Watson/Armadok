@@ -787,24 +787,92 @@ def make_file(d: Path) -> Path | None:
     return None
 
 
+_MAKE_REF = re.compile(r"(?<!\$)\$[({]([A-Za-z_][A-Za-z0-9_.]*)(?=[)}:])")          # $(VAR)  ${VAR}  $(VAR:a=b)  (pas $$VAR : variable du shell)
+_SHELL_REF = re.compile(r"\$\$\{([A-Za-z_][A-Za-z0-9_]*):([?-])([^}]*)\}")           # $${VAR:?message}  $${VAR:-défaut} : obligatoire / avec défaut, pour le shell de la recette
+_MAKE_DEF = re.compile(r"^(?:export\s+|override\s+)*([A-Za-z_][A-Za-z0-9_.]*)\s*(\?=|::=|:=|=|\+=)\s*(.*?)\s*$")
+_MAKE_IFNDEF = re.compile(r"^\s*ifn?def\s+([A-Za-z_][A-Za-z0-9_.]*)")
+_MAKE_IFEQ_EMPTY = re.compile(r"^\s*ifn?eq\s*[(\s]\s*\$[({]([A-Za-z_][A-Za-z0-9_.]*)[)}]\s*,\s*[)'\"]")
+MAKE_SPECIAL = frozenset({"MAKE", "MAKEFLAGS", "MAKEFILES", "MAKEFILE_LIST", "MAKECMDGOALS", "MAKELEVEL", "MAKEOVERRIDES", "GNUMAKEFLAGS", "MFLAGS", "CURDIR", "SHELL", "SHELLFLAGS", ".SHELLFLAGS",
+                          "MAKEVARIABLES", "VPATH", "SUFFIXES", "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "IFS"})
+MAX_MAKE_VARS, MAX_MAKE_VALUE = 20, 1000
+
+
+def _make_env_names() -> set[str]:
+    return set(os.environ) | {"HOME", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_CONFIG", "XDG_CONFIG_HOME", "COMPOSE_PROGRESS", "COMPOSE_ANSI", "NO_COLOR"}
+
+
 def parse_make(text: str) -> list[dict]:
-    """Cibles d'un Makefile : {name, doc, deps}. La description vient du « ## texte » en fin de ligne (convention « make help ») ou du commentaire « # texte » juste au-dessus.
-    Les règles à motif (%), les cibles spéciales (.PHONY…), les affectations (:=) et les cibles sans nom simple sont ignorées."""
+    """Cibles d'un Makefile : {name, doc, deps, vars}. La description vient du « ## texte » en fin de ligne (convention « make help ») ou du commentaire « # texte » juste au-dessus.
+    Les règles à motif (%), les cibles spéciales (.PHONY…), les affectations (:=) et les cibles sans nom simple sont ignorées.
+    `vars` : les variables que la cible (et ses dépendances) attend et que rien ne définit : {name, required, default}. « required » quand le Makefile les exige
+    (ifndef, $(error …), ${VAR:?}) ; un `VAR ?= défaut` est facultatif avec ce défaut. Les variables d'environnement et celles que le Makefile affecte lui-même sont écartées."""
     out, seen, prev, phony = [], set(), "", set()
+    defs: dict[str, tuple[str, str]] = {}
+    guards: set[str] = set()
+    recipes: dict[str, list[str]] = {}
+    cur = ""
     for line in text.splitlines()[:5000]:
         if line.startswith(".PHONY"):
             phony.update(line.split(":", 1)[-1].split())
         m = _TARGET.match(line)
         if m and not line.startswith((".", "\t")):
             name, deps, doc = m.group(1), m.group(2).strip(), (m.group(3) or "").strip()
+            deps, _sep, inline = deps.partition(";")
+            cur = name
+            if inline.strip():
+                recipes.setdefault(name, []).append(inline)
             if name not in seen and "%" not in name:
                 seen.add(name)
                 out.append({"name": name, "doc": doc or prev, "deps": deps.split()[:8]})
+        elif line.startswith("\t"):
+            if cur:
+                recipes.setdefault(cur, []).append(line)
+        elif line.strip() and not line.lstrip().startswith("#"):
+            cur = ""
+            d = _MAKE_DEF.match(line)
+            if d:
+                defs.setdefault(d.group(1), (d.group(2), d.group(3)))
         prev = line[1:].strip()[:200] if line.startswith("#") and not line.startswith("##") else (line[2:].strip()[:200] if line.startswith("##") else "")
         if line.strip() == "":
             prev = ""
+        for rx in (_MAKE_IFNDEF, _MAKE_IFEQ_EMPTY):
+            g = rx.match(line)
+            if g:
+                guards.add(g.group(1))
+        if "$(error" in line or "${error" in line:
+            guards.update(_MAKE_REF.findall(line))
+            guards.update(re.findall(r"\b[A-Z][A-Z0-9_]{1,40}\b", line))
     for t in out:
         t["phony"] = t["name"] in phony
+    env = _make_env_names()
+    by_name = {t["name"]: t for t in out}
+
+    def wanted(name: str, depth: int = 0, seen_t: frozenset = frozenset()) -> dict[str, dict]:
+        res: dict[str, dict] = {}
+        body = "\n".join(recipes.get(name, []))
+        for v in _MAKE_REF.findall(body):
+            res.setdefault(v, {"name": v, "required": v in guards, "default": None})
+        for v, kind, rest in _SHELL_REF.findall(body):
+            res.setdefault(v, {"name": v, "required": kind == "?", "default": rest if kind == "-" else None})
+        if depth < 4:
+            for dep in by_name.get(name, {}).get("deps", []):
+                if dep in by_name and dep not in seen_t:
+                    for k, v in wanted(dep, depth + 1, seen_t | {name}).items():
+                        res.setdefault(k, v)
+        return res
+    for t in out:
+        vs = []
+        for v in wanted(t["name"]).values():
+            n = v["name"]
+            if n in MAKE_SPECIAL or n in env:
+                continue
+            if n in defs:
+                op, val = defs[n]
+                if op != "?=":
+                    continue                                    # une constante du Makefile : ce n'est pas un argument
+                v = {**v, "required": False, "default": val[:200]}
+            vs.append(v)
+        t["vars"] = sorted(vs, key=lambda v: (not v["required"], v["name"]))[:12]
     return out[:150]
 
 
@@ -831,9 +899,26 @@ def p_exec_make_run(a: dict) -> dict:
     if not shutil.which("make"):
         raise StoreError("La commande make n'est pas installée dans cette image", 501)
     target = str(a.get("target") or "")
-    if target not in {t["name"] for t in parse_make(f.read_text(encoding="utf-8", errors="replace"))}:
+    targets = {t["name"]: t for t in parse_make(f.read_text(encoding="utf-8", errors="replace"))}
+    if target not in targets:
         raise StoreError("Cible inconnue dans ce Makefile", 422)
-    return _spawn(d, ["make", "-f", f.name, "--no-print-directory", "--", target], f"make {target}", "make")
+    given = a.get("vars") or {}
+    if not isinstance(given, dict) or len(given) > MAX_MAKE_VARS:
+        raise StoreError("Arguments invalides", 422)
+    allowed = {v["name"] for t in targets.values() for v in t["vars"]}
+    assigns = []
+    for k, v in given.items():
+        if not isinstance(k, str) or k not in allowed or k in MAKE_SPECIAL:
+            raise StoreError(f"Argument inconnu pour ce Makefile : {str(k)[:40]}", 422)
+        if not isinstance(v, str) or len(v) > MAX_MAKE_VALUE or any(c in v for c in "\n\r\0"):
+            raise StoreError(f"Valeur invalide pour {k}", 422)
+        if v != "":
+            assigns.append(f"{k}={v}")           # une donnée, pas du texte de commande : make reçoit des arguments, aucun shell n'est utilisé ici
+    missing = [x["name"] for x in targets[target]["vars"] if x["required"] and not given.get(x["name"])]
+    if missing:
+        raise StoreError("Argument obligatoire manquant : " + ", ".join(missing), 422)
+    shown = sorted(k for k, v in given.items() if v != "")
+    return _spawn(d, ["make", "-f", f.name, "--no-print-directory", *assigns, "--", target], f"make {target}" + (f" ({', '.join(shown)})" if shown else ""), "make")
 
 
 # ------------------------------------------------------------------ Git
