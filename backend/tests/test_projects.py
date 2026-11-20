@@ -296,7 +296,7 @@ def test_compose_actions_run_as_jobs(pj, fakecli):
         time.sleep(0.1)
     assert j["done"] and j["code"] == 0
     line = " ".join(j["lines"])
-    assert "compose --project-directory" in line and "up -d --remove-orphans --build web" in line and str(pj["base"] / "site" / "docker-compose.yml") in line
+    assert "compose --project-directory" in line and "up -d --remove-orphans --build -- web" in line and str(pj["base"] / "site" / "docker-compose.yml") in line
     assert client.get(f"/api/projects/{pid}/jobs/zzzz", headers=h).status_code == 404
     ok = client.post(f"/api/projects/{pid}/compose", headers=h, json={"action": "down"}).json()["job"]
     time.sleep(1.2)

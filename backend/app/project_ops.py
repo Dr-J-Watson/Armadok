@@ -734,8 +734,8 @@ def p_compose(a: dict) -> dict:
         raise StoreError(c["error"] or "Aucun fichier compose", 422)
     names = {s["name"] for s in c["services"]}
     svcs = [str(x) for x in (a.get("services") or [])]
-    if any(x not in names for x in svcs) or len(svcs) > 50:
-        raise StoreError("Service inconnu dans ce projet", 422)
+    if any(x not in names or x.startswith("-") for x in svcs) or len(svcs) > 50:
+        raise StoreError("Service inconnu dans ce projet", 422)   # un nom en « - » serait lu comme une option (--volumes)
     args = list(COMPOSE_ACTIONS[action])
     if action in ("up", "recreate") and a.get("build"):
         args.append("--build")
@@ -746,7 +746,7 @@ def p_compose(a: dict) -> dict:
     if action == "down" and a.get("volumes"):
         args.append("--volumes")
     fargs = [x for n in files for x in ("-f", str(d / n))]
-    argv = [_cli(), "compose", "--project-directory", str(d), *fargs, *args, *svcs]
+    argv = [_cli(), "compose", "--project-directory", str(d), *fargs, *args, *(["--", *svcs] if svcs else [])]
     label = " ".join(["compose", *(["-f " + " -f ".join(files)] if len(files) > 1 else []), *args, *svcs])
     if action in SELF_ACTIONS:
         me = _touches_self(d)
