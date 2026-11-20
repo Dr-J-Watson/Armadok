@@ -108,6 +108,32 @@ def create_role(body: RoleIn, p: Principal = Depends(current_user)):
     return _role_out(db.one("SELECT * FROM roles WHERE id=?", (rid,)))
 
 
+def _check_widening_on_grants(p: Principal, role, new_caps: set) -> None:
+    """Un rôle s'applique en direct à toutes ses attributions : l'élargir donne les droits en plus sur chacun des nœuds où il est attribué.
+    Le plafond « jamais plus que ce qu'on a » doit donc tenir sur CHAQUE nœud concerné, pas seulement sur l'union de ses nœuds."""
+    if p.is_admin:
+        return
+    added = new_caps - set(rbac.role_caps(role))
+    if not added:
+        return   # on ne fait que retirer des droits
+    owned = None
+    for g in db.rows("SELECT node_id FROM grants WHERE role_id=?", (role["id"],)):
+        if g["node_id"]:
+            try:
+                targets = [_ctx_by_id(p, g["node_id"])]
+            except HTTPException:
+                targets = []
+        else:
+            owned = owned if owned is not None else [c for c in accessible_nodes(p) if c.role == "owner"]
+            targets = owned
+        for c in targets or [None]:
+            have = c.caps if c is not None else frozenset()
+            over = added - have
+            if over:
+                where = f"sur « {c.node['name']} »" if c is not None else "sur un nœud où ce rôle est attribué et que vous n'administrez pas"
+                raise HTTPException(403, f"Ce rôle est attribué {where} : vous ne pouvez pas y ajouter " + ", ".join(capmod.CATALOG[k]["label"] for k in sorted(over)[:3]))
+
+
 @router.put("/roles/{rid}")
 def update_role(rid: int, body: RoleIn, p: Principal = Depends(current_user)):
     r = _visible_role(p, rid)
@@ -115,6 +141,7 @@ def update_role(rid: int, body: RoleIn, p: Principal = Depends(current_user)):
         raise HTTPException(400, "Un rôle prédéfini ne se modifie pas : dupliquez-le pour en faire un rôle à vous")
     ctxs = _need_admin(p)
     caps_json = _check_role_body(p, body, ctxs, rid)
+    _check_widening_on_grants(p, r, set(json.loads(caps_json)))
     db.run("UPDATE roles SET name=?, description=?, caps=? WHERE id=?", (body.name.strip(), body.description.strip(), caps_json, rid))
     users = [u for g in db.rows("SELECT subject_type, subject_id FROM grants WHERE role_id=?", (rid,)) for u in _subject_users(g["subject_type"], g["subject_id"])]
     _notify_users(users)

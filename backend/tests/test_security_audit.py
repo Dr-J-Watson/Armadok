@@ -107,3 +107,23 @@ def test_live_routers_are_limited_to_the_callers_scope(sa, monkeypatch):
     scoped = client.get("/api/traefik/live", headers={**sa["h_sa-editor"], **hn})
     assert scoped.status_code == 200 and scoped.json()["routers"] == {}      # restreint à ses domaines : aucun routeur d'autrui
     assert scoped.json()["version"] == "3" and fake["routers"]               # le reste de l'état est conservé, le cache n'est pas modifié
+
+
+# ---------- 2 : élargir un rôle ne dépasse pas le plafond de chaque nœud où il est attribué ----------
+def test_widening_a_role_respects_the_ceiling_of_every_node_it_is_granted_on(sa):
+    nid = sa["nid"]
+    h = sa["h_sa-admin"]
+    mine = client.post("/api/nodes", headers=h, json={"name": "sa-noeud-admin"})        # son propre nœud : il y a tous les droits (réunion de plafonds)
+    assert mine.status_code in (200, 201), mine.text
+    role = client.post("/api/rights/roles", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view"]})
+    assert role.status_code == 200, role.text
+    rid = role.json()["id"]
+    g = client.post("/api/rights/grants", headers=h, json={"subjectType": "user", "subjectId": sa["ids"]["sa-viewer"], "roleId": rid, "nodeId": nid})
+    assert g.status_code == 200, g.text
+    # docker.exec n'est pas donné aux administrateurs du nœud : il l'a seulement sur son propre nœud, pas ici
+    r = client.put(f"/api/rights/roles/{rid}", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view", "docker.view", "docker.logs", "docker.exec"]})
+    assert r.status_code == 403, r.text
+    assert "docker.exec" not in db.one("SELECT caps FROM roles WHERE id=?", (rid,))["caps"]
+    # retirer ou ajouter un droit qu'il a sur ce nœud reste permis
+    assert client.put(f"/api/rights/roles/{rid}", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view", "sites.create"]}).status_code == 200
+    assert client.put(f"/api/rights/roles/{rid}", headers=h, json={"name": "Anodin", "description": "", "caps": ["sites.view"]}).status_code == 200
