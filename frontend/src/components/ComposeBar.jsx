@@ -43,7 +43,7 @@ export default function ComposeBar({ id, perms, onDone, compose, chipSlot }) {
         <button type="button" className="compose-files" onClick={() => setPick({})} title="Les fichiers compose utilisés pour lancer ce projet. Cliquez pour les choisir (par exemple le principal + un override).">
           <FileStack size={13} /> <span className="muted">Fichiers :</span> <b className="mono">{compose.effective.join(' + ')}</b>
           <span className="muted small">{compose.choice.length ? '(choisis)' : compose.candidates.length > 1 ? '(automatique)' : ''}</span>
-          {compose.last.length > 0 && compose.last.join('+') !== compose.effective.join('+') && <Badge kind="warn" title="Ce projet a été lancé avec d'autres fichiers : arrêt et redémarrage reprennent ceux du dernier lancement, sauf choix explicite.">lancé avec {compose.last.join(' + ')}</Badge>}
+          {!compose.choice.length && compose.last.length > 0 && compose.last.join('+') !== compose.effective.join('+') && <Badge kind="warn" title="Ce projet a été lancé avec d'autres fichiers : arrêt et redémarrage reprennent ceux du dernier lancement, sauf choix explicite : cliquez sur les fichiers pour choisir ceux à utiliser, et cet avertissement disparaît.">lancé avec {compose.last.join(' + ')}</Badge>}
         </button>) : null
   return (
     <div className="compose-bar">
