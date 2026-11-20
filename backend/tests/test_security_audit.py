@@ -161,3 +161,26 @@ def test_env_values_do_not_leak_to_people_without_the_env_right(sa, pj, fakecli)
         if pid:
             client.delete(f"/api/projects/{pid}", headers=h_root)
         shutil.rmtree(d, ignore_errors=True)
+
+
+# ---------- pistes écartées par l'audit, corrigées par prudence ----------
+def test_credentials_inside_urls_count_as_secrets_in_templates():
+    from app import project_templates as pt
+    env = "APP_URL=https://exemple.fr\nDATABASE_URL=postgres://app:S3cr3t@db/app\nSENTRY_DSN=https://abc@o1.ingest.sentry.io/2\nREDIS_PASSWORD=x\n"
+    flags = {v["key"]: v["secret"] for v in pt.parse_env(env)}
+    assert flags == {"APP_URL": False, "DATABASE_URL": True, "SENTRY_DSN": True, "REDIS_PASSWORD": True}
+    blank = pt.blank_secrets(env)
+    assert "S3cr3t" not in blank and "APP_URL=https://exemple.fr" in blank and "DATABASE_URL=\n" in blank
+
+
+def test_node_audit_masks_visitor_ips_without_the_reveal_right(sa):
+    from app import audit as audit_log
+    nid = sa["nid"]
+    audit_log.audit("sa-owner", "ip.ban", "203.0.113.77 bloquée", node=nid)
+    role = client.post("/api/rights/roles", headers=sa["h_sa-owner"], json={"name": "Auditeur sans IP", "description": "", "caps": ["node.audit"]})
+    assert role.status_code == 200, role.text
+    g = client.post("/api/rights/grants", headers=sa["h_sa-owner"], json={"subjectType": "user", "subjectId": sa["ids"]["sa-viewer"], "roleId": role.json()["id"], "nodeId": nid})
+    assert g.status_code == 200, g.text
+    seen = client.get(f"/api/nodes/{nid}/audit", headers=sa["h_sa-viewer"])
+    assert seen.status_code == 200 and "203.0.113.77" not in seen.text and "203.0." in seen.text
+    assert "203.0.113.77" in client.get(f"/api/nodes/{nid}/audit", headers=sa["h_sa-owner"]).text

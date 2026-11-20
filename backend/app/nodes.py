@@ -552,7 +552,11 @@ def node_audit(scope: str = "node", ctx: NodeCtx = Depends(_path_cap("node.audit
         if ctx.p.role != "admin":
             raise HTTPException(403, "Réservé aux administrateurs de la plateforme")
         return audit_log.tail(300, platform=True)
-    return audit_log.tail(300, node=ctx.id, include_unscoped=ctx.node["kind"] == "local")
+    entries = audit_log.tail(300, node=ctx.id, include_unscoped=ctx.node["kind"] == "local")
+    if not ctx.can("security.ips.reveal"):   # le journal cite des adresses de visiteurs (blocages, alertes) : même règle que partout, masquées sans ce droit
+        from .alerts import mask_text
+        entries = [{**e, "detail": mask_text(e["detail"])} if isinstance(e.get("detail"), str) else e for e in entries]
+    return entries
 
 
 # ------------------------------------------------------------------ membres

@@ -10,7 +10,12 @@ import secrets
 MAX_FILES = 60
 MAX_FILE = 256 * 1024
 MAX_TOTAL = 1024 * 1024
-SECRET_KEY = re.compile(r"(PASS|SECRET|TOKEN|KEY|PWD|CREDENTIAL)", re.I)
+SECRET_KEY = re.compile(r"(PASS|SECRET|TOKEN|KEY|PWD|CREDENTIAL|DSN|CONNECTION_?STRING)", re.I)
+URL_SECRET = re.compile(r"://[^/\s:@]*:[^/\s@]+@")   # postgres://app:motdepasse@db/app : un identifiant dans l'URL, quel que soit le nom de la clé
+
+
+def is_secret(key: str, value: str = "") -> bool:
+    return bool(SECRET_KEY.search(key) or URL_SECRET.search(value))
 _ENV_LINE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 BUILTIN = [
@@ -44,7 +49,7 @@ def parse_env(text: str) -> list[dict]:
             k, v = m.group(1), m.group(2).strip()
             if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
                 v = v[1:-1]
-            out.append({"key": k, "value": v, "help": prev[:200], "secret": bool(SECRET_KEY.search(k))})
+            out.append({"key": k, "value": v, "help": prev[:200], "secret": is_secret(k, v)})
         prev = ""
     return out
 
@@ -74,7 +79,7 @@ def blank_secrets(text: str, keys: set[str] | None = None, secrets_too: bool = T
     out = []
     for line in text.splitlines():
         m = _ENV_LINE.match(line)
-        if m and ((keys and m.group(1) in keys) or (secrets_too and SECRET_KEY.search(m.group(1)))):
+        if m and ((keys and m.group(1) in keys) or (secrets_too and is_secret(m.group(1), m.group(2).strip()))):
             out.append(f"{m.group(1)}=")
         else:
             out.append(line)

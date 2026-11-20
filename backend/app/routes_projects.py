@@ -88,7 +88,7 @@ def resources(cs: list[dict]) -> dict:
 
 def _show_raw_image(ctx: NodeCtx, services: list[dict]) -> list[dict]:
     """Sans « variables .env », l'image reste écrite comme dans le fichier compose (${VAR}) : la valeur remplacée viendrait du .env."""
-    if ctx.can("projects.env"):
+    if ctx is None or ctx.can("projects.env"):   # (ctx None : appel interne sans requête, ex. tests)
         return services
     return [{**{k: v for k, v in s.items() if k != "imageRaw"}, "image": s["imageRaw"]} if s.get("imageRaw") else s for s in services]
 
