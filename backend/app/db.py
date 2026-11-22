@@ -211,6 +211,10 @@ CREATE TABLE IF NOT EXISTS project_templates (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', data TEXT NOT NULL,
   created_by TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_actions (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE, action TEXT NOT NULL, steps TEXT NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL, PRIMARY KEY (project_id, action)
+);
 CREATE TABLE IF NOT EXISTS project_hook (
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE, secret TEXT NOT NULL, deploy INTEGER NOT NULL DEFAULT 0,
   created_by TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, last_at REAL, last_result TEXT NOT NULL DEFAULT ''

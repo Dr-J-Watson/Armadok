@@ -6,6 +6,7 @@ import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Loading, Modal, SearchBox, Seg, Tabs, useUi } from '../components/ui.jsx'
 import { JobOutput } from '../components/ComposeBar.jsx'
 import { MiniBar } from '../components/DockerBits.jsx'
+import RootPicker from '../components/RootPicker.jsx'
 import { fmtSize } from '../lib/docker.js'
 import { fmtNum } from '../lib/features.js'
 import { usePersist } from '../lib/persist.js'
@@ -151,10 +152,10 @@ function ProjectTable({ rows, stat, go, onRemove, drag, onMove }) {
 
 
 function CloneModal({ onClose, onDone }) {
-  const { toast } = useUi(); const [url, setUrl] = useState(''); const [name, setName] = useState(''); const [touched, setTouched] = useState(false); const [branch, setBranch] = useState(''); const [user, setUser] = useState(''); const [token, setToken] = useState(''); const [job, setJob] = useState(null)
+  const { toast } = useUi(); const [url, setUrl] = useState(''); const [name, setName] = useState(''); const [touched, setTouched] = useState(false); const [branch, setBranch] = useState(''); const [root, setRoot] = useState(''); const [user, setUser] = useState(''); const [token, setToken] = useState(''); const [job, setJob] = useState(null)
   const sshUrl = /^(ssh:\/\/|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:)/.test(url.trim())
   const auto = (u) => (u.replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).pop() || '').replace(/[^A-Za-z0-9._-]/g, '-')
-  const go = useMutation({ mutationFn: () => api.post('/projects/git/clone', { url: url.trim(), name, branch, username: user, token }), onSuccess: (r) => setJob({ ...r, action: 'git-clone' }), onError: (e) => toast(e.message, 'err') })
+  const go = useMutation({ mutationFn: () => api.post('/projects/git/clone', { url: url.trim(), name, branch, username: user, token, root }), onSuccess: (r) => setJob({ ...r, action: 'git-clone' }), onError: (e) => toast(e.message, 'err') })
   if (job) return <JobOutput job={job} jobUrl={(j, since) => `/projects/clone-jobs/${j}?since=${since}`} onFinished={(c) => c === 0 && onDone()} onClose={onClose} />
   return (
     <Modal title="Cloner un dépôt Git" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" disabled={!url.trim() || !name} busy={go.isPending} onClick={() => go.mutate()}>Cloner</Btn></>}>
@@ -162,6 +163,7 @@ function CloneModal({ onClose, onDone }) {
         <div className="muted">Le dépôt est cloné dans le dossier des projets, puis apparaît dans « Découverts » : vous l'importez ensuite. Le jeton, s'il y en a un, n'est pas conservé (enregistrez-le dans l'onglet Git du projet pour les mises à jour).</div>
         <label>Adresse du dépôt<input className="input mono" autoFocus value={url} onChange={(e) => { setUrl(e.target.value); if (!touched) setName(auto(e.target.value)) }} placeholder="https://github.com/moi/mon-projet.git" /></label>
         <div className="row" style={{ gap: 10 }}><label className="grow">Dossier<input className="input mono" value={name} onChange={(e) => { setName(e.target.value); setTouched(true) }} /></label><label className="grow">Branche (facultatif)<input className="input" value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="main" /></label></div>
+        <RootPicker value={root} onChange={setRoot} />
         {sshUrl && <NodeKey />}
         <div className="row" style={{ gap: 10 }}><label className="grow">Utilisateur (dépôt privé)<input className="input" value={user} onChange={(e) => setUser(e.target.value)} /></label><label className="grow">Jeton d'accès<input className="input" type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} /></label></div>
       </div>

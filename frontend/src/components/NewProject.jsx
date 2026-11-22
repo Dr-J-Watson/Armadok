@@ -4,6 +4,7 @@ import { Boxes, FileCode2, FolderPlus, GitFork, Globe, Lock, Rocket, Trash2, Wan
 import { api } from '../api.js'
 import { Badge, Btn, Field, Loading, Modal, Seg, useUi } from './ui.jsx'
 import ConvertContainer from './ConvertContainer.jsx'
+import RootPicker from './RootPicker.jsx'
 import { useGo } from '../lib/nav.js'
 
 const EMPTY = '# Projet vide : ajoutez vos services sous « services: ».\nservices: {}\n'
@@ -12,9 +13,9 @@ const EMPTY = '# Projet vide : ajoutez vos services sous « services: ».\nservi
 export default function NewProject({ onClose, onClone, onTraefik, traefikMissing }) {
   const { toast } = useUi(); const go = useGo(); const qc = useQueryClient()
   const list = useQuery({ queryKey: ['convertible'], queryFn: () => api.get('/projects/from-container/list'), retry: false })
-  const [mode, setMode] = useState(null); const [name, setName] = useState(''); const [conv, setConv] = useState(null)
+  const [mode, setMode] = useState(null); const [name, setName] = useState(''); const [conv, setConv] = useState(null); const [root, setRoot] = useState('')
   const create = useMutation({
-    mutationFn: () => api.post('/projects/create', { name, files: { 'docker-compose.yml': EMPTY } }),
+    mutationFn: () => api.post('/projects/create', { name, files: { 'docker-compose.yml': EMPTY }, root }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet créé'); onClose(); if (r.id) go(`/projects/${r.id}`) }, onError: (e) => toast(e.message, 'err'),
   })
   const cs = list.data?.containers || []
@@ -29,6 +30,7 @@ export default function NewProject({ onClose, onClone, onTraefik, traefikMissing
         <div className="col">
           <div className="muted">Un dossier avec un docker-compose.yml sans service : vous le remplissez dans l'éditeur.</div>
           <Field label="Nom du dossier" help="Lettres, chiffres, « - », « _ » et « . ». Créé dans le dossier des projets de ce nœud."><input className="input mono" autoFocus style={{ maxWidth: 320 }} value={name} onChange={(e) => setName(e.target.value.trim())} placeholder="mon-projet" /></Field>
+          <RootPicker value={root} onChange={setRoot} />
         </div>
       ) : (
         <div className="np-grid">
@@ -59,13 +61,13 @@ export function PickContainer({ onPick, onClose }) {
 function FromTemplate({ onBack, onClose }) {
   const { toast, confirm } = useUi(); const go = useGo(); const qc = useQueryClient()
   const list = useQuery({ queryKey: ['templates'], queryFn: () => api.get('/projects/templates/list') })
-  const [pick, setPick] = useState(null); const [name, setName] = useState(''); const [vals, setVals] = useState({})
+  const [pick, setPick] = useState(null); const [name, setName] = useState(''); const [vals, setVals] = useState({}); const [root, setRoot] = useState('')
   const det = useQuery({ queryKey: ['template', pick], queryFn: () => api.get(`/projects/templates/${encodeURIComponent(pick)}`), enabled: !!pick })
   const vis = useMutation({ mutationFn: ({ id, shared }) => api.put(`/projects/templates/${id}`, { shared }), onSuccess: (_, v) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(v.shared ? 'Modèle partagé (valeurs des secrets vidées)' : 'Modèle privé') }, onError: (e) => toast(e.message, 'err') })
   const del = useMutation({ mutationFn: (id) => api.del(`/projects/templates/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['templates'] }); toast('Modèle supprimé') }, onError: (e) => toast(e.message, 'err') })
   const shown = (v) => (vals[v.key] ?? v.default).replace(/\{\{name\}\}/g, name)
   const create = useMutation({
-    mutationFn: () => api.post(`/projects/templates/${encodeURIComponent(pick)}/create`, { name, values: Object.fromEntries((det.data?.vars || []).map((v) => [v.key, shown(v)])) }),
+    mutationFn: () => api.post(`/projects/templates/${encodeURIComponent(pick)}/create`, { name, root, values: Object.fromEntries((det.data?.vars || []).map((v) => [v.key, shown(v)])) }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet créé : relisez-le, puis déployez-le'); onClose(); if (r.id) go(`/projects/${r.id}`) }, onError: (e) => toast(e.message, 'err'),
   })
   const d = det.data
@@ -75,6 +77,7 @@ function FromTemplate({ onBack, onClose }) {
         <div className="col gap-lg">
           {d.description && <div className="muted">{d.description}</div>}
           <Field label="Nom du dossier du projet" help="Lettres, chiffres, « - », « _ » et « . ». Remplace {{name}} dans les fichiers du modèle."><input className="input mono" autoFocus style={{ maxWidth: 320 }} value={name} onChange={(e) => setName(e.target.value.trim())} placeholder="mon-serveur" /></Field>
+          <RootPicker value={root} onChange={setRoot} />
           {d.vars.length > 0 && <div className="col" style={{ gap: 10 }}><b>Variables (.env)</b>
             {d.vars.map((v) => (
               <Field key={v.key} label={<span className="mono">{v.key}</span>} help={v.help}>

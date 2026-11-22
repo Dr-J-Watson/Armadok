@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, Boxes, FileStack, SquareTerminal, Terminal, ExternalLink, FileText, FolderCode, GitBranch, Globe, HardDrive, Image as ImageIcon, Network as NetIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
+import { Activity, Boxes, FileStack, SquareTerminal, Terminal, SlidersHorizontal, ExternalLink, FileText, FolderCode, GitBranch, Globe, HardDrive, Image as ImageIcon, Network as NetIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
@@ -9,6 +9,7 @@ import ComposeBar, { ServiceActions } from '../components/ComposeBar.jsx'
 import ProjectFiles from '../components/ProjectFiles.jsx'
 import ProjectGit from '../components/ProjectGit.jsx'
 import ProjectMake from '../components/ProjectMake.jsx'
+import ProjectActions from '../components/ProjectActions.jsx'
 import SaveTemplate from '../components/SaveTemplate.jsx'
 import { ManageTemplates } from '../components/NewProject.jsx'
 import ProjectImages from '../components/ProjectImages.jsx'
@@ -40,7 +41,7 @@ export default function Project() {
   const p = q.data; const via = !!node?.traefikVia; const tf = hasModule('traefik') || p.hosts.length > 0 || via; const [lab, kind] = STATUS[p.status] || ['', '']; const s = stat(p.containerIds); const all = [...p.services.flatMap((x) => x.containers), ...p.extra]
   const links = p.services.flatMap((x) => x.links.map((l) => ({ ...l, svc: x.name }))); const uniq = [...new Map(links.map((l) => [l.router, l])).values()]
   const tabs = [{ id: 'overview', label: 'Vue d\'ensemble', icon: <LayoutDashboard size={14} /> }, { id: 'services', label: 'Services', icon: <Boxes size={14} />, count: p.services.length },
-    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), { id: 'volumes', label: 'Volumes', icon: <HardDrive size={14} />, count: p.volumes.length || undefined }, { id: 'networks', label: 'Réseaux', icon: <NetIcon size={14} />, count: p.networks.length || undefined }, { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
+    ...(p.perms.files ? [{ id: 'files', label: 'Fichiers', icon: <FolderCode size={14} /> }] : []), ...(p.perms.git ? [{ id: 'git', label: 'Git', icon: <GitBranch size={14} /> }] : []), ...(p.hasMake ? [{ id: 'make', label: 'Makefile', icon: <Terminal size={14} /> }] : []), ...(p.perms.edit ? [{ id: 'advanced', label: 'Avancé', icon: <SlidersHorizontal size={14} /> }] : []), { id: 'volumes', label: 'Volumes', icon: <HardDrive size={14} />, count: p.volumes.length || undefined }, { id: 'networks', label: 'Réseaux', icon: <NetIcon size={14} />, count: p.networks.length || undefined }, { id: 'images', label: 'Images', icon: <ImageIcon size={14} /> }, ...(p.perms.logs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : []), ...(tf ? [{ id: 'access', label: 'Accès', icon: <Activity size={14} /> }, { id: 'sites', label: 'Sites', icon: <Workflow size={14} />, count: uniq.length || undefined }] : [])]
   const tab = tabs.some((t) => t.id === tab0) ? tab0 : 'overview'
   const cards = [['Services', `${p.running} / ${p.total}`, p.status === 'running' ? 'tous en marche' : p.status === 'partial' ? 'certains ne tournent pas' : 'rien ne tourne'], ['CPU', s ? `${s.cpu.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %` : '—', 'tous les conteneurs'], ['Mémoire', s ? fmtSize(s.mem) : '—', s?.limit ? `sur ${fmtSize(s.limit)}` : ''],
     ...(tf ? [['Requêtes', p.access ? fmtNum(p.access.hits) : '—', p.access ? `${p.access.days} derniers jours` : 'journal d\'accès non lu'], ['Erreurs', p.access ? fmtNum(p.access.errors) : '—', ''], ['Visiteurs', p.access ? fmtNum(p.access.visitors) : '—', 'adresses distinctes']] : [])]
@@ -83,6 +84,7 @@ export default function Project() {
         {tab === 'volumes' && <ProjectVolumes list={p.volumes} onContainer={(n) => set({ c: n, ct: null })} />}
         {tab === 'networks' && <ProjectNetworks list={p.networks} onContainer={(n) => set({ c: n, ct: null })} />}
         {tab === 'make' && <ProjectMake id={id} />}
+        {tab === 'advanced' && <ProjectActions id={id} />}
         {tab === 'images' && <ProjectImages id={id} perms={p.perms} />}
         {tab === 'git' && <ProjectGit id={id} perms={p.perms} />}
         {tab === 'files' && <ProjectFiles id={id} perms={p.perms} canTraefik={tf} onChanged={() => q.refetch()} />}

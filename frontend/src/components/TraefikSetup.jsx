@@ -7,6 +7,7 @@ import { Btn, Field, Modal, useUi } from './ui.jsx'
 import { DEFAULTS, dynamicFiles, problems, traefikCompose, traefikEnv } from '../lib/composeBuilder.js'
 import { usePersist } from '../lib/persist.js'
 import { useGo } from '../lib/nav.js'
+import RootPicker from './RootPicker.jsx'
 
 // Sur un hub dont la machine n'a pas de Traefik : proposer d'en créer un, sous forme de PROJET (compose + .env + configuration dynamique).
 export function useTraefikOffer() {
@@ -32,13 +33,13 @@ export function TraefikOffer({ onOpen, onDismiss }) {
 
 export default function TraefikSetup({ onClose }) {
   const { toast } = useUi(); const qc = useQueryClient(); const go = useGo()
-  const [c, setC] = useState(BASE); const [name, setName] = useState('traefik'); const set = (k) => (v) => setC((x) => ({ ...x, [k]: v }))
+  const [c, setC] = useState(BASE); const [name, setName] = useState('traefik'); const [root, setRoot] = useState(''); const set = (k) => (v) => setC((x) => ({ ...x, [k]: v }))
   const issues = problems({ ...c }).filter(([lvl, t]) => lvl === 'err' && !/interface invalide/.test(t))
   const run = useMutation({
     mutationFn: async () => {
       await api.post('/docker/networks', { name: c.network, subnet: '', internal: false }).catch(() => null)   // existe déjà : tant mieux
       const files = { 'docker-compose.yml': traefikCompose(c), '.env': traefikEnv(c), ...dynamicFiles(c) }
-      return api.post('/projects/create', { name, files })
+      return api.post('/projects/create', { name, files, root })
     },
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['projects'] }); qc.invalidateQueries({ queryKey: ['docker-networks'] }); toast('Projet Traefik créé : relisez-le puis démarrez-le'); onClose(); if (r.id) go(`/projects/${r.id}`) },
     onError: (e) => toast(e.message, 'err'),
@@ -47,6 +48,7 @@ export default function TraefikSetup({ onClose }) {
     <Modal wide title="Créer un projet Traefik" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={run.isPending} disabled={issues.length > 0 || !name.trim()} onClick={() => run.mutate()} title="Écrit les fichiers dans le dossier des projets ; rien n'est démarré tant que vous ne l'avez pas relu"><Rocket size={14} /> Créer le projet</Btn></>}>
       <div className="col gap-lg">
         <div className="muted">Traefik est le point d'entrée de vos sites : il reçoit les visiteurs sur les ports 80 et 443, obtient les certificats HTTPS et envoie chaque adresse vers la bonne application. Armadok l'administre ensuite (sites, protections, certificats). Les fichiers sont créés dans un nouveau projet que vous pouvez relire et modifier avant de le démarrer.</div>
+        <RootPicker value={root} onChange={setRoot} />
         <div className="fgrid">
           <Field label="Nom du dossier du projet" help="Créé dans le dossier des projets de ce nœud."><input className="input mono" value={name} onChange={(e) => setName(e.target.value.trim())} /></Field>
           <Field label="Adresse e-mail pour Let's Encrypt" help="Obligatoire pour le HTTPS : Let's Encrypt s'en sert pour vous prévenir avant l'expiration d'un certificat."><input className="input" type="email" value={c.email} onChange={(e) => set('email')(e.target.value)} placeholder="vous@exemple.fr" /></Field>

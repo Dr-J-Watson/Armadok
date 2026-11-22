@@ -249,6 +249,13 @@ class CreateBody(BaseModel):
     name: str = Field(min_length=1, max_length=61)
     files: dict[str, str] = Field(min_length=1, max_length=30)
     tags: str = Field(default="", max_length=200)
+    root: str = Field(default="", max_length=500)   # dossier de stockage choisi (parmi les racines du nœud) ; vide = le premier
+
+
+@router.get("/roots")
+def project_roots(ctx: NodeCtx = Depends(proj_cap("projects.import"))):
+    """Les dossiers de stockage de ce nœud : à la création d'un projet, on choisit où il sera écrit quand il y en a plusieurs."""
+    return {"roots": run(ctx, "p_info")["roots"]}
 
 
 @router.post("/create")
@@ -257,7 +264,7 @@ def create_project(body: CreateBody, ctx: NodeCtx = Depends(proj_cap("projects.i
     ctx.need("projects.edit")
     if any(project_ops.is_env(r) for r in body.files):
         ctx.need("projects.env")
-    made = run(ctx, "p_create", {"name": body.name, "files": body.files})
+    made = run(ctx, "p_create", {"name": body.name, "files": body.files, "root": body.root})
     ctx.audit("project.create", made["name"])
     r = _mark(ctx, PathsBody(paths=[made["path"]], tags=body.tags), "managed")
     row = db.one("SELECT id FROM projects WHERE node_id=? AND path=?", (ctx.id, made["path"]))
@@ -469,6 +476,76 @@ class ComposeBody(BaseModel):
     files: list[str] = Field(default_factory=list, max_length=10)   # fichiers compose de cette commande ; vide = choix du projet, sinon automatique
 
 
+# ------------------------------------------------------------------ actions personnalisées (onglet « Avancé »)
+ACTION_NAMES = project_ops.STEP_ACTIONS
+
+
+def _clean_steps(raw: list[dict]) -> list[dict]:
+    """Les étapes telles qu'on les garde : seulement les champs connus, bornés ; la validité de fond (cible make existante…) est revérifiée à chaque lancement."""
+    out = []
+    for st in raw:
+        kind = st.get("kind")
+        if kind == "compose" and st.get("action") in ACTION_NAMES:
+            out.append({"kind": "compose", "action": st["action"]})
+        elif kind == "make" and isinstance(st.get("target"), str) and 0 < len(st["target"]) <= 100:
+            v = st.get("vars") if isinstance(st.get("vars"), dict) else {}
+            out.append({"kind": "make", "target": st["target"], "vars": {str(k)[:60]: str(x)[:project_ops.MAX_MAKE_VALUE] for k, x in list(v.items())[:project_ops.MAX_MAKE_VARS]}})
+        elif kind == "cmd" and isinstance(st.get("line"), str):
+            project_ops._cmd_argv(st["line"])   # lève une 422 si la ligne est invalide
+            out.append({"kind": "cmd", "line": st["line"]})
+        else:
+            raise HTTPException(422, "Étape invalide")
+    return out
+
+
+def _needs_exec(steps: list[dict]) -> bool:
+    return any(s["kind"] != "compose" for s in steps)
+
+
+def _check_exec(ctx: NodeCtx) -> None:
+    ctx.need("docker.exec")
+    if ctx.node["kind"] == "remote" and not worker_link.feature(ctx.id, "exec"):
+        raise HTTPException(409, "Ce worker n'autorise pas l'exécution de commandes (WORKER_ALLOW_EXEC=true)")
+
+
+def _custom_steps(pid: int, action: str) -> list[dict] | None:
+    r = db.one("SELECT steps FROM project_actions WHERE project_id=? AND action=?", (pid, action))
+    return json.loads(r["steps"]) if r else None
+
+
+@router.get("/{pid}/actions")
+def actions_get(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    """Les actions personnalisées du projet (réservé à qui peut le modifier : une commande peut contenir un secret)."""
+    _dir(ctx, pid)
+    rows = {r["action"]: json.loads(r["steps"]) for r in db.rows("SELECT action, steps FROM project_actions WHERE project_id=?", (pid,))}
+    can_exec = ctx.can("docker.exec") and (ctx.node["kind"] != "remote" or bool(worker_link.feature(ctx.id, "exec")))
+    return {"actions": rows, "names": list(ACTION_NAMES), "canExec": can_exec, "max": project_ops.MAX_STEPS}
+
+
+class ActionBody(BaseModel):
+    steps: list[dict] = Field(default_factory=list, max_length=project_ops.MAX_STEPS)   # vide = retour au comportement normal
+
+
+@router.put("/{pid}/actions/{action}")
+def actions_set(pid: int, action: str, body: ActionBody, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    """Remplace le comportement d'une action (lancer, arrêter, redéployer…) par une suite d'étapes ; une suite vide rétablit le comportement normal."""
+    _, row = _dir(ctx, pid)
+    if action not in ACTION_NAMES:
+        raise HTTPException(404, "Action inconnue")
+    steps = _clean_steps(body.steps)
+    if _needs_exec(steps):
+        _check_exec(ctx)   # une cible make ou une commande : le droit du terminal, comme un lancement de make
+    old = _custom_steps(pid, action)
+    if old and _needs_exec(old):
+        _check_exec(ctx)   # modifier ou retirer une commande déjà là demande le même droit que l'avoir écrite
+    if steps:
+        db.run("INSERT OR REPLACE INTO project_actions(project_id, action, steps, updated_by, updated_at) VALUES(?,?,?,?,?)", (pid, action, json.dumps(steps), ctx.p.username, db.now()))
+    else:
+        db.run("DELETE FROM project_actions WHERE project_id=? AND action=?", (pid, action))
+    ctx.audit("project.actions.set", f"{row['name']} : {action} → " + (" + ".join(s["kind"] for s in steps) or "comportement normal"))   # les types seulement : une commande peut contenir un secret
+    return {"ok": True, "steps": steps}
+
+
 @router.post("/{pid}/compose")
 def compose(pid: int, body: ComposeBody, ctx: NodeCtx = Depends(proj_cap("projects.deploy"))):
     if body.action == "config":
@@ -480,6 +557,14 @@ def compose(pid: int, body: ComposeBody, ctx: NodeCtx = Depends(proj_cap("projec
     if not files and body.action in LAUNCHED_ACTIONS:   # arrêter / redémarrer / supprimer : avec ce qui a servi au dernier lancement, pas forcément le défaut
         cs = [c for c in run(ctx, "d_containers", {"all": True})["containers"] if c.get("workingDir") and os.path.normpath(c["workingDir"]) == os.path.normpath(d)]
         files = _last_files(d, cs)
+    custom = _custom_steps(pid, body.action) if not body.services and not body.volumes and body.action in ACTION_NAMES else None   # une action sur des services précis, ou « + volumes », reste la commande normale
+    if custom:
+        needs = _needs_exec(custom)
+        if needs:
+            _check_exec(ctx)   # à chaque lancement : le droit a pu être retiré depuis l'enregistrement
+        r = run(ctx, "p_exec_steps" if needs else "p_chain", {"dir": d, "action": body.action, "steps": custom, "files": files})
+        ctx.audit(f"project.compose.{body.action}", f"{row['name']} (action personnalisée, {len(custom)} étape{'s' if len(custom) > 1 else ''})")
+        return r
     args = {"dir": d, "action": body.action, "services": body.services, "build": body.build, "pull": body.pull, "noCache": body.noCache, "volumes": body.volumes, "files": files}
     try:
         r = run(ctx, "p_compose", args)
@@ -942,6 +1027,7 @@ def template_delete(tid: str, ctx: NodeCtx = Depends(proj_cap("projects.import")
 class TemplateCreate(BaseModel):
     name: str = Field(min_length=1, max_length=61)
     values: dict[str, str] = Field(default_factory=dict, max_length=200)
+    root: str = Field(default="", max_length=500)
 
 
 @router.post("/templates/{tid}/create")
@@ -953,7 +1039,7 @@ def template_create(tid: str, body: TemplateCreate, ctx: NodeCtx = Depends(proj_
         ctx.need("projects.env")
     known = {v["key"] for v in project_templates.variables(t["files"])}
     files = project_templates.render(t["files"], body.name, {k: v for k, v in body.values.items() if k in known})
-    made = run(ctx, "p_create", {"name": body.name, "files": files})
+    made = run(ctx, "p_create", {"name": body.name, "files": files, "root": body.root})
     ctx.audit("project.template.use", f"{t['name']} → {made['name']}")
     r = _mark(ctx, PathsBody(paths=[made["path"]], tags=""), "managed")
     row = db.one("SELECT id FROM projects WHERE node_id=? AND path=?", (ctx.id, made["path"]))
@@ -1003,6 +1089,7 @@ class FromContainerBody(BaseModel):
     name: str = Field(min_length=1, max_length=61)      # dossier du nouveau projet
     replace: bool = False                                # arrête l'ancien conteneur (renommé, gardé pour revenir en arrière) et déploie le projet
     confirm: str = Field(default="", max_length=200)    # le nom du dossier, exigé pour remplacer le conteneur de Traefik
+    root: str = Field(default="", max_length=500)
 
 
 @router.post("/from-container")
@@ -1019,7 +1106,7 @@ def from_container(body: FromContainerBody, ctx: NodeCtx = Depends(proj_cap("pro
     files = {"docker-compose.yml": conv["compose"]}
     if conv["env"]:
         files[".env"] = conv["env"]
-    made = run(ctx, "p_create", {"name": body.name, "files": files})
+    made = run(ctx, "p_create", {"name": body.name, "files": files, "root": body.root})
     ctx.audit("project.from_container", f"{c['name']} → {made['name']}")
     r = _mark(ctx, PathsBody(paths=[made["path"]], tags=""), "managed")
     row = db.one("SELECT id FROM projects WHERE node_id=? AND path=?", (ctx.id, made["path"]))
@@ -1209,6 +1296,7 @@ class CloneBody(BaseModel):
     branch: str = Field(default="", max_length=100)
     username: str = Field(default="", max_length=100)
     token: str = Field(default="", max_length=500)
+    root: str = Field(default="", max_length=500)
 
 
 @router.post("/git/clone")
@@ -1216,7 +1304,7 @@ def git_clone(body: CloneBody, ctx: NodeCtx = Depends(proj_cap("projects.git")))
     """Clone un dépôt dans la racine des projets (le projet apparaît ensuite dans « Découverts »). Le jeton n'est PAS gardé."""
     ctx.need("projects.import")
     ssh = _ssh_key(ctx.id)[0] if not body.url.lower().startswith(("http://", "https://")) else ""   # adresse SSH : la clé du nœud, si elle existe
-    r = run(ctx, "p_git_clone", {"url": body.url, "name": body.name, "branch": body.branch, "user": body.username, "token": body.token, "sshKey": ssh})
+    r = run(ctx, "p_git_clone", {"url": body.url, "name": body.name, "branch": body.branch, "user": body.username, "token": body.token, "sshKey": ssh, "root": body.root})
     ctx.audit("project.git.clone", f"{body.name} ← {project_ops._strip_url(body.url)}")
     return r
 

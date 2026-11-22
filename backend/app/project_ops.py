@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import secrets
 import shutil
 import socket
@@ -724,7 +725,8 @@ def _spawn_detached(me: dict, d: Path, argv: list[str], label: str, action: str)
     return {"job": jid, "label": label}
 
 
-def p_compose(a: dict) -> dict:
+def _compose_cmd(a: dict) -> tuple[Path, list[str], str]:
+    """Valide une action compose et en construit la commande : (dossier, argv, libellé). Rien n'est lancé."""
     d = safe_dir(a.get("dir"))
     action = str(a.get("action"))
     if action not in COMPOSE_ACTIONS:
@@ -749,11 +751,113 @@ def p_compose(a: dict) -> dict:
     fargs = [x for n in files for x in ("-f", str(d / n))]
     argv = [_cli(), "compose", "--project-directory", str(d), *fargs, *args, *(["--", *svcs] if svcs else [])]
     label = " ".join(["compose", *(["-f " + " -f ".join(files)] if len(files) > 1 else []), *args, *svcs])
+    return d, argv, label
+
+
+def p_compose(a: dict) -> dict:
+    d, argv, label = _compose_cmd(a)
+    action = str(a.get("action"))
     if action in SELF_ACTIONS:
         me = _touches_self(d)
         if me:
             return _spawn_detached(me, d, argv, label, action)
     return _spawn(d, argv, label, action)
+
+
+# ------------------------------------------------------------------ une action personnalisée : plusieurs étapes d'affilée
+MAX_STEPS = 10
+STEP_ACTIONS = tuple(k for k in COMPOSE_ACTIONS if k not in ("config", "ps"))   # « config » affiche les valeurs du .env : jamais dans une suite
+
+
+def _cmd_argv(line: str) -> list[str]:
+    """Une commande libre en liste d'arguments : aucun shell n'est utilisé (pas de « ; », de « && », de redirection ni de $(…)). Pour un script, une cible make."""
+    if not isinstance(line, str) or not line.strip() or len(line) > 2000 or any(c in line for c in "\n\r\0"):
+        raise StoreError("Commande invalide (une seule ligne, 2000 caractères au plus)", 422)
+    try:
+        argv = shlex.split(line)
+    except ValueError:
+        raise StoreError("Commande invalide : guillemets non fermés", 422)
+    if not argv:
+        raise StoreError("Commande vide", 422)
+    return argv
+
+
+def _step_cmd(d: Path, st: dict, files, allow_exec: bool) -> tuple[list[str], str]:
+    kind = st.get("kind") if isinstance(st, dict) else None
+    if kind == "compose":
+        _, argv, label = _compose_cmd({"dir": str(d), "action": st.get("action"), "files": files})
+        return argv, label
+    if not allow_exec:
+        raise StoreError("Cette étape exécute des commandes : elle demande le droit du terminal", 403)
+    if kind == "make":
+        return _make_cmd({"dir": str(d), "target": st.get("target"), "vars": st.get("vars") or {}})
+    if kind == "cmd":
+        argv = _cmd_argv(st.get("line"))
+        return argv, argv[0] + (" …" if len(argv) > 1 else "")   # le libellé n'a pas les arguments : ils peuvent contenir un secret
+    raise StoreError("Type d'étape inconnu", 422)
+
+
+def _run_chain(job: dict, steps: list[tuple[list[str], str]], d: Path) -> None:
+    def add(line: str) -> None:
+        if len(job["lines"]) < MAX_JOB_LINES:
+            job["lines"].append(line[:2000])
+        elif len(job["lines"]) == MAX_JOB_LINES:
+            job["lines"].append("… sortie tronquée")
+    job["code"] = 0
+    for i, (argv, label) in enumerate(steps, 1):
+        add(f"▶ Étape {i}/{len(steps)} : {label}")
+        try:
+            p = subprocess.Popen(argv, cwd=d, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=_env())
+            timer = threading.Timer(JOB_TIMEOUT, p.kill)
+            timer.start()
+            try:
+                for line in p.stdout:
+                    add(line.rstrip("\n"))
+                code = p.wait()
+            finally:
+                timer.cancel()
+        except OSError as e:
+            add(f"Impossible de lancer la commande : {e}")
+            code = 127
+        if code != 0:
+            add(f"✖ Étape {i} en échec (code {code}) : les étapes suivantes ne sont pas lancées.")
+            job["code"] = code
+            break
+    job["ended"], job["done"] = time.time(), True
+
+
+def _chain(a: dict, allow_exec: bool) -> dict:
+    d = safe_dir(a.get("dir"))
+    raw = a.get("steps")
+    if not isinstance(raw, list) or not raw or len(raw) > MAX_STEPS:
+        raise StoreError(f"Une à {MAX_STEPS} étapes", 422)
+    files = a.get("files") or []
+    built = [_step_cmd(d, st, files, allow_exec) for st in raw]   # tout est validé AVANT de lancer la première étape
+    action = str(a.get("action") or "steps")
+    if any(st.get("kind") == "compose" and st.get("action") in SELF_ACTIONS for st in raw) and _touches_self(d):
+        raise StoreError("Ce projet contient Armadok lui-même : une suite d'étapes ne peut pas le redémarrer (il s'arrêterait en plein milieu). Utilisez l'action simple.", 409)
+    label = f"{action} · {len(built)} étape{'s' if len(built) > 1 else ''}"
+    with _jobs_lock:
+        if any(j["dir"] == str(d) and not j["done"] for j in _jobs.values()):
+            raise StoreError("Une commande est déjà en cours sur ce projet : attendez qu'elle se termine", 409)
+        for k in sorted(_jobs, key=lambda k: _jobs[k]["started"])[:-19]:
+            if _jobs[k]["done"]:
+                del _jobs[k]
+        jid = secrets.token_hex(6)
+        job = {"id": jid, "dir": str(d), "label": label, "action": action, "lines": [], "done": False, "code": None, "started": time.time(), "ended": None, "env": None}
+        _jobs[jid] = job
+    threading.Thread(target=_run_chain, args=(job, built, d), name=f"chain-{jid}", daemon=True).start()
+    return {"job": jid, "label": label}
+
+
+def p_chain(a: dict) -> dict:
+    """Une suite d'étapes docker compose seulement (pas de commande libre)."""
+    return _chain(a, False)
+
+
+def p_exec_steps(a: dict) -> dict:
+    """Une suite d'étapes qui peut contenir une cible make ou une commande : même niveau de droit que le terminal (un worker la refuse sans WORKER_ALLOW_EXEC)."""
+    return _chain(a, True)
 
 
 def p_job(a: dict) -> dict:
@@ -891,8 +995,8 @@ def p_make_targets(a: dict) -> dict:
     return {"file": f.name, "targets": parse_make(text), "make": bool(shutil.which("make"))}
 
 
-def p_exec_make_run(a: dict) -> dict:
-    """Lance UNE cible du Makefile du projet (nommée dans le fichier : jamais de commande libre). Exécute des commandes : même niveau de droit que le terminal."""
+def _make_cmd(a: dict) -> tuple[list[str], str]:
+    """Valide une cible make et ses arguments, et en construit la commande : (argv, libellé). Rien n'est lancé."""
     d = safe_dir(a.get("dir"))
     f = make_file(d)
     if not f:
@@ -919,7 +1023,13 @@ def p_exec_make_run(a: dict) -> dict:
     if missing:
         raise StoreError("Argument obligatoire manquant : " + ", ".join(missing), 422)
     shown = sorted(k for k, v in given.items() if v != "")
-    return _spawn(d, ["make", "-f", f.name, "--no-print-directory", *assigns, "--", target], f"make {target}" + (f" ({', '.join(shown)})" if shown else ""), "make")
+    return ["make", "-f", f.name, "--no-print-directory", *assigns, "--", target], f"make {target}" + (f" ({', '.join(shown)})" if shown else "")
+
+
+def p_exec_make_run(a: dict) -> dict:
+    """Lance UNE cible du Makefile du projet (nommée dans le fichier : jamais de commande libre). Exécute des commandes : même niveau de droit que le terminal."""
+    argv, label = _make_cmd(a)
+    return _spawn(safe_dir(a.get("dir")), argv, label, "make")
 
 
 # ------------------------------------------------------------------ Git
@@ -1078,9 +1188,7 @@ def p_git_clone(a: dict) -> dict:
     rs = roots()
     if not rs:
         raise StoreError("Aucun dossier de projets configuré (PROJECT_ROOTS)", 409)
-    base = Path(str(a.get("root") or "")).resolve() if a.get("root") else rs[0]
-    if base not in rs:
-        raise StoreError("Ce dossier n'est pas une racine autorisée", 403)
+    base = pick_root(a.get("root"), rs)
     target = base / name
     if target.exists():
         raise StoreError(f"« {name} » existe déjà dans {base}", 409)
@@ -1089,8 +1197,21 @@ def p_git_clone(a: dict) -> dict:
     return _spawn(base, [_gitbin(), *args], "git clone " + _strip_url(url), "git-clone", env=_git_env(None, str(a.get("token") or ""), str(a.get("user") or ""), str(a.get("sshKey") or "")), cwd=base, key=str(target))
 
 
+def pick_root(raw, rs: list[Path]) -> Path:
+    """La racine choisie pour un nouveau projet : celle demandée si elle fait partie des racines autorisées, sinon la première (une seule racine = pas de choix)."""
+    if not raw:
+        return rs[0]
+    try:
+        base = Path(str(raw)).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise StoreError("Chemin invalide", 422)
+    if base not in rs:
+        raise StoreError("Ce dossier n'est pas une racine autorisée", 403)
+    return base
+
+
 def p_create(a: dict) -> dict:
-    """Crée un NOUVEAU dossier de projet (dans la première racine autorisée) avec ses fichiers de départ. Refuse un dossier qui existe déjà."""
+    """Crée un NOUVEAU dossier de projet (dans la racine choisie, par défaut la première) avec ses fichiers de départ. Refuse un dossier qui existe déjà."""
     name = str(a.get("name") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,60}", name):
         raise StoreError("Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)", 422)
@@ -1100,9 +1221,10 @@ def p_create(a: dict) -> dict:
     files = a.get("files")
     if not isinstance(files, dict) or not files or len(files) > 30:
         raise StoreError("Fichiers de départ invalides", 422)
-    d = rs[0] / name
+    base = pick_root(a.get("root"), rs)
+    d = base / name
     if d.exists() or d.is_symlink():
-        raise StoreError(f"Un dossier « {name} » existe déjà dans {rs[0]}", 409)
+        raise StoreError(f"Un dossier « {name} » existe déjà dans {base}", 409)
     d.mkdir(mode=0o755)
     try:
         for rel, content in files.items():
@@ -1120,7 +1242,7 @@ def p_create(a: dict) -> dict:
     return {"path": str(d), "name": name}
 
 
-OPS = {"p_make_targets": p_make_targets, "p_exec_make_run": p_exec_make_run, "p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
+OPS = {"p_make_targets": p_make_targets, "p_exec_make_run": p_exec_make_run, "p_chain": p_chain, "p_exec_steps": p_exec_steps, "p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
        "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy,
        "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
 

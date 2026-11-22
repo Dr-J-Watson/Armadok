@@ -5,14 +5,15 @@ import { api } from '../api.js'
 import { Badge, Btn, Field, Loading, Modal, useUi } from './ui.jsx'
 import { JobOutput } from './ComposeBar.jsx'
 import { useGo } from '../lib/nav.js'
+import RootPicker from './RootPicker.jsx'
 
 // Un conteneur lancé à la main (docker run) devient un projet : docker-compose.yml + .env (les variables d'environnement y vont, le compose y renvoie).
 export default function ConvertContainer({ container, onClose }) {
   const { toast } = useUi(); const go = useGo()
   const pv = useQuery({ queryKey: ['convert-preview', container], queryFn: () => api.post('/projects/from-container/preview', { container }), retry: false })
-  const [name, setName] = useState(null); const [replace, setReplace] = useState(false); const [confirm, setConfirm] = useState(''); const [made, setMade] = useState(null)
+  const [name, setName] = useState(null); const [replace, setReplace] = useState(false); const [confirm, setConfirm] = useState(''); const [made, setMade] = useState(null); const [root, setRoot] = useState('')
   const d = pv.data; const folder = name ?? d?.name ?? ''
-  const run = useMutation({ mutationFn: () => api.post('/projects/from-container', { container, name: folder, replace, confirm: confirm || folder }), onSuccess: (r) => { setMade(r); if (!r.job) { toast('Projet créé : relisez-le, puis déployez-le'); go(`/projects/${r.id}`); onClose() } }, onError: (e) => toast(e.message, 'err') })
+  const run = useMutation({ mutationFn: () => api.post('/projects/from-container', { container, name: folder, root, replace, confirm: confirm || folder }), onSuccess: (r) => { setMade(r); if (!r.job) { toast('Projet créé : relisez-le, puis déployez-le'); go(`/projects/${r.id}`); onClose() } }, onError: (e) => toast(e.message, 'err') })
   if (made?.job) return <JobOutput id={made.id} job={{ ...made.job, action: 'up' }} onClose={() => { go(`/projects/${made.id}`); onClose() }} />
   return (
     <Modal wide title={`Convertir « ${container} » en projet`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn>
@@ -21,6 +22,7 @@ export default function ConvertContainer({ container, onClose }) {
         <div className="col gap-lg">
           <div className="muted">Ce conteneur a été lancé sans projet compose (docker run, ou un autre outil). Armadok relit sa configuration et écrit un <code>docker-compose.yml</code> et un <code>.env</code> équivalents dans un nouveau dossier. <b>Rien n'est démarré ni arrêté</b> tant que vous ne le demandez pas ci-dessous.</div>
           <Field label="Nom du dossier du projet" help="Créé dans le dossier des projets de ce nœud."><input className="input mono" style={{ maxWidth: 320 }} value={folder} onChange={(e) => setName(e.target.value.trim())} /></Field>
+          <RootPicker value={root} onChange={setRoot} />
           {d.warnings.map((w, i) => <div key={i} className="banner warn" style={{ margin: 0 }}><TriangleAlert size={14} /> {w}</div>)}
           <div className="row wrap" style={{ gap: 6 }}>
             <Badge>{d.envKeys.length} variable{d.envKeys.length > 1 ? 's' : ''} → .env</Badge>

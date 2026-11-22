@@ -25,7 +25,7 @@ OPS_BY_MODULE = {
                 "upsert", "delete_item", "live", "mkdir", "rmdir", "move_dir", "reorganize", "toggle", "certs"),
     "docker": ("d_info", "d_containers", "d_container", "d_action", "d_remove_container", "d_logs", "d_stats", "d_images", "d_networks", "d_volumes",
                "d_remove_image", "d_remove_network", "d_remove_volume", "d_prune",
-               "p_create", "p_make_targets", "p_exec_make_run", "p_info", "p_discover", "p_project", "p_tree", "p_read", "p_write", "p_delete_file", "p_mkdir", "p_move", "p_delete_dir", "p_history", "p_history_content", "p_validate", "p_compose", "p_job", "p_destroy",
+               "p_create", "p_make_targets", "p_exec_make_run", "p_chain", "p_exec_steps", "p_info", "p_discover", "p_project", "p_tree", "p_read", "p_write", "p_delete_file", "p_mkdir", "p_move", "p_delete_dir", "p_history", "p_history_content", "p_validate", "p_compose", "p_job", "p_destroy",
                "p_git_status", "p_git_log", "p_git_run", "p_git_clone",
                "d_spec", "d_rename", "d_image", "d_network", "d_network_create", "d_network_connect", "d_network_disconnect", "d_volume", "d_exec_volls", "d_exec_volread",
                "d_exec_open", "d_exec_read", "d_exec_write", "d_exec_resize", "d_exec_close"),   # terminal : session tenue par le worker, refusé sans WORKER_ALLOW_EXEC   # exécutées par host_ops.handle (docker_ops + project_ops : même liste, vérifiée par un test)
