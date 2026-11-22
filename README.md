@@ -198,7 +198,7 @@ curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
 make install
 ```
 
-Le script propose **trois installations** :
+Chaque question de l'assistant a un titre, une explication, un exemple et, si elle est facultative, le rappel qu'on peut la passer avec Entrée. Le script propose **trois installations** :
 
 | Choix | Ce qu'il fait | Écrit |
 |---|---|---|

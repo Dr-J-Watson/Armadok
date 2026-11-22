@@ -126,11 +126,20 @@ warnl() { printf '  %s⚠%s %s\n' "$$Y" "$$Z" "$$*"; }
 fail() { printf '  %s✗%s %s\n' "$$R" "$$Z" "$$*" >&2; }
 die() { fail "$$*"; exit 1; }
 cmd() { printf '      %s%s%s\n' "$$B" "$$*" "$$Z"; }
-# ask : question avec valeur par défaut, ou valeur préremplie par une variable (3e argument). asks : idem sans écho (secrets). yes / confirm : o/N, O/n.
-ask() { local v="" pre="$${3:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : %s\n' "$$G" "$$Z" "$$1" "$$v" >&2; elif [ "$${FILES_ONLY:-}" != 1 ]; then read -r -p "  $${C}➜$${Z} $$1 $${D}[$$2]$${Z} : " v || true; fi; printf '%s' "$${v:-$$2}"; }
-asks() { local v="" pre="$${2:-}"; if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$1" >&2; elif [ "$${FILES_ONLY:-}" != 1 ]; then read -rs -p "  $${C}➜$${Z} $$1 : " v || true; echo >&2; fi; printf '%s' "$$v"; }
-yes() { local v=""; [ "$${FILES_ONLY:-}" = 1 ] && return 1; read -r -p "  $${C}➜$${Z} $$1 $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
-confirm() { local v=""; [ "$${FILES_ONLY:-}" = 1 ] && return 0; read -r -p "  $${C}➜$${Z} $$1 $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
+# Une question = un titre, quelques lignes d'explication (avec un exemple), puis l'invite sur sa propre ligne.
+#   ask "titre" "défaut" [VARIABLE] ["explication"…] : la variable déjà renseignée répond d'office (rien n'est demandé).
+#   asks "titre" [VARIABLE] ["explication"…] : sans écho (secrets).   yes / confirm "titre" ["explication"…] : o/N, O/n.
+show_q() { local l; printf '\n  %s▸ %s%s\n' "$$B" "$$1" "$$Z" >&2; shift; for l in "$$@"; do printf '      %s%s%s\n' "$$D" "$$l" "$$Z" >&2; done; }
+ask() { local v="" q="$$1" def="$${2:-}" pre="$${3:-}"; if [ $$# -ge 3 ]; then shift 3; else shift $$#; fi
+  if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : %s\n' "$$G" "$$Z" "$$q" "$$v" >&2
+  elif [ "$${FILES_ONLY:-}" != 1 ]; then show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse$${def:+ $${D}[$$def]$${Z}} : " v || true; fi
+  printf '%s' "$${v:-$$def}"; }
+asks() { local v="" q="$$1" pre="$${2:-}"; if [ $$# -ge 2 ]; then shift 2; else shift $$#; fi
+  if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$q" >&2
+  elif [ "$${FILES_ONLY:-}" != 1 ]; then show_q "$$q" "$$@"; read -rs -p "      $${C}➜$${Z} Saisissez ou collez ici (rien ne s'affiche) : " v || true; echo >&2; fi
+  printf '%s' "$$v"; }
+yes() { local v="" q="$$1"; shift; [ "$${FILES_ONLY:-}" = 1 ] && return 1; show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
+confirm() { local v="" q="$$1"; shift; [ "$${FILES_ONLY:-}" = 1 ] && return 0; show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
 image_ref() { case "$$1" in "") echo "$(IMAGE)";; */*|*:*) echo "$$1";; *) echo "$(IMAGE_REPO):$$1";; esac; }
 # pick_image VARIABLE_À_REMPLIR : demande « latest » ou un numéro de version précis (ex. 1.0.0) ; sauté si IMAGE a été fourni (IMAGE=… ou variable d'environnement)
 pick_image() {
@@ -138,8 +147,8 @@ pick_image() {
   if [ "$${FILES_ONLY:-}" = 1 ]; then ans="$(IMAGE)"
   elif [ -n "$(if $(filter file,$(origin IMAGE)),,1)" ]; then ans="$(IMAGE)"; printf '  %s✓%s Image : %s\n' "$$G" "$$Z" "$$ans" >&2
   else
-    hint "Quelle version installer ? « latest » est la plus récente publiée ; un numéro précis (ex. 1.0.0) fige la version. Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
-    read -r -p "  $${C}➜$${Z} Version d'Armadok $${D}[latest]$${Z} : " ans || true
+    show_q "Quelle version d'Armadok installer ?" "« latest » est la plus récente publiée ; un numéro précis fige la version." "Exemple : 1.11.1" "Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
+    read -r -p "      $${C}➜$${Z} Votre réponse $${D}[latest]$${Z} : " ans || true
     ans="$$(image_ref "$${ans:-latest}")"
   fi
   printf -v "$$1" '%s' "$$ans"
@@ -157,7 +166,7 @@ choose_mode() {
   printf '  %s2)%s %sSeulement le .env et le compose%s\n' "$$C" "$$Z" "$$B" "$$Z"
   hint "     Aucune question : valeurs par défaut et secrets générés, rien n'est démarré. Vous modifiez ensuite les fichiers à votre rythme."
   printf '\n'
-  case "$$(ask "Votre choix" "1" INSTALL_MODE)" in 2|f|fichiers|files) FILES_ONLY=1;; *) FILES_ONLY="";; esac
+  case "$$(ask "Quel mode ?" "1" INSTALL_MODE "1 = mode interactif (questions et vérifications)" "2 = seulement le .env et le compose (aucune question, rien n'est démarré)")" in 2|f|fichiers|files) FILES_ONLY=1;; *) FILES_ONLY="";; esac
   echo
 }
 as_root() { if [ "$$(id -u)" = 0 ]; then "$$@"; else sudo "$$@"; fi; }
@@ -166,9 +175,10 @@ need_docker() {
   docker compose version >/dev/null 2>&1 || die "Docker Compose (v2) est requis."
 }
 # Source d'une configuration : chemin absolu d'un dossier de l'hôte, OU nom d'un volume Docker déjà existant.
-# pick_source ÉTIQUETTE [VARIABLE_PRÉREMPLIE] [opt] -> SRC (chemin ou nom) et SRC_KIND (dir|volume) ; « opt » : vide accepté.
+# pick_source ÉTIQUETTE [VARIABLE_PRÉREMPLIE] [opt] [EXEMPLE] -> SRC (chemin ou nom) et SRC_KIND (dir|volume) ; « opt » : vide accepté.
 pick_source() {
-  local v; v=$$(ask "$$1" "" "$${2:-}"); v=$${v/#\~/$$HOME}
+  local v h3=""; [ "$${3:-}" = opt ] && h3="Laissez vide pour ignorer."
+  v=$$(ask "$$1" "" "$${2:-}" "Le chemin ABSOLU d'un dossier de cette machine, ou le nom d'un volume Docker déjà créé (docker volume ls)." $${4:+"Exemple : $$4"} $${h3:+"$$h3"}); v=$${v/#\~/$$HOME}
   SRC=""; SRC_KIND=""
   if [ "$${FILES_ONLY:-}" = 1 ]; then   # mode fichiers : rien n'est vérifié ; un dossier par défaut est prévu pour la configuration de Traefik
     if [ -z "$$v" ]; then [ "$${3:-}" = opt ] && return 0; v=./traefik-dynamic; fi
@@ -198,7 +208,7 @@ own_volume() { # KIND SRC PROPRIÉTAIRE -> propriétaire à utiliser
   local o="$$3" v=""
   if [ "$${FILES_ONLY:-}" != 1 ] && [ "$$1" = volume ] && [ "$$o" = 0:0 ]; then
     warnl "Ce volume appartient à root : l'interface y tournerait en root." >&2
-    if confirm "Le donner à 1000:1000 ?"; then util -v "$$2:/d" "$$UTIL_IMAGE" chown -R 1000:1000 /d && o=1000:1000; fi
+    if confirm "Donner ce volume à l'utilisateur 1000:1000 ?" "Le volume appartient à root : sans cela, l'interface y tournerait en root." "Recommandé : « o » (seul le propriétaire des fichiers change)."; then util -v "$$2:/d" "$$UTIL_IMAGE" chown -R 1000:1000 /d && o=1000:1000; fi
   fi
   printf '%s' "$$o"
 }
@@ -295,16 +305,12 @@ ask_traefik() {
   sub "Configuration dynamique de Traefik"
   hint "C'est le dossier où Traefik lit ses fichiers de sites (son « file provider »). L'interface y écrit les sites que vous créez,"
   hint "et Traefik les recharge tout seul. Donnez le chemin absolu du dossier, ou le nom d'un volume Docker existant (docker volume ls)."
-  echo
-  pick_source "Dossier ou volume" TRAEFIK_DYNAMIC_PATH
+  pick_source "Dossier de configuration dynamique de Traefik" TRAEFIK_DYNAMIC_PATH "" /home/vous/docker/traefik/dynamic
   DYN="$$SRC"; DYN_KIND="$$SRC_KIND"
   OWNER=$$(own_volume "$$DYN_KIND" "$$DYN" "$$(owner_of "$$DYN_KIND" "$$DYN")")
   good "L'interface tournera avec l'identité $$OWNER (propriétaire de ce $$([ "$$DYN_KIND" = volume ] && echo volume || echo dossier)) pour pouvoir y écrire."
 
-  sub "Réseau Docker partagé avec Traefik"
-  hint "Traefik joint l'interface par ce réseau (http://armadok:8000). Pour le connaître : docker network ls (souvent « proxy »)."
-  echo
-  NET=$$(ask "Nom du réseau" "proxy" TRAEFIK_NETWORK)
+  NET=$$(ask "Nom du réseau Docker partagé" "proxy" TRAEFIK_NETWORK "Le réseau que Traefik et l'interface ont en commun : Traefik joint l'interface par lui." "Pour le connaître : docker network ls" "Exemple : proxy")
   if [ "$${FILES_ONLY:-}" = 1 ]; then hint "Le réseau « $$NET » doit exister avant le démarrage : docker network create $$NET"
   else
     docker network inspect "$$NET" >/dev/null 2>&1 || die "Réseau « $$NET » introuvable (docker network ls). Créez-le ou indiquez le bon nom."
@@ -312,17 +318,14 @@ ask_traefik() {
   fi
 
   sub "Points d'entrée et certificats (valeurs de départ)"
-  hint "Les noms des points d'entrée de Traefik (web = port 80, websecure = port 443) et de son résolveur Let's Encrypt, tels qu'écrits dans"
-  hint "sa configuration. Proposés dans les formulaires. Lus UNE seule fois : vous les changerez ensuite dans « Ce nœud »."
-  echo
-  EPS=$$(ask "Points d'entrée (séparés par des virgules)" "web,websecure")
-  RES=$$(ask "Résolveur de certificats" "letsencrypt")
+  hint "Proposés dans les formulaires de l'interface. Lus UNE seule fois : vous les changerez ensuite dans « Ce nœud »."
+  EPS=$$(ask "Points d'entrée de Traefik" "web,websecure" "" "Les noms écrits dans la configuration de Traefik : web = port 80, websecure = port 443." "Plusieurs noms : séparez-les par des virgules." "Exemple : web,websecure")
+  RES=$$(ask "Résolveur de certificats Let's Encrypt" "letsencrypt" "" "Le nom du résolveur défini dans la configuration de Traefik (certificatesResolvers)." "Exemple : letsencrypt")
 
   sub "Certificats HTTPS (facultatif)"
   hint "L'interface peut afficher les échéances et signaler les sites sans certificat. Elle ne lit que les noms et les dates :"
   hint "aucune clé privée n'arrive jamais dans le navigateur. Indiquez le dossier (ou volume) qui contient acme.json. Vide = ignorer."
-  echo
-  pick_source "Dossier ou volume d'acme.json" CERTS_PATH opt
+  pick_source "Dossier qui contient acme.json (certificats)" CERTS_PATH opt /var/lib/traefik
   CERTS_SRC="$$SRC"; CERTS_KIND="$$SRC_KIND"; CERTS_MODE=hub; CERTS_DOCKER=""; TRAEFIK_CTR=traefik; DGID=""; LOG_KIND=dir
   if [ -n "$$CERTS_SRC" ]; then
     exists_in "$$CERTS_KIND" "$$CERTS_SRC" "acme.json" && good "acme.json trouvé." || warnl "acme.json introuvable pour l'instant : il apparaîtra dès que Traefik l'aura créé."
@@ -330,12 +333,11 @@ ask_traefik() {
     hint "Supprimer ou renouveler un certificat depuis l'interface demande de relancer Traefik : l'interface doit alors accéder au socket Docker."
     warnl "Cela lui donne la main sur Docker. À n'accepter que si l'interface est protégée (chaîne privée, 2FA)."
     hint "Sans cela, tout marche sauf supprimer / renouveler."
-    echo
-    if yes "Autoriser la suppression / le renouvellement ?"; then
+    if yes "Autoriser la suppression et le renouvellement des certificats ?" "Répondez « n » si vous n'en avez pas besoin : tout le reste fonctionne."; then
       CERTS_DOCKER=1
-      TRAEFIK_CTR=$$(ask "Nom du conteneur de Traefik" "traefik")
+      TRAEFIK_CTR=$$(ask "Nom du conteneur de Traefik" "traefik" "" "Le nom du conteneur, pour que l'interface puisse le relancer." "Pour le connaître : docker ps" "Exemple : traefik")
       DGID=$$(getent group docker | cut -d: -f3 || true)
-      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker » (getent group docker)" "")
+      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
     fi
   fi
 
@@ -345,16 +347,13 @@ ask_traefik() {
   hint "Sans cela, tout marche sauf la partie Docker. Vous pourrez l'activer plus tard (DOCKER_MANAGE, PROJECT_ROOTS, socket)."
   echo
   DOCKER_MANAGE=""; PROJECT_ROOTS=""
-  if yes "Activer la gestion de Docker ?"; then
+  if yes "Activer la gestion de Docker depuis l'interface ?" "Répondez « n » pour garder la partie Traefik et DNS seule : vous pourrez l'activer plus tard."; then
     DOCKER_MANAGE=1
     if [ -z "$$DGID" ]; then
       DGID=$$(getent group docker | cut -d: -f3 || true)
-      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker » (getent group docker)" "")
+      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
     fi
-    echo
-    hint "Dossiers qui contiennent vos projets docker compose : chemins absolus séparés par des virgules (sans espace)."
-    hint "Ils sont montés avec le MÊME chemin dans le conteneur et bornent tout ce que l'interface lit et écrit."
-    PROJECT_ROOTS=$$(ask "Dossiers des projets" "$$HOME/docker" PROJECT_ROOTS)
+    PROJECT_ROOTS=$$(ask "Dossiers de vos projets docker compose" "$$HOME/docker" PROJECT_ROOTS "Les chemins ABSOLUS, séparés par des virgules, sans espace." "Montés avec le même chemin dans le conteneur ; rien n'est lu ni écrit en dehors." "Avec plusieurs dossiers, la création d'un projet demandera lequel utiliser." "Exemple : /opt/stacks,/srv/apps")
     local r norm=""
     for r in $${PROJECT_ROOTS//,/ }; do
       case "$$r" in /*) ;; *) die "« $$r » n'est pas un chemin absolu.";; esac
@@ -369,16 +368,14 @@ ask_traefik() {
   hint "Active la liste des adresses IP des visiteurs, les attaques probables et le bannissement. Le dossier est monté en lecture seule."
   hint "Traefik doit écrire ce fichier : --accesslog.filepath=/logs/access.log --accesslog.format=json (aide : « Fonctionnalités facultatives »)."
   hint "Chemin absolu du dossier (il doit exister avant le démarrage), ou nom d'un volume Docker existant. Vide = ignorer."
-  echo
-  pick_source "Dossier ou volume du journal" TRAEFIK_ACCESS_LOG_PATH opt
+  pick_source "Dossier du journal d'accès de Traefik" TRAEFIK_ACCESS_LOG_PATH opt /var/log/traefik
   LOG_SRC="$$SRC"; LOG_KIND="$$SRC_KIND"
 
   sub "Autres valeurs de départ (facultatif)"
   hint "Lues UNE seule fois pour remplir le nœud « Principal » ; modifiables ensuite dans « Ce nœud ». Vide = ignorer."
-  echo
-  API=$$(ask "API de Traefik, pour l'état des sites (ex. http://traefik:8080)" "" TRAEFIK_API_URL)
-  PROM=$$(ask "Prometheus, pour les métriques et alertes (ex. http://prometheus:9090)" "" PROMETHEUS_URL)
-  DNST=$$(ask "IP proposée pour les nouveaux sous-domaines (IP publique de cette machine)" "" DEFAULT_DNS_TARGET)
+  API=$$(ask "API de Traefik (facultatif)" "" TRAEFIK_API_URL "Pour afficher l'état en direct des sites. Elle doit être joignable depuis le conteneur de l'interface." "Exemple : http://traefik:8080" "Laissez vide pour ignorer.")
+  PROM=$$(ask "Prometheus (facultatif)" "" PROMETHEUS_URL "Pour les métriques et les alertes." "Exemple : http://prometheus:9090" "Laissez vide pour ignorer.")
+  DNST=$$(ask "Adresse IP proposée pour les nouveaux sous-domaines (facultatif)" "" DEFAULT_DNS_TARGET "Proposée quand vous créez un site : en général l'IP PUBLIQUE de cette machine." "Exemple : 203.0.113.10" "Laissez vide pour ignorer.")
 }
 ask_admin() {
   sub "Compte propriétaire"
@@ -386,14 +383,15 @@ ask_admin() {
   hint "Le mot de passe n'est jamais écrit en clair : seul son hachage (bcrypt) est enregistré dans le fichier de configuration."
   echo
   if [ "$${FILES_ONLY:-}" = 1 ]; then
-    AUSER=$$(ask "Identifiant" "admin"); HASH=""
+    AUSER=$$(ask "Identifiant du propriétaire" "admin"); HASH=""
     warnl "Mot de passe non défini : « make password » en génère le hachage, à coller dans ADMIN_PASSWORD_HASH (.env)."
     return 0
   fi
-  AUSER=$$(ask "Identifiant" "admin")
+  AUSER=$$(ask "Identifiant du propriétaire" "admin" "" "Le nom de connexion de l'administrateur permanent de l'interface." "Exemple : admin")
+  show_q "Mot de passe du propriétaire" "12 caractères au moins. Rien ne s'affiche pendant la saisie." "Il n'est jamais écrit en clair : seul son hachage l'est."
   while :; do
-    read -rs -p "  $${C}➜$${Z} Mot de passe $${D}(12 caractères minimum)$${Z} : " PW; echo
-    read -rs -p "  $${C}➜$${Z} Confirmez le mot de passe : " PW2; echo
+    read -rs -p "      $${C}➜$${Z} Mot de passe : " PW; echo
+    read -rs -p "      $${C}➜$${Z} Confirmez le mot de passe : " PW2; echo
     if [ "$$PW" != "$$PW2" ]; then fail "Les deux saisies sont différentes : recommencez."
     elif [ $${#PW} -lt 12 ]; then fail "Trop court : 12 caractères minimum."
     else break; fi
@@ -406,17 +404,19 @@ ask_ovh() {
   hint "Si votre DNS est chez OVH, l'interface peut créer les enregistrements de vos sites. Laissez vide pour ignorer : DuckDNS, AdGuard Home,"
   hint "Pi-hole, DNS local et d'autres comptes OVH s'ajoutent ensuite dans l'interface."
   hint "Clé à créer sur https://api.ovh.com/createToken/ : GET, POST, PUT et DELETE sur /domain/zone et /domain/zone/*, sans limite de durée."
-  echo
-  OEND=$$(ask "Région" "ovh-eu")
-  AK=$$(ask "Application key" "")
+  OEND=$$(ask "Région de votre compte OVH" "ovh-eu" "" "Le point d'accès de l'API OVH : ovh-eu (Europe), ovh-ca (Canada) ou ovh-us (États-Unis).")
+  AK=$$(ask "Clé d'application OVH (Application key)" "" "" "Celle de l'application que vous avez créée sur https://api.ovh.com/createApp/" "Laissez vide pour ne pas utiliser OVH.")
   AS=""; CK=""
   if [ -n "$$AK" ]; then
-    read -rs -p "  $${C}➜$${Z} Application secret : " AS; echo
-    read -rs -p "  $${C}➜$${Z} Consumer key $${D}(vide = la générer)$${Z} : " CK; echo
+    show_q "Secret d'application OVH (Application secret)" "Donné avec la clé d'application. Rien ne s'affiche pendant la saisie."
+    read -rs -p "      $${C}➜$${Z} Saisissez ou collez ici : " AS; echo
+    show_q "Clé de consommateur OVH (Consumer key)" "Elle donne les droits sur vos zones DNS." "Laissez vide pour la générer : une adresse de validation s'affichera. Rien ne s'affiche pendant la saisie."
+    read -rs -p "      $${C}➜$${Z} Saisissez ou collez ici (vide = la générer) : " CK; echo
     if [ -z "$$CK" ]; then
       OUT=$$(docker run --rm -e OVH_ENDPOINT="$$OEND" -e OVH_APPLICATION_KEY="$$AK" -e OVH_APPLICATION_SECRET="$$AS" "$${IMG_HUB:-$(IMAGE)}" python -m app.tools.ovh_consumer_key)
       echo "$$OUT" | sed -n '1,2p' | sed 's/^/  /'
-      read -r -p "  $${C}➜$${Z} Appuyez sur Entrée une fois la clé validée sur cette page… " _
+      show_q "Validez la clé sur OVH" "Ouvrez l'adresse affichée ci-dessus dans votre navigateur, connectez-vous et validez les droits demandés."
+      read -r -p "      $${C}➜$${Z} Appuyez sur Entrée une fois la clé validée… " _
       CK=$$(echo "$$OUT" | sed -n 's/.*OVH_CONSUMER_KEY=//p')
     fi
   fi
@@ -425,13 +425,11 @@ ask_route() {
   sub "Adresse de l'interface (facultatif)"
   hint "Pour ouvrir l'interface par une adresse (https://…), un fichier de routage « armadok.yml » est ajouté à la configuration de Traefik."
   hint "Il faudra ensuite créer l'enregistrement DNS de cette adresse vers ce serveur. Vide = pas de routage (vous le ferez vous-même)."
-  echo
-  DOM=$$(ask "Domaine de l'interface (ex. armadok.exemple.fr)" "")
+  DOM=$$(ask "Adresse web de l'interface (facultatif)" "" "" "Celle par laquelle vous ouvrirez l'interface. Un fichier armadok.yml la relie à Traefik." "Exemple : armadok.exemple.fr" "Laissez vide pour ne créer aucun routage.")
   MW=""; EP=""
   if [ -n "$$DOM" ]; then
     EP=$${EPS##*,}; [ "$$EP" = "web" ] && EP=websecure; case ",$$EPS," in *,websecure,*) EP=websecure;; esac
-    hint "Les protections (middlewares Traefik : liste d'IP, SSO…) limitent l'accès. Sans protection, l'interface est ouverte à tous."
-    MW=$$(ask "Middlewares de protection (séparés par des virgules)" "")
+    MW=$$(ask "Protections de l'accès (middlewares Traefik, facultatif)" "" "" "Liste d'adresses autorisées, SSO… : les noms des middlewares, séparés par des virgules." "Sans protection, l'interface est ouverte à tous." "Exemple : chain-private@file" "Laissez vide pour aucune protection.")
     [ -n "$$MW" ] || warnl "Aucune protection : pensez à en ajouter une dans le fichier armadok.yml."
   fi
 }
@@ -505,7 +503,7 @@ install_hub() {
   step "5/5 · Récapitulatif"
   recap
   echo
-  confirm "Écrire les fichiers maintenant ?" || { echo; say "Annulé : rien n'a été écrit."; exit 0; }
+  confirm "Écrire les fichiers maintenant ?" "Le récapitulatif ci-dessus est ce qui va être écrit. Rien n'est démarré." || { echo; say "Annulé : rien n'a été écrit."; exit 0; }
   echo
     mkdir -p data
     [ "$$(stat -c '%u:%g' data)" = "$$OWNER" ] || as_root chown "$$OWNER" data
@@ -586,12 +584,7 @@ install_worker() {
   fi
   step "1/4 · Cette machine"
   UTIL_IMAGE="$$(image_ref "$${WORKER_IMAGE:-}")"
-  sub "Que doit gérer ce worker ?"
-  hint "1) Traefik + DNS : les sites, protections et certificats du Traefik de cette machine (le DNS reste géré par le hub)."
-  hint "2) Docker seul : les conteneurs et projets docker compose de cette machine, sans Traefik."
-  hint "3) Les deux : Traefik ET Docker, avec la liaison complète (conteneur → règles → visiteurs)."
-  echo
-  case "$$(ask "Votre choix (1, 2 ou 3)" "1" WORKER_MODULES)" in
+  case "$$(ask "Que doit gérer ce worker ?" "1" WORKER_MODULES "1 = Traefik + DNS : les sites, protections et certificats du Traefik de cette machine (le DNS reste géré par le hub)." "2 = Docker seul : les conteneurs et projets docker compose de cette machine, sans Traefik." "3 = les deux : Traefik ET Docker, avec la liaison complète (conteneur → règles → visiteurs).")" in
     2|docker) WORKER_MODULES=docker; WORKER_NOTR=1; WORKER_DOCKER=1;;
     3|both|traefik,docker|docker,traefik) WORKER_MODULES=traefik,docker; WORKER_NOTR=""; WORKER_DOCKER=1;;
     1|traefik|"") WORKER_MODULES=traefik; WORKER_NOTR=""; WORKER_DOCKER="";;
@@ -601,40 +594,32 @@ install_worker() {
   if [ -z "$$WORKER_NOTR" ]; then
   sub "Configuration dynamique de Traefik"
   hint "Le dossier où Traefik lit ses fichiers de sites (file provider). Le worker y écrit ce que le hub lui demande, et rien d'autre."
-  hint "Chemin absolu du dossier, ou nom d'un volume Docker existant (docker volume ls)."
-  echo
-  pick_source "Dossier ou volume" TRAEFIK_DYNAMIC_PATH
+  pick_source "Dossier de configuration dynamique de Traefik" TRAEFIK_DYNAMIC_PATH "" /home/vous/docker/traefik/dynamic
   DYN="$$SRC"; DYN_KIND="$$SRC_KIND"
   OWNER=$$(own_volume "$$DYN_KIND" "$$DYN" "$$(owner_of "$$DYN_KIND" "$$DYN")")
   good "Le worker tournera avec l'identité $$OWNER (propriétaire de ce $$([ "$$DYN_KIND" = volume ] && echo volume || echo dossier)) pour pouvoir y écrire."
   sub "Certificats (facultatif)"
   hint "Pour montrer les échéances des certificats dans le hub : dossier ou volume d'acme.json, lu en lecture seule par un relais isolé,"
   hint "qui ne transmet que les noms et les dates (jamais les clés). Vide = ignorer."
-  echo
-  pick_source "Dossier ou volume d'acme.json" CERTS_PATH opt
+  pick_source "Dossier qui contient acme.json (certificats)" CERTS_PATH opt /var/lib/traefik
   CERTS_SRC="$$SRC"; CERTS_KIND="$$SRC_KIND"
   sub "Journal d'accès (facultatif)"
   hint "Le dossier (ou volume) qui contient le journal d'accès de Traefik (format JSON, access.log). Le worker le LIT chez lui et l'envoie au hub :"
   hint "statistiques de visiteurs, adresses IP, alertes et bannissements automatiques de ce nœud. Vide = ignorer."
-  echo
-  pick_source "Dossier ou volume du journal d'accès" TRAEFIK_ACCESS_LOG_PATH opt
+  pick_source "Dossier du journal d'accès de Traefik" TRAEFIK_ACCESS_LOG_PATH opt /var/log/traefik
   LOG_SRC="$$SRC"; LOG_KIND="$$SRC_KIND"
   sub "État en direct des sites (facultatif)"
   hint "Si l'API de Traefik est joignable depuis un réseau Docker, le hub affiche l'état de chaque site. Ex : http://traefik:8080. Vide = ignorer."
-  echo
-  API=$$(ask "URL de l'API de Traefik" "" TRAEFIK_API_URL)
+  API=$$(ask "Adresse de l'API de Traefik (facultatif)" "" TRAEFIK_API_URL "Elle doit être joignable depuis le conteneur du worker, par un réseau Docker." "Exemple : http://traefik:8080" "Laissez vide pour ignorer.")
   if [ -n "$$API" ]; then
-  	NET=$$(ask "Réseau Docker partagé avec Traefik (pour joindre son API)" "proxy" TRAEFIK_NETWORK)
+  	NET=$$(ask "Réseau Docker partagé avec Traefik" "proxy" TRAEFIK_NETWORK "Le réseau qui permet au worker de joindre l'API de Traefik." "Pour le connaître : docker network ls" "Exemple : proxy")
   	docker network inspect "$$NET" >/dev/null 2>&1 || die "Réseau « $$NET » introuvable (docker network ls)."
   fi
   fi
   if [ -n "$$WORKER_DOCKER" ]; then
   sub "Docker de cette machine"
   warnl "Cela donne au hub (selon les droits « Docker » du nœud) un accès équivalent à ROOT sur cette machine."
-  hint "Dossiers qui contiennent vos projets docker compose : chemins absolus séparés par des virgules (sans espace)."
-  hint "Ils sont montés avec le MÊME chemin dans le worker et bornent tout ce que le hub lit et écrit ici."
-  echo
-  PROJECT_ROOTS=$$(ask "Dossiers des projets" "$$HOME/docker" PROJECT_ROOTS)
+  PROJECT_ROOTS=$$(ask "Dossiers de vos projets docker compose" "$$HOME/docker" PROJECT_ROOTS "Les chemins ABSOLUS, séparés par des virgules, sans espace." "Montés avec le même chemin dans le conteneur ; rien n'est lu ni écrit en dehors." "Avec plusieurs dossiers, la création d'un projet demandera lequel utiliser." "Exemple : /opt/stacks,/srv/apps")
   local r norm=""
   for r in $${PROJECT_ROOTS//,/ }; do
     case "$$r" in /*) ;; *) die "« $$r » n'est pas un chemin absolu.";; esac
@@ -643,28 +628,15 @@ install_worker() {
   done
   PROJECT_ROOTS="$$norm"
   DGID=$$(getent group docker | cut -d: -f3 || true)
-  [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker » (getent group docker)" "")
+  [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
   [ -n "$$OWNER" ] || { OWNER=$$(stat -c '%u:%g' "$${PROJECT_ROOTS%%,*}" 2>/dev/null || echo "$$(id -u):$$(id -g)"); good "Le worker tournera avec l'identité $$OWNER (propriétaire du premier dossier de projets)."; }
-  echo
-  hint "Terminal dans un conteneur : réservé au droit « docker.exec » du hub (jamais donné d'office), et refusé ici tant que vous ne l'autorisez pas."
-  if yes "Autoriser le terminal dans les conteneurs de cette machine ?"; then WORKER_ALLOW_EXEC=true; fi
-  echo
-  hint "Sites publiés par le Traefik d'un AUTRE nœud (par exemple celui du hub) : indiquez l'adresse par laquelle ce Traefik joint cette machine"
-  hint "(IP du réseau local ou du VPN, ou un nom ; plusieurs : séparées par des virgules). Le hub relie alors tout seul les conteneurs à ses règles."
-  hint "Laissez vide si cette machine a son propre Traefik ou n'a pas de site. Ensuite : « Ce nœud » → Docker → « Publier les sites avec le Traefik de… »."
-  WORKER_ADDRESSES=$$(ask "Adresse de cette machine pour ce Traefik (facultatif)" "$$(hostname -I 2>/dev/null | awk '{print $$1}')" WORKER_ADDRESSES)
+  if yes "Autoriser le terminal dans les conteneurs de cette machine ?" "Ouvrir un terminal dans un conteneur, et lancer des commandes depuis le hub (onglet Avancé, Makefile)." "Le droit « terminal » du hub n'est jamais donné d'office, et reste refusé ici tant que vous ne l'autorisez pas." "Répondez « n » en cas de doute : vous pourrez l'activer plus tard (WORKER_ALLOW_EXEC)."; then WORKER_ALLOW_EXEC=true; fi
+  WORKER_ADDRESSES=$$(ask "Adresse de cette machine, pour le Traefik d'un autre nœud (facultatif)" "$$(hostname -I 2>/dev/null | awk '{print $$1}')" WORKER_ADDRESSES "Si les sites de cette machine sont publiés par le Traefik d'un AUTRE nœud (celui du hub, par exemple) :" "l'adresse par laquelle ce Traefik joint cette machine (IP du réseau local ou du VPN, ou un nom)." "Plusieurs adresses : séparez-les par des virgules." "Laissez vide si cette machine a son propre Traefik ou aucun site." "Ensuite : « Ce nœud » → Docker → « Publier les sites avec le Traefik de… ».")
   WORKER_ADDRESSES=$${WORKER_ADDRESSES// /}
   fi
-  sub "Image du worker"
-  hint "Utilisez la même version que le hub : le protocole entre les deux évolue avec les versions."
-  hint "« latest » est la plus récente ; sinon un numéro précis (ex. 1.0.0) ou une image complète."
-  echo
-  IMG=$$(ask "Version ou image du worker" "latest" WORKER_IMAGE); IMG=$$(image_ref "$$IMG")
+  IMG=$$(ask "Version ou image du worker" "latest" WORKER_IMAGE "Prenez la MÊME version que le hub : le protocole entre les deux évolue avec les versions." "« latest » = la plus récente ; sinon un numéro précis, ou une image complète." "Exemple : 1.11.1"); IMG=$$(image_ref "$$IMG")
   step "2/4 · Le hub"
-  sub "Adresse du hub"
-  hint "L'adresse (HTTPS) par laquelle l'interface du hub est joignable depuis cette machine."
-  echo
-  HUB=$$(ask "Adresse du hub (https://…)" "" HUB_URL); HUB=$${HUB%/}
+  HUB=$$(ask "Adresse du hub" "" HUB_URL "L'adresse web de l'interface Armadok, celle que vous ouvrez dans votre navigateur." "Elle doit commencer par https://" "Exemple : https://armadok.exemple.fr"); HUB=$${HUB%/}
   INSECURE=""
   if [ "$${FILES_ONLY:-}" = 1 ]; then
     [ -n "$$HUB" ] || HUB=https://hub.exemple.fr
@@ -673,24 +645,22 @@ install_worker() {
   case "$$HUB" in
     https://?*) ;;
     http://?*) warnl "http:// : les échanges avec le hub circuleraient en clair (réservé aux essais)."
-               if [ "$${WORKER_ALLOW_INSECURE:-}" = 1 ] || yes "Continuer quand même ?"; then INSECURE=1; else exit 1; fi;;
+               if [ "$${WORKER_ALLOW_INSECURE:-}" = 1 ] || yes "Continuer avec une adresse en http:// ?" "Tout ce qui passe entre ce worker et le hub (dont le jeton) circulerait en clair." "À réserver aux essais."; then INSECURE=1; else exit 1; fi;;
     *) die "Adresse invalide : elle doit commencer par https://";;
   esac
   if command -v curl >/dev/null; then
-  	C="$$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -X POST -H 'Content-Type: application/json' -d '{}' "$$HUB/api/worker/enroll" 2>/dev/null)"   # le chemin du worker lui-même : seul /api/worker est ouvert derrière un filtre IP ; un corps vide est refusé (422) avant tout traitement, rien n'est enrôlé
-  	case "$$C" in
+  	HCODE="$$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -X POST -H 'Content-Type: application/json' -d '{}' "$$HUB/api/worker/enroll" 2>/dev/null)"   # le chemin du worker lui-même : seul /api/worker est ouvert derrière un filtre IP ; un corps vide est refusé (422) avant tout traitement, rien n'est enrôlé
+  	case "$$HCODE" in
   	  422) good "Le hub répond.";;
-  	  403) warnl "Le hub répond 403 : un filtre IP (middleware Traefik) refuse cette machine. Autorisez-la ou ouvrez la route /api/worker (voir « Hub derrière un filtre IP » dans le README)."; yes "Continuer quand même ?" || exit 1;;
-  	  404) warnl "Le hub répond mais pas Armadok sur /api/worker (routage Traefik ? adresse ?)."; yes "Continuer quand même ?" || exit 1;;
-  	  *) warnl "Le hub ne répond pas depuis cette machine (DNS, pare-feu, certificat ?)."; yes "Continuer quand même ?" || exit 1;;
+  	  403) warnl "Le hub répond 403 : un filtre IP (middleware Traefik) refuse cette machine. Autorisez-la ou ouvrez la route /api/worker (voir « Hub derrière un filtre IP » dans le README)."; yes "Continuer malgré ce refus ?" "Le worker ne pourra pas s'enrôler tant que le filtre IP du hub bloque cette machine." || exit 1;;
+  	  404) warnl "Le hub répond mais pas Armadok sur /api/worker (routage Traefik ? adresse ?)."; yes "Continuer malgré tout ?" "Vérifiez l'adresse du hub et la route /api/worker de son Traefik." || exit 1;;
+  	  *) warnl "Le hub ne répond pas depuis cette machine (DNS, pare-feu, certificat ?)."; yes "Continuer malgré tout ?" "Le worker risque de ne pas pouvoir se connecter : vérifiez le DNS, le pare-feu sortant et le certificat du hub." || exit 1;;
   	esac
   fi
   fi
   step "3/4 · Jeton d'enrôlement"
   say "Dans l'interface du hub : « Nouveau nœud » (ou « Ce nœud » → Connexion → « Générer un jeton »), puis copiez le jeton affiché (enr_…)."
-  hint "Il expire 15 minutes après sa création et ne sert qu'une fois : générez-le maintenant, pas avant."
-  echo
-  TOKEN=$$(asks "Jeton d'enrôlement (enr_…)" ENROLL_TOKEN)
+  TOKEN=$$(asks "Jeton d'enrôlement" ENROLL_TOKEN "Il commence par enr_ et s'obtient dans l'interface du hub (« Nouveau nœud »)." "Il expire 15 minutes après sa création et ne sert qu'une fois :" "générez-le maintenant, pas avant.")
   [ "$${FILES_ONLY:-}" != 1 ] || [ -n "$$TOKEN" ] || TOKEN=enr_A_REMPLACER
   case "$$TOKEN" in enr_?*) ;; *) die "Jeton invalide : il commence par « enr_ » (voir « Nouveau nœud » dans l'interface).";; esac
   if [ "$${FILES_ONLY:-}" = 1 ]; then step "4/4 · Écriture des fichiers"; else step "4/4 · Écriture, démarrage et connexion"; fi
@@ -790,7 +760,7 @@ install: ## Installation guidée : hub ou worker (interactive, ou seulement le .
 	printf '  %s3)%s %sUn worker NATIF, sans Docker%s\n' "$$C" "$$Z" "$$B" "$$Z"
 	hint "     Un service systemd qui démarre au boot, avec vérification de la machine et checklist. Pour un VPS où Docker n'est pas voulu."
 	printf '\n'
-	case "$$(ask "Votre choix" "1" MODE)" in
+	case "$$(ask "Que voulez-vous installer ?" "1" MODE "1 = le hub (Docker Compose)" "2 = un worker (Docker Compose)" "3 = un worker natif, sans Docker (service systemd)")" in
 	  1|hub|compose|h) exec $(MAKE) --no-print-directory hub;;
 	  2|worker|w) exec $(MAKE) --no-print-directory worker;;
 	  3|native|n) exec $(MAKE) --no-print-directory worker-native;;
