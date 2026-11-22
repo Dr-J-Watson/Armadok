@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.11.1...v1.12.0) (2026-11-22)
+
+
+### Nouveautés
+
+* worker natif sans Docker (service systemd) : vérifications et checklist, venv en option, certificats par relais, option « Sans Docker » dans Nouveau nœud, aide et README ([2d4c1dc](https://github.com/Dr-J-Watson/Armadok/commit/2d4c1dc7f9192669081b5d4446cb7d67a4e399ef))
+
 ## [1.11.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.11.0...v1.11.1) (2026-11-20)
 
 
