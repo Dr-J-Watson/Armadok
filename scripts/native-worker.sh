@@ -174,7 +174,7 @@ check_python() {
   if "$PY" -m pip --version >/dev/null 2>&1; then ok "pip présent"; else bad "pip absent" "apt install python3-pip · dnf install python3-pip"; fi
   if [ "$USE_VENV" = true ]; then
     if "$PY" -c 'import ensurepip, venv' 2>/dev/null; then ok "Environnement isolé (venv) : disponible"
-    else bad "Le module venv n'est pas installé" "apt install python3-venv · ou relancez avec NATIVE_VENV=false (les dépendances vont alors dans $DIR/lib, sans venv)."; fi
+    else bad "Le module venv n'est pas installé" "apt install python3-venv · ou relancez et répondez « n » à la question du venv (NATIVE_VENV=false : les dépendances vont alors dans $DIR/lib, sans venv)."; fi
   else
     ok "Sans venv (NATIVE_VENV=false) : les dépendances iront dans $DIR/lib, le système n'est pas modifié"
   fi
@@ -278,6 +278,13 @@ check_traefik() {
   case "$DYN" in /home/*) warn "Le dossier Traefik est dans /home" "Le service y reçoit un accès en écriture ciblé (ProtectHome en lecture seule, sauf ce dossier).";; esac
   # état en direct (facultatif)
   API="${TRAEFIK_API_URL:-$(env_get "$ENVF" TRAEFIK_API_URL)}"
+  if [ -z "$API" ] && interactive; then
+    API="$(ask "API de Traefik (facultatif)" "" TRAEFIK_API_URL \
+      "L'adresse de l'API de Traefik : elle sert à afficher l'état en direct des sites dans le hub." \
+      "Elle doit être joignable depuis cette machine (le plus souvent en local)." \
+      "Exemple : http://127.0.0.1:8080" \
+      "Laissez vide pour ignorer.")"
+  fi
   if [ -n "$API" ]; then
     if curl -fsS --max-time 5 "$API/api/version" >/dev/null 2>&1; then ok "API de Traefik joignable ($API) : état en direct des sites"
     else warn "API de Traefik injoignable ($API)" "Le hub n'affichera pas l'état en direct (tout le reste fonctionne). Si Traefik est dans Docker, publiez son API sur 127.0.0.1:8080."; fi
@@ -507,7 +514,7 @@ final_checklist() {
 resume_check() {
   [ -s "$STATE" ] && interactive || return 0
   local lines=() pair k label v
-  for pair in "NATIVE_DIR:Dossier d'installation" "HUB_URL:Adresse du hub" "TRAEFIK_DYNAMIC_DIR:Dossier dynamique de Traefik" "SVC_CHOICE:Utilisateur du service (1 = propriétaire du dossier, 2 = armadok)" \
+  for pair in "NATIVE_DIR:Dossier d'installation" "HUB_URL:Adresse du hub" "VENV_CHOICE:Environnement Python isolé (o = venv, n = sans)" "TRAEFIK_DYNAMIC_DIR:Dossier dynamique de Traefik" "TRAEFIK_API_URL:API de Traefik" "SVC_CHOICE:Utilisateur du service (1 = propriétaire du dossier, 2 = armadok)" \
               "TRAEFIK_ACCESS_LOG:Journal d'accès" "TRAEFIK_CERTS_FILE:Fichier acme.json" "CERTS_CHOICE:Lecture des certificats (1 = relais, 2 = direct, 3 = ignorer)"; do
     k="${pair%%:*}"; label="${pair#*:}"; state_has "$k" || continue
     v="$(state_get "$k")"; lines+=("  • $label : ${v:-(ignoré)}")
@@ -534,6 +541,16 @@ do_install() {
       "et l'identité du nœud. Il est créé s'il n'existe pas." \
       "Exemple : /opt/armadok-worker")"
     DIR="${DIR%/}"; ENVF="$DIR/.env"
+  fi
+  if [ -z "${NATIVE_VENV:-}" ] && [ -z "$(env_get "$ENVF" NATIVE_VENV)" ]; then
+    case "$(ask "Isoler les dépendances Python dans un « venv » ?" o VENV_CHOICE \
+      "Un venv est un petit dossier Python réservé au worker : il ne touche pas au Python de la machine." \
+      "" \
+      "  o = oui (recommandé)" \
+      "" \
+      "  n = non : à choisir si votre VPS n'a pas le module « python3-venv » ou le refuse." \
+      "      Les dépendances vont alors dans le dossier lib/ du worker ;" \
+      "      le Python du système n'est pas modifié non plus.")" in n|N|non|false|0) USE_VENV=false;; *) USE_VENV=true;; esac
   fi
   [ -n "$HUB" ] || HUB="$(ask "Adresse du hub" "" HUB_URL \
     "L'adresse web de l'interface Armadok, celle que vous ouvrez dans votre navigateur." \
