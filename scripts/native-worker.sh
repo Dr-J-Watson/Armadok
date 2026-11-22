@@ -66,25 +66,47 @@ plain_report() {   # la même checklist, sans couleurs, pour le fichier install-
 
 # ── questions ───────────────────────────────────────────────────────────────────────────────────────────────────
 interactive() { [ -z "${NATIVE_YES:-}" ] && [ -t 0 ]; }
-# ask "question" "défaut" [VARIABLE]  : la variable préremplie répond d'office
+# Les réponses sont gardées au fur et à mesure (hors jeton) : si vous coupez pour installer pip, par exemple, le script reprend là où il en était.
+STATE="${NATIVE_STATE:-${XDG_CONFIG_HOME:-${HOME:-/tmp}/.config}/armadok-worker-install.env}"
+RESUME=0
+state_has() { [ -f "$STATE" ] && grep -q "^$1=" "$STATE" 2>/dev/null; }
+state_get() { if [ -f "$STATE" ]; then grep -E "^$1=" "$STATE" 2>/dev/null | tail -1 | cut -d= -f2-; fi; return 0; }
+state_put() { ( umask 077; mkdir -p "$(dirname "$STATE")"; { grep -v "^$1=" "$STATE" 2>/dev/null; printf '%s=%s\n' "$1" "$2"; } > "$STATE.new" && mv "$STATE.new" "$STATE" ) 2>/dev/null; return 0; }
+state_clear() { rm -f "$STATE" 2>/dev/null; return 0; }
+
+# Une question = un titre, quelques lignes d'explication (avec un exemple), puis l'invite sur sa propre ligne.
+# ask "titre" "défaut" VARIABLE ["explication"…]  : la variable déjà renseignée répond d'office (rien n'est demandé)
+show_q() {
+  local l; printf '\n%s▸ %s%s\n' "$B" "$1" "$Z" >&2; shift
+  for l in "$@"; do printf '    %s%s%s\n' "$D" "$l" "$Z" >&2; done
+}
 ask() {
   local q="$1" def="${2:-}" var="${3:-}" v=""
+  if [ $# -ge 3 ]; then shift 3; else shift $#; fi
   if [ -n "$var" ] && [ -n "${!var:-}" ]; then printf '%s' "${!var}"; return; fi
+  if [ -n "$var" ] && [ "$RESUME" = 1 ] && state_has "$var"; then state_get "$var"; return; fi   # réponse d'un lancement précédent
   if ! interactive; then printf '%s' "$def"; return; fi
-  read -r -p "  $q${def:+ [$def]} : " v </dev/tty || true
-  printf '%s' "${v:-$def}"
-}
-asks() {   # sans écho (jeton)
-  local q="$1" var="${2:-}" v=""
-  if [ -n "$var" ] && [ -n "${!var:-}" ]; then printf '%s' "${!var}"; return; fi
-  interactive || { printf ''; return; }
-  read -r -s -p "  $q : " v </dev/tty || true; echo >&2
+  show_q "$q" "$@"
+  read -r -p "    ${B}➜${Z} Votre réponse${def:+ [$def]} : " v </dev/tty || true
+  v="${v:-$def}"
+  [ -z "$var" ] || state_put "$var" "$v"
   printf '%s' "$v"
 }
-yes_no() {   # yes_no "question" [défaut o|n]
+asks() {   # sans écho (jeton) : asks "titre" VARIABLE ["explication"…]
+  local q="$1" var="${2:-}" v=""
+  if [ $# -ge 2 ]; then shift 2; else shift $#; fi
+  if [ -n "$var" ] && [ -n "${!var:-}" ]; then printf '%s' "${!var}"; return; fi
+  interactive || { printf ''; return; }
+  show_q "$q" "$@"
+  read -r -s -p "    ${B}➜${Z} Collez ici (rien ne s'affiche), puis Entrée : " v </dev/tty || true; echo >&2
+  printf '%s' "$v"
+}
+yes_no() {   # yes_no "titre" [défaut o|n] ["explication"…]
   local q="$1" def="${2:-n}" v
+  if [ $# -ge 2 ]; then shift 2; else shift $#; fi
   interactive || { [ "$def" = o ]; return; }
-  read -r -p "  $q [$([ "$def" = o ] && echo O/n || echo o/N)] : " v </dev/tty || true
+  show_q "$q" "$@"
+  read -r -p "    ${B}➜${Z} Votre réponse [$([ "$def" = o ] && echo O/n || echo o/N)] : " v </dev/tty || true
   v="${v:-$def}"; case "$v" in o|O|y|Y|oui) return 0;; *) return 1;; esac
 }
 
@@ -171,7 +193,9 @@ check_hub() {
   esac
   command -v curl >/dev/null 2>&1 || return
   local host out code; host="$(printf '%s' "$HUB" | sed -E 's#^[a-z]+://([^/:]+).*#\1#')"
-  if getent hosts "$host" >/dev/null 2>&1; then
+  if printf '%s' "$host" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+    ok "Le hub est joint par son adresse IP ($host)"
+  elif getent hosts "$host" >/dev/null 2>&1; then
     local ip; ip="$(getent hosts "$host" | awk '{print $1; exit}')"
     case "$ip" in
       10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) warn "« $host » se résout en adresse privée ($ip)" "Si cette machine est hors de votre réseau local, ce nom doit renvoyer l'adresse publique du hub (DNS interne/« split DNS » ?).";;
@@ -208,9 +232,15 @@ decide_user() {
   elif [ -f "$DIR/.service-user" ]; then SVC_USER="$(cat "$DIR/.service-user")"
   elif [ "$uid" -ge 1000 ] 2>/dev/null && [ "$owner" != root ]; then
     if interactive; then
-      say "Le dossier Traefik appartient à « $owner »."
-      hint "1) lancer le worker sous « $owner » (aucun droit à modifier)   2) créer un utilisateur dédié « armadok » (droits ciblés par ACL)"
-      case "$(ask "Votre choix (1 ou 2)" 1)" in 2) SVC_USER=armadok;; *) SVC_USER="$owner";; esac
+      case "$(ask "Sous quel utilisateur faire tourner le worker ?" 1 SVC_CHOICE \
+        "Le dossier de Traefik appartient à « $owner »." \
+        "" \
+        "  1 = « $owner » : le plus simple, il a déjà accès aux fichiers de Traefik" \
+        "      (aucun droit à modifier)." \
+        "" \
+        "  2 = un utilisateur dédié « armadok », sans mot de passe ni shell :" \
+        "      l'installation lui donne uniquement l'accès aux dossiers de Traefik" \
+        "      dont le worker a besoin, et rien d'autre.")" in 2) SVC_USER=armadok;; *) SVC_USER="$owner";; esac
     else SVC_USER="$owner"; fi
   else SVC_USER=armadok; fi
 }
@@ -220,7 +250,11 @@ check_traefik() {
   if [ -z "$DYN" ]; then
     local guess=""
     if command -v docker >/dev/null 2>&1; then guess="$(docker inspect traefik --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null | grep -iE 'dynamic|conf' | head -1)"; fi
-    DYN="$(ask "Dossier de configuration dynamique de Traefik (file provider)" "$guess" TRAEFIK_DYNAMIC_DIR)"
+    DYN="$(ask "Dossier de configuration dynamique de Traefik" "$guess" TRAEFIK_DYNAMIC_DIR \
+      "Le dossier que Traefik surveille pour ses routeurs et ses services" \
+      "(le « file provider », réglé par « directory: » dans traefik.yml)." \
+      "Le worker y lit et y écrit les sites. Donnez le chemin complet du DOSSIER." \
+      "Exemple : /home/vous/docker/traefik/dynamic")"
   fi
   [ -n "$DYN" ] || { bad "Dossier dynamique de Traefik non renseigné" "TRAEFIK_DYNAMIC_DIR=/chemin/de/traefik/dynamic"; return; }
   case "$DYN" in /*) ;; *) bad "« $DYN » n'est pas un chemin absolu" "Indiquez un chemin commençant par /"; return;; esac
@@ -250,7 +284,11 @@ check_traefik() {
   else warn "API de Traefik non renseignée (facultatif)" "TRAEFIK_API_URL=http://127.0.0.1:8080 pour afficher l'état en direct des sites."; fi
   # journal d'accès (facultatif)
   LOGF="${TRAEFIK_ACCESS_LOG:-$(env_get "$ENVF" TRAEFIK_ACCESS_LOG)}"
-  if [ -z "$LOGF" ] && interactive; then LOGF="$(ask "Journal d'accès de Traefik, JSON (vide = ignorer)" "" TRAEFIK_ACCESS_LOG)"; fi
+  if [ -z "$LOGF" ] && interactive; then LOGF="$(ask "Journal d'accès de Traefik (facultatif)" "" TRAEFIK_ACCESS_LOG \
+    "Le FICHIER où Traefik note chaque visite, au format JSON." \
+    "Il sert aux statistiques de visiteurs, aux alertes et aux bannissements." \
+    "Exemple : /var/log/traefik/access.log" \
+    "Laissez vide pour ignorer.")"; fi
   if [ -n "$LOGF" ]; then
     if [ -f "$LOGF" ]; then
       ok "Journal d'accès : $LOGF ($(du -h "$LOGF" | cut -f1))"
@@ -262,7 +300,17 @@ check_traefik() {
   ACME="${TRAEFIK_CERTS_FILE:-$(env_get "$ENVF" ACME_FILE)}"
   CERTS_MODE="${NATIVE_CERTS:-$(env_get "$ENVF" NATIVE_CERTS)}"
   if [ -z "$ACME" ] && [ -z "$CERTS_MODE" ] && interactive; then
-    ACME="$(ask "acme.json de Traefik, pour afficher les certificats (vide = ignorer)" "" TRAEFIK_CERTS_FILE)"
+    local aguess=""
+    if command -v docker >/dev/null 2>&1; then aguess="$(docker inspect traefik --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' 2>/dev/null | grep -i acme | head -1)"; fi
+    ACME="$(ask "Certificats de Traefik : fichier acme.json (facultatif)" "$aguess" TRAEFIK_CERTS_FILE \
+      "Le FICHIER acme.json où Traefik range ses certificats Let's Encrypt (pas son dossier)." \
+      "Il sert seulement à afficher les certificats et leurs dates d'expiration dans le hub." \
+      "Exemple : /var/lib/traefik/acme.json" \
+      "Laissez vide pour ignorer.")"
+  fi
+  if [ -n "$ACME" ] && [ -d "$ACME" ]; then   # un dossier : on cherche le fichier dedans
+    if [ -f "$ACME/acme.json" ]; then ok "« $ACME » est un dossier : j'utilise le fichier $ACME/acme.json"; ACME="$ACME/acme.json"
+    else warn "« $ACME » est un dossier, pas le fichier acme.json" "Indiquez le fichier lui-même (par exemple $ACME/acme.json). Il n'y en a pas dans ce dossier pour l'instant."; ACME=""; CERTS_MODE=none; fi
   fi
   if [ -n "$ACME" ]; then
     if [ -f "$ACME" ]; then
@@ -270,12 +318,18 @@ check_traefik() {
       case "$(stat -c %a "$ACME")" in 600|400) ok "acme.json en mode $(stat -c %a "$ACME") : les clés privées sont protégées";; *) warn "acme.json en mode $(stat -c %a "$ACME")" "Traefik l'exige en 600 : chmod 600 $ACME";; esac
       if [ -z "$CERTS_MODE" ]; then
         if interactive; then
-          hint "Relais (recommandé) : un petit service isolé lit acme.json (sans réseau) et ne transmet que noms et dates. Le worker ne voit jamais les clés."
-          hint "Direct : le worker lit acme.json lui-même (donc ses clés privées)."
-          case "$(ask "Certificats : 1) relais (recommandé)  2) direct  3) ignorer" 1)" in 2) CERTS_MODE=direct;; 3) CERTS_MODE=none;; *) CERTS_MODE=relay;; esac
+          case "$(ask "Comment lire les certificats ?" 1 CERTS_CHOICE \
+            "  1 = relais (recommandé) : un petit service isolé, sans accès au réseau," \
+            "      lit acme.json et ne transmet que les noms et les dates." \
+            "      Le worker ne voit jamais les clés privées." \
+            "" \
+            "  2 = direct : le worker lit acme.json lui-même" \
+            "      (il a donc accès aux clés privées)." \
+            "" \
+            "  3 = ignorer : aucun certificat n'est affiché.")" in 2) CERTS_MODE=direct;; 3) CERTS_MODE=none;; *) CERTS_MODE=relay;; esac
         else CERTS_MODE=relay; fi
       fi
-    else warn "acme.json introuvable : $ACME" "Les certificats ne seront pas affichés (le reste fonctionne)."; CERTS_MODE=none; fi
+    else warn "Fichier acme.json introuvable : $ACME" "Donnez le chemin complet du fichier (par exemple /var/lib/traefik/acme.json). Sans lui, les certificats ne seront pas affichés (le reste fonctionne)."; CERTS_MODE=none; fi
   else CERTS_MODE="${CERTS_MODE:-none}"; fi
   [ "$CERTS_MODE" = none ] && warn "Certificats non affichés (facultatif)" "TRAEFIK_CERTS_FILE=/chemin/acme.json, puis relais ou lecture directe."
 }
@@ -450,23 +504,59 @@ final_checklist() {
   [ -f "$DIR/app/worker.py" ] && ok "Code installé : $(cat "$DIR/VERSION" 2>/dev/null) dans $DIR/app"
 }
 
+resume_check() {
+  [ -s "$STATE" ] && interactive || return 0
+  local lines=() pair k label v
+  for pair in "NATIVE_DIR:Dossier d'installation" "HUB_URL:Adresse du hub" "TRAEFIK_DYNAMIC_DIR:Dossier dynamique de Traefik" "SVC_CHOICE:Utilisateur du service (1 = propriétaire du dossier, 2 = armadok)" \
+              "TRAEFIK_ACCESS_LOG:Journal d'accès" "TRAEFIK_CERTS_FILE:Fichier acme.json" "CERTS_CHOICE:Lecture des certificats (1 = relais, 2 = direct, 3 = ignorer)"; do
+    k="${pair%%:*}"; label="${pair#*:}"; state_has "$k" || continue
+    v="$(state_get "$k")"; lines+=("  • $label : ${v:-(ignoré)}")
+  done
+  [ "${#lines[@]}" -gt 0 ] || return 0
+  if yes_no "Reprendre l'installation commencée tout à l'heure ?" o \
+      "Vos réponses précédentes ont été gardées (jamais le jeton d'enrôlement) :" "" "${lines[@]}" "" \
+      "Répondez « n » pour tout reposer depuis le début."; then
+    RESUME=1
+    if [ -z "${NATIVE_DIR:-}" ] && state_has NATIVE_DIR; then DIR="$(state_get NATIVE_DIR)"; ENVF="$DIR/.env"; fi
+  else state_clear; fi
+}
+
 do_install() {
   banner "Armadok — worker natif (sans Docker)"
-  hint "Le worker appelle le hub (connexion sortante) : aucun port à ouvrir ici. Rien n'est modifié tant que les vérifications ont un point bloquant."
-  [ -n "$HUB" ] || HUB="$(ask "Adresse du hub (https://…)" "" HUB_URL | sed 's:/*$::')"
+  resume_check
+  printf '\n'
+  hint "Ce worker relie le Traefik de cette machine à votre hub Armadok."
+  hint "C'est lui qui appelle le hub (connexion sortante) : aucun port à ouvrir ici."
+  hint "Rien n'est modifié tant que les vérifications n'ont pas toutes été faites."
+  if [ -z "${NATIVE_DIR:-}" ] && [ ! -f "$DIR/.service-user" ] && [ "$ONLY_CHECK" != 1 ]; then
+    DIR="$(ask "Où installer le worker ?" "$DIR" NATIVE_DIR \
+      "Le dossier qui contiendra le code, l'environnement Python, la configuration (.env)" \
+      "et l'identité du nœud. Il est créé s'il n'existe pas." \
+      "Exemple : /opt/armadok-worker")"
+    DIR="${DIR%/}"; ENVF="$DIR/.env"
+  fi
+  [ -n "$HUB" ] || HUB="$(ask "Adresse du hub" "" HUB_URL \
+    "L'adresse web de l'interface Armadok, celle que vous ouvrez dans votre navigateur." \
+    "Elle doit commencer par https://" \
+    "Exemple : https://armadok.exemple.fr" | sed 's:/*$::')"
   reset_report
   check_system; check_python; check_hub; check_traefik; check_existing
   print_report "Checklist avant installation"
   if [ "$N_BAD" -gt 0 ]; then printf '\n%s✗ Des points bloquants empêchent l'\''installation : corrigez-les puis relancez.%s\n' "$R" "$Z"; [ "$ONLY_CHECK" = 1 ] || exit 1; fi
   [ "$ONLY_CHECK" = 1 ] && { [ "$N_BAD" -gt 0 ] && exit 1; printf '\n%s✓ Cette machine peut accueillir le worker natif.%s\n' "$G" "$Z"; exit 0; }
-  if [ "$N_WARN" -gt 0 ] && interactive; then yes_no "Continuer malgré les avertissements ?" o || exit 1; fi
+  if [ "$N_WARN" -gt 0 ] && interactive; then yes_no "Continuer malgré les avertissements ?" o \
+    "Les avertissements ⚠ ne bloquent rien : ce sont des fonctions facultatives qui" \
+    "ne seront pas disponibles, ou des droits que l'installation règle elle-même." || exit 1; fi
   is_root || { say "Les droits root sont nécessaires : relance via sudo…"; exec sudo -E bash "$0" install; }
 
   local tok=""
   if [ ! -f "$DIR/data/identity.json" ]; then
-    step "Jeton d'enrôlement"
-    hint "« Nouveau nœud » dans l'interface du hub. Il expire 15 minutes après sa création et ne sert qu'une fois."
-    tok="${ENROLL_TOKEN:-$(env_get "$ENVF" ENROLL_TOKEN)}"; [ -n "$tok" ] || tok="$(asks "Jeton d'enrôlement (enr_…)" ENROLL_TOKEN)"
+    tok="${ENROLL_TOKEN:-$(env_get "$ENVF" ENROLL_TOKEN)}"
+    [ -n "$tok" ] || tok="$(asks "Jeton d'enrôlement" ENROLL_TOKEN \
+      "Dans l'interface du hub : « Nouveau nœud », puis copiez le jeton affiché" \
+      "(il commence par enr_)." \
+      "Il expire 15 minutes après sa création et ne sert qu'une fois :" \
+      "générez-le maintenant, pas avant.")"
     case "$tok" in enr_?*) ;; *) die "Jeton invalide : il commence par « enr_ ».";; esac
   fi
 
@@ -501,6 +591,7 @@ do_install() {
     systemctl restart "$SERVICE" >/dev/null 2>&1
   fi
   final_checklist
+  state_clear   # installé : les réponses sont dans le .env
   print_report "Checklist après installation"
   { echo "Armadok — worker natif — installé le $(date '+%F %T')"; echo "Dossier : $DIR · utilisateur : $SVC_USER · hub : $HUB"; echo; plain_report; } > "$DIR/install-report.txt"
   chmod 644 "$DIR/install-report.txt"
@@ -548,11 +639,15 @@ do_uninstall() {
   rm -rf "${DIR:?}/app" "${DIR:?}/venv" "${DIR:?}/lib" "${DIR:?}/requirements.lock" "${DIR:?}/VERSION"
   say "Service, code et dépendances retirés."
   if [ -d "$DIR/data" ]; then
-    if yes_no "Supprimer aussi data/ (identité du nœud : il faudra créer un nouveau nœud) ?" n; then rm -rf "$DIR/data" "$ENVF" "$DIR/install-report.txt"; say "data/ et .env supprimés."
+    if yes_no "Supprimer aussi l'identité du nœud ?" n \
+      "Le dossier data/ contient la clé de ce nœud. Si vous le supprimez," \
+      "le hub ne reconnaîtra plus cette machine : il faudra créer un nouveau nœud" \
+      "(« Nouveau nœud » dans le hub) et refaire l'enrôlement."; then rm -rf "$DIR/data" "$ENVF" "$DIR/install-report.txt"; say "data/ et .env supprimés."
     else say "data/ et .env conservés dans $DIR (réinstallation possible sans nouveau jeton)."; fi
   fi
   if [ -f "$DIR/.created-user" ] && [ ! -d "$DIR/data" ]; then userdel "$(cat "$DIR/.created-user")" 2>/dev/null && say "Utilisateur « $(cat "$DIR/.created-user") » supprimé."; fi
   [ -d "$DIR/data" ] || rm -rf "$DIR"
+  state_clear
   printf '\n%s✓ Désinstallé.%s\n' "$G" "$Z"
 }
 
