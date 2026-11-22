@@ -98,6 +98,18 @@ services:
 endef
 export WORKER_YML
 
+# Worker natif : le script est dans le dépôt (scripts/native-worker.sh) ; avec le seul Makefile, il est téléchargé à côté, pour la version demandée
+# (NATIVE_REF, ex. v1.11.0 : celle du hub), sinon la dernière.
+NATIVE_REF_SCRIPT = $(or $(NATIVE_REF),main)
+define NATIVE_GET
+s=scripts/native-worker.sh
+if [ ! -f "$$s" ]; then
+  s=native-worker.sh
+  u="https://raw.githubusercontent.com/Dr-J-Watson/armadok"
+  curl -fsSL "$$u/$(NATIVE_REF_SCRIPT)/scripts/native-worker.sh" -o "$$s" 2>/dev/null || curl -fsSL "$$u/main/scripts/native-worker.sh" -o "$$s" || { echo "✗ Téléchargement de native-worker.sh impossible (réseau ?)"; exit 1; }
+fi
+endef
+
 # Fonctions communes aux installations. ask : question avec valeur par défaut, ou valeur préremplie par une variable
 # (3e argument). asks : idem sans écho (secrets). yes : confirmation o/N.
 define SH_FUNCS
@@ -753,13 +765,12 @@ endef
 export SH_FUNCS
 
 help: ## Affiche cette aide
-	@grep -E '^(##@ |[a-zA-Z0-9_-]+:.*## )' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "} /^##@ /{sub(/^##@ /,""); printf "\n%s\n",$$0; next} {printf "  make %-14s %s\n",$$1,$$2}'
+	@grep -E '^(##@ |[a-zA-Z0-9_-]+:.*## )' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "} /^##@ /{sub(/^##@ /,""); printf "\n%s\n",$$0; next} {printf "  make %-17s %s\n",$$1,$$2}'
 	@echo
 
 ##@ Installation
 install: ## Installation guidée : hub ou worker (interactive, ou seulement le .env et le compose)
 	eval "$$SH_FUNCS"
-	need_docker
 	banner "Armadok — installation"
 	printf '\n'
 	say "Que voulez-vous installer sur cette machine ?"
@@ -771,9 +782,13 @@ install: ## Installation guidée : hub ou worker (interactive, ou seulement le .
 	printf '  %s2)%s %sUn worker, avec Docker Compose%s\n' "$$C" "$$Z" "$$B" "$$Z"
 	hint "     Relie le Traefik et/ou le Docker de CETTE machine à une interface (hub) déjà installée ailleurs. Démarre le worker et attend la connexion (sauf en mode fichiers)."
 	printf '\n'
+	printf '  %s3)%s %sUn worker NATIF, sans Docker%s\n' "$$C" "$$Z" "$$B" "$$Z"
+	hint "     Un service systemd qui démarre au boot, avec vérification de la machine et checklist. Pour un VPS où Docker n'est pas voulu."
+	printf '\n'
 	case "$$(ask "Votre choix" "1" MODE)" in
 	  1|hub|compose|h) exec $(MAKE) --no-print-directory hub;;
 	  2|worker|w) exec $(MAKE) --no-print-directory worker;;
+	  3|native|n) exec $(MAKE) --no-print-directory worker-native;;
 	  *) die "Choix invalide.";;
 	esac
 
@@ -786,6 +801,27 @@ worker: ## Installe un worker avec Docker Compose (relie le Traefik et/ou le Doc
 	eval "$$SH_FUNCS"
 	need_docker
 	install_worker
+
+##@ Installation native (sans Docker)
+worker-native: ## Installe un worker SANS Docker (service systemd) : vérifie la machine, installe, rend une checklist
+	$(NATIVE_GET)
+	exec bash "$$s" install
+
+native-check: ## Vérifie seulement si cette machine peut accueillir le worker natif (ne modifie rien)
+	$(NATIVE_GET)
+	exec bash "$$s" check
+
+native-status: ## État du worker natif : service, démarrage au boot, connexion au hub, droits
+	$(NATIVE_GET)
+	exec bash "$$s" status
+
+native-update: ## Met à jour le worker natif (code et dépendances), en gardant .env et data/
+	$(NATIVE_GET)
+	exec bash "$$s" update
+
+native-uninstall: ## Retire le worker natif (service, code ; demande avant de toucher à data/)
+	$(NATIVE_GET)
+	exec bash "$$s" uninstall
 
 ##@ Au quotidien
 up: ## Démarre (ou applique un changement du .env)
@@ -911,4 +947,4 @@ reset-2fa: ## Désactive la double authentification (hub) : make reset-2fa NAME=
 	@[ -n "$(NAME)" ] || { echo "Usage : make reset-2fa NAME=utilisateur"; exit 1; }
 	docker compose run --rm $(HUB_SVC) python -m app.tools.reset_2fa "$(NAME)"
 
-.PHONY: help install hub worker up down restart logs status update backup doctor config version password consumer-key reset-2fa
+.PHONY: help install hub worker worker-native native-check native-status native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa

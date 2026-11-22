@@ -198,12 +198,13 @@ curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
 make install
 ```
 
-Le script propose **deux installations** :
+Le script propose **trois installations** :
 
 | Choix | Ce qu'il fait | Écrit |
 |---|---|---|
 | **1 · Le hub** | l'interface complète (DNS, sites Traefik, utilisateurs, nœuds, Docker) | `docker-compose.yml`, `.env`, `data/` |
 | **2 · Un worker** | relie le Traefik et/ou le Docker de **cette** machine à un hub déjà installé ailleurs (voir [Plusieurs Traefik](#-plusieurs-traefik)) | `docker-compose.yml`, `.env`, puis démarre et attend la connexion |
+| **3 · Un worker natif** | le même worker, **sans Docker** : un service systemd qui démarre au boot, avec vérification de la machine et checklist (voir [Worker sans Docker](#-worker-sans-docker-service-systemd)) | un dossier d'installation (`/opt/armadok-worker`) et un service systemd |
 
 Quelle que soit la façon de le lancer (`make install`, `make hub`, `make worker`), le script demande d'abord **comment continuer** :
 
@@ -719,7 +720,7 @@ Un **nœud** est une instance Traefik avec ses propres sites, membres et domaine
 
 1. Dans le menu des nœuds, **Nouveau nœud** *(réservé aux comptes qui en ont le droit : **Équipe → Nœuds qu'il peut créer**, un nombre ou illimité)*.
 2. L'assistant affiche un `docker-compose.yml` prêt à copier, avec un **jeton à usage unique** valable 15 minutes.
-3. Sur la machine distante : `docker compose up -d`. L'assistant détecte la connexion tout seul.
+3. Sur la machine distante : `docker compose up -d` (ou, **sans Docker**, la commande de l'option « Sans Docker » : voir [Worker sans Docker](#-worker-sans-docker-service-systemd)). L'assistant détecte la connexion tout seul.
 
 ```mermaid
 sequenceDiagram
@@ -745,7 +746,81 @@ sequenceDiagram
 - 🔐 Il n'exécute qu'une **liste fermée d'opérations sur fichiers**, **uniquement dans son dossier Traefik**, et ne connaît ni les clés DNS, ni les utilisateurs, ni le secret du hub.
 - 👑 Chaque propriétaire de nœud gère lui-même ses membres ; un administrateur de la plateforme n'a **pas** d'accès implicite aux nœuds distants des autres.
 - 🌍 Un domaine peut être **importé** sur plusieurs nœuds sans copier ses clés (**Ce nœud → Domaines**). **Ce nœud → Connexion** permet de remplacer ou révoquer un worker, ou de supprimer le nœud.
+- 🐧 Pas de Docker sur la machine distante ? Voir [Worker sans Docker](#-worker-sans-docker-service-systemd).
 - 💡 Sur la machine distante, le plus simple est `make install` puis « worker » ; l'assistant « Nouveau nœud » affiche aussi la commande toute prête.
+
+### 🐧 Worker sans Docker (service systemd)
+
+Pour un VPS où Docker n'est pas voulu, le worker s'installe comme un **service systemd** (module Traefik seulement ; pour Docker, utilisez `make worker`). Dans « Nouveau nœud », l'option **Sans Docker** affiche la commande toute prête :
+
+```bash
+mkdir armadok-worker && cd armadok-worker
+curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
+make worker-native HUB_URL=https://hub.exemple.fr ENROLL_TOKEN=enr_… NATIVE_REF=v1.11.0
+```
+
+Le script **vérifie d'abord la machine, sans rien modifier**, et affiche une checklist (✅ OK · ⚠ avertissement · ❌ bloquant) avec la correction exacte de chaque point. Un ❌ interrompt l'installation ; `make native-check` ne fait que ces vérifications.
+
+| Vérifié | Détail |
+|---|---|
+| Système | Linux, systemd, droits root ou `sudo`, `curl` et `tar`, espace disque |
+| Python | 3.12 ou plus, `pip`, module `venv` (si activé), Python « géré par le système » (PEP 668) |
+| Hub | adresse en HTTPS, nom résolu (adresse privée signalée), réponse de `/api/health`, certificat valide, **403 d'un filtre IP** repéré, format du jeton |
+| Traefik | dossier dynamique et droits d'écriture du service, API (facultatif), journal d'accès JSON (facultatif), `acme.json` et son mode 600 (facultatif) |
+| Installation | installation précédente détectée (rien n'est écrasé sans le dire) |
+
+**Utilisateur et droits.** Le service tourne sous le **propriétaire du dossier Traefik** ou, au choix, sous un utilisateur système dédié `armadok` (sans mot de passe ni shell). Dans ce dernier cas, il reçoit **uniquement** une ACL sur le dossier de configuration dynamique (écriture), le journal d'accès (lecture) et le droit de passage dans leurs dossiers parents ; `make native-uninstall` les retire. Le service est durci (`NoNewPrivileges`, `ProtectSystem=strict`, `PrivateTmp`, écriture limitée à `data/` et au dossier Traefik).
+
+**Ce que contient le dossier d'installation** (`/opt/armadok-worker` par défaut, `NATIVE_DIR` pour le changer) :
+
+```text
+/opt/armadok-worker/
+├── app/                  le code du worker (la version du hub : NATIVE_REF)
+├── venv/                 l'environnement Python (lib/ à la place si NATIVE_VENV=false)
+├── data/                 l'identité du nœud (clé Ed25519, 0700)
+├── .env                  réglages (0600) ; le jeton en est retiré dès la connexion
+├── VERSION · requirements.lock
+└── install-report.txt    la checklist de l'installation
+```
+
+En dehors : `/etc/systemd/system/armadok-worker.service` (démarrage au boot, `Restart=always`) et l'utilisateur éventuel. Les journaux sont ceux de systemd : `journalctl -u armadok-worker -f`.
+
+| Variable | Rôle |
+|---|---|
+| `NATIVE_VENV` | `true` par défaut. `false` : pas de venv (VPS sans `python3-venv`) ; les dépendances vont dans `lib/`, le Python du système n'est pas modifié |
+| `NATIVE_DIR` · `NATIVE_USER` · `NATIVE_REF` | dossier d'installation · utilisateur du service · version du code (`v1.11.0`, ou `main`) : prenez celle du hub |
+| `TRAEFIK_DYNAMIC_DIR` · `TRAEFIK_ACCESS_LOG` · `TRAEFIK_API_URL` | comme pour le worker Docker, avec les **vrais chemins** de la machine |
+| `NATIVE_CERTS` | `relay` (recommandé : un second service lit `acme.json` sans réseau et n'écrit que les noms et dates, le worker ne voit jamais les clés), `direct`, ou `none` |
+| `NATIVE_YES=1` | accepte les valeurs par défaut sans poser de question |
+
+> [!NOTE]
+> Linux avec systemd uniquement, et module Traefik seulement. La mise à jour (`make native-update`) garde `.env` et `data/` ; `make native-uninstall` demande avant de supprimer l'identité du nœud.
+
+### 🔐 Comment un worker est authentifié
+
+- **Enrôlement** (`POST /api/worker/enroll`) : le jeton fait 256 bits, n'est stocké qu'en SHA-256 côté hub, ne sert **qu'une fois** (consommé de façon atomique) et expire après 15 minutes. Le worker envoie la clé publique Ed25519 qu'il vient de générer ; la clé privée ne quitte jamais sa machine.
+- **Chaque connexion** (`/api/worker/ws`) : le hub envoie un nonce, le worker le signe, le hub vérifie la signature avec la clé publique enregistrée. Sans la clé privée, personne ne peut se faire passer pour ce worker.
+- **Ensuite** : seule une liste fermée d'opérations est acceptée, limitée aux dossiers du worker.
+
+### 🧱 Hub derrière un filtre IP : laisser passer les workers
+
+Si le routeur du hub utilise une chaîne avec un filtre IP (par exemple `chain-private` avec `ip-allow-lan`), un worker installé **hors de votre réseau** reçoit un **403** dès l'enrôlement. Le worker n'a rien à ouvrir de son côté (il appelle le hub en HTTPS sortant) ; c'est le hub qui doit l'accepter :
+
+- **un VPN** (WireGuard…) : l'adresse du worker devient locale, rien à changer côté Traefik ;
+- **ou un second routeur** limité à `/api/worker`, sans filtre IP, prioritaire sur le routeur privé. Le reste de l'interface reste privé, et ce chemin n'est exploitable qu'avec un jeton valide ou la clé d'un nœud déjà enrôlé.
+
+```yaml
+http:
+  routers:
+    armadok-worker:
+      rule: "Host(`hub.exemple.fr`) && PathPrefix(`/api/worker`)"
+      priority: 100
+      entryPoints: [websecure]
+      service: armadok-svc          # le même service que le routeur du hub
+      tls:
+        certResolver: lehttp
+      middlewares: [chain-public-api]   # sans filtre IP
+```
 
 ### 🚨 Accès d'urgence (administrateurs de la plateforme)
 
@@ -948,6 +1023,8 @@ Le conteneur doit tourner avec un utilisateur autorisé à **écrire** dans le d
 |---|---|
 | `make install` | installation guidée : hub ou worker, en mode interactif ou en n'écrivant que le `.env` et le compose |
 | `make hub` · `make worker` | lance directement l'un ou l'autre (`INTERACTIVE=0` : fichiers seulement ; `make hub` ne démarre jamais rien) |
+| `make worker-native` | installe un worker **sans Docker** (service systemd) : vérifie la machine, installe, rend une checklist |
+| `make native-check` · `native-status` · `native-update` · `native-uninstall` | vérifier sans rien installer · état du service · mise à jour (garde `.env` et `data/`) · retrait |
 | `make doctor` | **vérifie l'installation** (variables, droits, dossiers, réseau, conteneur) |
 | `make config` | valide `docker-compose.yml` avec le `.env` |
 | `make status` | état, et connexion d'un worker |

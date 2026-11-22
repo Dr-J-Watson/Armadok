@@ -24,6 +24,8 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
   const tr = o.modules !== 'docker'; const dk = o.modules !== 'traefik'
   const yaml = composeFor({ hub, token, version: meta.data?.version, ...o })
   const quick = `mkdir armadok-worker && cd armadok-worker\ncurl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile\nmake worker HUB_URL=${hub} ENROLL_TOKEN=${token} WORKER_IMAGE=${imageFor(meta.data?.version)}${o.modules === 'traefik' ? '' : ` WORKER_MODULES=${o.modules}`}${dk && o.addr.trim() ? ` WORKER_ADDRESSES=${o.addr.trim().replace(/\s+/g, '')}` : ''}`
+  const ver = /^v?\d/.test(meta.data?.version || '') ? meta.data.version.replace(/^v/, '') : ''
+  const native = `mkdir armadok-worker && cd armadok-worker\ncurl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile\nmake worker-native HUB_URL=${hub} ENROLL_TOKEN=${token}${ver ? ` NATIVE_REF=v${ver}` : ''}`
   const until = expires ? `à ${fmtDate(expires * 1000)}` : 'dans 15 minutes'
   useEffect(() => { if (online) onOnline?.() }, [online]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
@@ -37,8 +39,15 @@ export default function WorkerSetup({ node, token, expires, onOnline, modules })
       <div className="step"><span className="num">1</span><div className="grow col" style={{ gap: 8 }}>
         <b>Installez le worker sur la machine à relier</b>
         <Field label="Que doit gérer ce worker ?" tip="Un worker peut gérer Traefik + DNS (sites, protections, certificats), Docker (conteneurs, projets compose, Git, images) ou les deux. Le DNS lui-même reste géré par ce hub."><Seg value={o.modules} onChange={(m) => setO((x) => ({ ...x, modules: m }))} options={WORKER_TYPES} /></Field>
-        <Seg value={mode} onChange={setMode} options={[{ id: 'make', label: 'Terminal (Makefile)', hint: 'Un script pose les questions et démarre tout (ou n\'écrit que le .env et le compose)' }, { id: 'compose', label: 'docker-compose.yml', hint: 'Un fichier compose à enregistrer sur la machine, sans le Makefile' }]} />
-        {mode === 'make' ? <>
+        <Seg value={mode} onChange={setMode} options={[{ id: 'make', label: 'Terminal (Makefile)', hint: 'Un script pose les questions et démarre tout (ou n\'écrit que le .env et le compose)' }, { id: 'compose', label: 'docker-compose.yml', hint: 'Un fichier compose à enregistrer sur la machine, sans le Makefile' }, { id: 'native', label: 'Sans Docker', hint: 'Un service systemd installé directement sur la machine (Traefik seulement), avec vérifications et checklist' }]} />
+        {mode === 'native' ? <>
+          {o.modules !== 'traefik' ? <div className="banner warn">L'installation sans Docker ne gère que Traefik. Pour gérer Docker aussi, choisissez « Terminal (Makefile) » ou « docker-compose.yml ».</div> : <>
+            <div className="codebox wrap"><CopyBtn text={native} /><pre><Terminal size={12} /> {native}</pre></div>
+            <div className="muted small">Le script commence par vérifier la machine (systemd, Python 3.12+, accès à ce hub en HTTPS, dossier de Traefik, journal d'accès, certificats) et affiche une checklist ✅ / ⚠ / ❌ avec la correction de chaque point : rien n'est installé tant qu'un ❌ reste. Il demande le dossier d'installation (par défaut <code>/opt/armadok-worker</code>) et celui de la configuration dynamique de Traefik, puis installe un service systemd qui démarre au boot et redémarre tout seul. Aucun port à ouvrir : le worker appelle ce hub ({window.location.host}), qui doit être joignable en HTTPS depuis cette machine.</div>
+            <details className="small"><summary className="muted" style={{ cursor: 'pointer' }}>Seulement vérifier la machine, sans rien installer</summary>
+              <div className="muted small" style={{ marginTop: 6 }}>Lancez <code>make native-check HUB_URL={hub}</code> : la checklist s'affiche et rien n'est modifié. Ensuite : <code>make native-status</code>, <code>make native-update</code>, <code>make native-uninstall</code>. Les journaux : <code>journalctl -u armadok-worker -f</code>.</div></details>
+          </>}
+        </> : mode === 'make' ? <>
           <div className="codebox wrap"><CopyBtn text={quick} /><pre><Terminal size={12} /> {quick}</pre></div>
           <div className="muted small">Le script utilise la même version que ce hub. Il vous demande selon le type choisi : où se trouve la configuration de votre Traefik (dossier ou volume Docker), son journal d'accès, les dossiers de vos projets compose, puis il se connecte à ce hub avec l'adresse et le jeton déjà fournis : rien d'autre à saisir. Aucun port à ouvrir : le worker appelle ce hub, qui doit être joignable en HTTPS depuis cette machine ({window.location.host}).</div>
           <details className="small"><summary className="muted" style={{ cursor: 'pointer' }}>Avec les questions guidées : make install</summary>
