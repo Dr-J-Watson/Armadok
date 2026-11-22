@@ -1027,6 +1027,7 @@ Le conteneur doit tourner avec un utilisateur autorisé à **écrire** dans le d
 |---|---|
 | `make install` | installation guidée : hub ou worker, en mode interactif ou en n'écrivant que le `.env` et le compose |
 | `make hub` · `make worker` | lance directement l'un ou l'autre (`INTERACTIVE=0` : fichiers seulement ; `make hub` ne démarre jamais rien) |
+| `make continue` | **reprend l'installation interrompue** (hub, worker ou worker natif) avec les réponses déjà données, sans les reposer. Elles sont gardées au fur et à mesure dans `.armadok-install.state` (droits 600, jamais un mot de passe, un jeton ni un secret ; effacé quand l'installation est finie). Relancer simplement `make hub` ou `make worker` propose aussi la reprise |
 | `make worker-native` | installe un worker **sans Docker** (service systemd) : vérifie la machine, installe, rend une checklist |
 | `make native-check` · `native-status` · `native-update` · `native-uninstall` | vérifier sans rien installer · état du service · mise à jour (garde `.env` et `data/`) · retrait |
 | `make native-logs` · `native-restart` · `native-stop` · `native-start` · `native-backup` | au quotidien, sur un worker natif : journaux en direct · redémarrer (et attendre la connexion au hub) · arrêter · démarrer · archive datée de l'identité (clé) et de la configuration |

@@ -512,6 +512,11 @@ final_checklist() {
 }
 
 resume_check() {
+  if [ "${NATIVE_RESUME:-}" = 1 ] && [ -s "$STATE" ]; then   # « make continue » : on reprend sans reposer la question
+    RESUME=1; say "Reprise de l'installation interrompue (réponses gardées dans $STATE)."
+    if [ -z "${NATIVE_DIR:-}" ] && state_has NATIVE_DIR; then DIR="$(state_get NATIVE_DIR)"; ENVF="$DIR/.env"; fi
+    return 0
+  fi
   [ -s "$STATE" ] && interactive || return 0
   local lines=() pair k label v
   for pair in "NATIVE_DIR:Dossier d'installation" "HUB_URL:Adresse du hub" "VENV_CHOICE:Environnement Python isolé (o = venv, n = sans)" "TRAEFIK_DYNAMIC_DIR:Dossier dynamique de Traefik" "TRAEFIK_API_URL:API de Traefik" "SVC_CHOICE:Utilisateur du service (1 = propriétaire du dossier, 2 = armadok)" \

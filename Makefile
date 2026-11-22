@@ -126,19 +126,57 @@ warnl() { printf '  %s⚠%s %s\n' "$$Y" "$$Z" "$$*"; }
 fail() { printf '  %s✗%s %s\n' "$$R" "$$Z" "$$*" >&2; }
 die() { fail "$$*"; exit 1; }
 cmd() { printf '      %s%s%s\n' "$$B" "$$*" "$$Z"; }
+# Les réponses sont gardées au fur et à mesure dans .armadok-install.state (droits 600, jamais un mot de passe, un jeton ni un secret) :
+# si vous coupez l'installation, « make continue » (ou le prochain « make hub » / « make worker ») la reprend là où elle en était.
+STATE=.armadok-install.state
+state_has() { [ -f "$$STATE" ] && grep -q "^$$1=" "$$STATE" 2>/dev/null; }
+state_get() { if [ -f "$$STATE" ]; then grep -E "^$$1=" "$$STATE" 2>/dev/null | tail -1 | cut -d= -f2-; fi; return 0; }
+state_put() { ( umask 077; { grep -v "^$$1=" "$$STATE" 2>/dev/null; printf '%s=%s\n' "$$1" "$$2"; } > "$$STATE.new" && mv "$$STATE.new" "$$STATE" ) 2>/dev/null; return 0; }
+state_clear() { rm -f "$$STATE" "$$STATE.new" 2>/dev/null; return 0; }
+# resume_check hub|worker : propose de reprendre (RESUME_NOW=1, utilisé par « make continue », reprend sans poser la question)
+resume_check() {
+  RESUME=0
+  [ "$${FILES_ONLY:-}" = 1 ] && return 0
+  [ "$${INTERACTIVE:-}" = 0 ] && return 0
+  [ -s "$$STATE" ] || return 0
+  if [ "$$(state_get K_KIND)" != "$$1" ]; then
+    [ "$${RESUME_NOW:-}" = 1 ] && die "L'installation interrompue ici est celle d'un « $$(state_get K_KIND) », pas d'un « $$1 »."
+    state_clear; return 0   # l'état d'une AUTRE installation : on repart de zéro
+  fi
+  local lines=() pair k v
+  for pair in "INSTALL_MODE:Mode" "WORKER_MODULES:Ce que gère le worker (1 Traefik, 2 Docker, 3 les deux)" "TRAEFIK_DYNAMIC_PATH:Dossier dynamique de Traefik" "TRAEFIK_NETWORK:Réseau Docker" "K_EPS:Points d'entrée" "K_RES:Résolveur" \
+              "CERTS_PATH:Dossier d'acme.json" "K_CERTDEL:Suppression des certificats" "K_CTR:Conteneur de Traefik" "K_DOCKER:Gestion de Docker" "PROJECT_ROOTS:Dossiers des projets" "K_EXEC:Terminal dans les conteneurs" \
+              "TRAEFIK_ACCESS_LOG_PATH:Dossier du journal" "TRAEFIK_API_URL:API de Traefik" "PROMETHEUS_URL:Prometheus" "DEFAULT_DNS_TARGET:IP par défaut" "K_AUSER:Propriétaire" "K_OEND:Région OVH" "K_DOM:Adresse de l'interface" "K_MW:Protections" \
+              "WORKER_ADDRESSES:Adresse de cette machine" "WORKER_IMAGE:Image du worker" "HUB_URL:Adresse du hub"; do
+    k="$${pair%%:*}"; state_has "$$k" || continue; v="$$(state_get "$$k")"; lines+=("  • $${pair#*:} : $${v:-(vide)}")
+  done
+  if [ "$${RESUME_NOW:-}" = 1 ]; then RESUME=1; good "Reprise de l'installation interrompue ($${#lines[@]} réponse(s) gardée(s) dans $$STATE)."; return 0; fi
+  [ "$${#lines[@]}" -gt 0 ] || return 0
+  if confirm "Reprendre l'installation commencée tout à l'heure ?" "Vos réponses précédentes ont été gardées (jamais un mot de passe, un jeton ni un secret) :" "" "$${lines[@]}" "" "Répondez « n » pour tout reposer depuis le début."; then RESUME=1; else state_clear; fi
+}
+
 # Une question = un titre, quelques lignes d'explication (avec un exemple), puis l'invite sur sa propre ligne.
 #   ask "titre" "défaut" [VARIABLE] ["explication"…] : la variable déjà renseignée répond d'office (rien n'est demandé).
 #   asks "titre" [VARIABLE] ["explication"…] : sans écho (secrets).   yes / confirm "titre" ["explication"…] : o/N, O/n.
 show_q() { local l; printf '\n  %s▸ %s%s\n' "$$B" "$$1" "$$Z" >&2; shift; for l in "$$@"; do printf '      %s%s%s\n' "$$D" "$$l" "$$Z" >&2; done; }
 ask() { local v="" q="$$1" def="$${2:-}" pre="$${3:-}"; if [ $$# -ge 3 ]; then shift 3; else shift $$#; fi
   if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : %s\n' "$$G" "$$Z" "$$q" "$$v" >&2
-  elif [ "$${FILES_ONLY:-}" != 1 ]; then show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse$${def:+ $${D}[$$def]$${Z}} : " v || true; fi
+  elif [ -n "$$pre" ] && [ "$${RESUME:-0}" = 1 ] && state_has "$$pre"; then v="$$(state_get "$$pre")"; printf '  %s✓%s %s : %s %s(repris)%s\n' "$$G" "$$Z" "$$q" "$${v:-—}" "$$D" "$$Z" >&2
+  elif [ "$${FILES_ONLY:-}" != 1 ]; then
+    show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse$${def:+ $${D}[$$def]$${Z}} : " v || true
+    v="$${v:-$$def}"; [ -z "$$pre" ] || state_put "$$pre" "$$v"
+  fi
   printf '%s' "$${v:-$$def}"; }
 asks() { local v="" q="$$1" pre="$${2:-}"; if [ $$# -ge 2 ]; then shift 2; else shift $$#; fi
   if [ -n "$$pre" ] && [ -n "$${!pre:-}" ]; then v="$${!pre}"; printf '  %s✓%s %s : (fourni)\n' "$$G" "$$Z" "$$q" >&2
   elif [ "$${FILES_ONLY:-}" != 1 ]; then show_q "$$q" "$$@"; read -rs -p "      $${C}➜$${Z} Saisissez ou collez ici (rien ne s'affiche) : " v || true; echo >&2; fi
   printf '%s' "$$v"; }
 yes() { local v="" q="$$1"; shift; [ "$${FILES_ONLY:-}" = 1 ] && return 1; show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse $${D}[o/N]$${Z} : " v || true; [[ "$${v,,}" =~ ^(o|oui|y|yes)$$ ]]; }
+yesk() { local k="$$1" q="$$2" r; shift
+  if [ "$${RESUME:-0}" = 1 ] && state_has "$$k"; then r="$$(state_get "$$k")"; printf '  %s✓%s %s : %s %s(repris)%s\n' "$$G" "$$Z" "$$q" "$$([ "$$r" = o ] && echo oui || echo non)" "$$D" "$$Z" >&2; [ "$$r" = o ]; return; fi
+  if yes "$$@"; then state_put "$$k" o; return 0; fi
+  [ "$${FILES_ONLY:-}" = 1 ] || state_put "$$k" n
+  return 1; }
 confirm() { local v="" q="$$1"; shift; [ "$${FILES_ONLY:-}" = 1 ] && return 0; show_q "$$q" "$$@"; read -r -p "      $${C}➜$${Z} Votre réponse $${D}[O/n]$${Z} : " v || true; [[ ! "$${v,,}" =~ ^(n|non|no)$$ ]]; }
 image_ref() { case "$$1" in "") echo "$(IMAGE)";; */*|*:*) echo "$$1";; *) echo "$(IMAGE_REPO):$$1";; esac; }
 # pick_image VARIABLE_À_REMPLIR : demande « latest » ou un numéro de version précis (ex. 1.0.0) ; sauté si IMAGE a été fourni (IMAGE=… ou variable d'environnement)
@@ -147,9 +185,10 @@ pick_image() {
   if [ "$${FILES_ONLY:-}" = 1 ]; then ans="$(IMAGE)"
   elif [ -n "$(if $(filter file,$(origin IMAGE)),,1)" ]; then ans="$(IMAGE)"; printf '  %s✓%s Image : %s\n' "$$G" "$$Z" "$$ans" >&2
   else
-    show_q "Quelle version d'Armadok installer ?" "« latest » est la plus récente publiée ; un numéro précis fige la version." "Exemple : 1.11.1" "Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
-    read -r -p "      $${C}➜$${Z} Votre réponse $${D}[latest]$${Z} : " ans || true
-    ans="$$(image_ref "$${ans:-latest}")"
+    { [ "$${RESUME:-0}" = 1 ] && state_has K_IMAGE; } || show_q "Quelle version d'Armadok installer ?" "« latest » est la plus récente publiée ; un numéro précis fige la version." "Exemple : 1.11.1" "Les versions existantes : github.com/Dr-J-Watson/Armadok/releases"
+    if [ "$${RESUME:-0}" = 1 ] && state_has K_IMAGE; then ans="$$(state_get K_IMAGE)"; printf '  %s✓%s Version : %s %s(repris)%s\n' "$$G" "$$Z" "$$ans" "$$D" "$$Z" >&2
+    else read -r -p "      $${C}➜$${Z} Votre réponse $${D}[latest]$${Z} : " ans || true; ans="$${ans:-latest}"; state_put K_IMAGE "$$ans"; fi
+    ans="$$(image_ref "$$ans")"
   fi
   printf -v "$$1" '%s' "$$ans"
 }
@@ -319,8 +358,8 @@ ask_traefik() {
 
   sub "Points d'entrée et certificats (valeurs de départ)"
   hint "Proposés dans les formulaires de l'interface. Lus UNE seule fois : vous les changerez ensuite dans « Ce nœud »."
-  EPS=$$(ask "Points d'entrée de Traefik" "web,websecure" "" "Les noms écrits dans la configuration de Traefik : web = port 80, websecure = port 443." "Plusieurs noms : séparez-les par des virgules." "Exemple : web,websecure")
-  RES=$$(ask "Résolveur de certificats Let's Encrypt" "letsencrypt" "" "Le nom du résolveur défini dans la configuration de Traefik (certificatesResolvers)." "Exemple : letsencrypt")
+  EPS=$$(ask "Points d'entrée de Traefik" "web,websecure" K_EPS "Les noms écrits dans la configuration de Traefik : web = port 80, websecure = port 443." "Plusieurs noms : séparez-les par des virgules." "Exemple : web,websecure")
+  RES=$$(ask "Résolveur de certificats Let's Encrypt" "letsencrypt" K_RES "Le nom du résolveur défini dans la configuration de Traefik (certificatesResolvers)." "Exemple : letsencrypt")
 
   sub "Certificats HTTPS (facultatif)"
   hint "L'interface peut afficher les échéances et signaler les sites sans certificat. Elle ne lit que les noms et les dates :"
@@ -333,11 +372,11 @@ ask_traefik() {
     hint "Supprimer ou renouveler un certificat depuis l'interface demande de relancer Traefik : l'interface doit alors accéder au socket Docker."
     warnl "Cela lui donne la main sur Docker. À n'accepter que si l'interface est protégée (chaîne privée, 2FA)."
     hint "Sans cela, tout marche sauf supprimer / renouveler."
-    if yes "Autoriser la suppression et le renouvellement des certificats ?" "Répondez « n » si vous n'en avez pas besoin : tout le reste fonctionne."; then
+    if yesk K_CERTDEL "Autoriser la suppression et le renouvellement des certificats ?" "Répondez « n » si vous n'en avez pas besoin : tout le reste fonctionne."; then
       CERTS_DOCKER=1
-      TRAEFIK_CTR=$$(ask "Nom du conteneur de Traefik" "traefik" "" "Le nom du conteneur, pour que l'interface puisse le relancer." "Pour le connaître : docker ps" "Exemple : traefik")
+      TRAEFIK_CTR=$$(ask "Nom du conteneur de Traefik" "traefik" K_CTR "Le nom du conteneur, pour que l'interface puisse le relancer." "Pour le connaître : docker ps" "Exemple : traefik")
       DGID=$$(getent group docker | cut -d: -f3 || true)
-      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
+      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" K_DGID "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
     fi
   fi
 
@@ -347,11 +386,11 @@ ask_traefik() {
   hint "Sans cela, tout marche sauf la partie Docker. Vous pourrez l'activer plus tard (DOCKER_MANAGE, PROJECT_ROOTS, socket)."
   echo
   DOCKER_MANAGE=""; PROJECT_ROOTS=""
-  if yes "Activer la gestion de Docker depuis l'interface ?" "Répondez « n » pour garder la partie Traefik et DNS seule : vous pourrez l'activer plus tard."; then
+  if yesk K_DOCKER "Activer la gestion de Docker depuis l'interface ?" "Répondez « n » pour garder la partie Traefik et DNS seule : vous pourrez l'activer plus tard."; then
     DOCKER_MANAGE=1
     if [ -z "$$DGID" ]; then
       DGID=$$(getent group docker | cut -d: -f3 || true)
-      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
+      [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" K_DGID "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
     fi
     PROJECT_ROOTS=$$(ask "Dossiers de vos projets docker compose" "$$HOME/docker" PROJECT_ROOTS "Les chemins ABSOLUS, séparés par des virgules, sans espace." "Montés avec le même chemin dans le conteneur ; rien n'est lu ni écrit en dehors." "Avec plusieurs dossiers, la création d'un projet demandera lequel utiliser." "Exemple : /opt/stacks,/srv/apps")
     local r norm=""
@@ -387,7 +426,7 @@ ask_admin() {
     warnl "Mot de passe non défini : « make password » en génère le hachage, à coller dans ADMIN_PASSWORD_HASH (.env)."
     return 0
   fi
-  AUSER=$$(ask "Identifiant du propriétaire" "admin" "" "Le nom de connexion de l'administrateur permanent de l'interface." "Exemple : admin")
+  AUSER=$$(ask "Identifiant du propriétaire" "admin" K_AUSER "Le nom de connexion de l'administrateur permanent de l'interface." "Exemple : admin")
   show_q "Mot de passe du propriétaire" "12 caractères au moins. Rien ne s'affiche pendant la saisie." "Il n'est jamais écrit en clair : seul son hachage l'est."
   while :; do
     read -rs -p "      $${C}➜$${Z} Mot de passe : " PW; echo
@@ -404,8 +443,8 @@ ask_ovh() {
   hint "Si votre DNS est chez OVH, l'interface peut créer les enregistrements de vos sites. Laissez vide pour ignorer : DuckDNS, AdGuard Home,"
   hint "Pi-hole, DNS local et d'autres comptes OVH s'ajoutent ensuite dans l'interface."
   hint "Clé à créer sur https://api.ovh.com/createToken/ : GET, POST, PUT et DELETE sur /domain/zone et /domain/zone/*, sans limite de durée."
-  OEND=$$(ask "Région de votre compte OVH" "ovh-eu" "" "Le point d'accès de l'API OVH : ovh-eu (Europe), ovh-ca (Canada) ou ovh-us (États-Unis).")
-  AK=$$(ask "Clé d'application OVH (Application key)" "" "" "Celle de l'application que vous avez créée sur https://api.ovh.com/createApp/" "Laissez vide pour ne pas utiliser OVH.")
+  OEND=$$(ask "Région de votre compte OVH" "ovh-eu" K_OEND "Le point d'accès de l'API OVH : ovh-eu (Europe), ovh-ca (Canada) ou ovh-us (États-Unis).")
+  AK=$$(ask "Clé d'application OVH (Application key)" "" K_AK "Celle de l'application que vous avez créée sur https://api.ovh.com/createApp/" "Laissez vide pour ne pas utiliser OVH.")
   AS=""; CK=""
   if [ -n "$$AK" ]; then
     show_q "Secret d'application OVH (Application secret)" "Donné avec la clé d'application. Rien ne s'affiche pendant la saisie."
@@ -425,11 +464,11 @@ ask_route() {
   sub "Adresse de l'interface (facultatif)"
   hint "Pour ouvrir l'interface par une adresse (https://…), un fichier de routage « armadok.yml » est ajouté à la configuration de Traefik."
   hint "Il faudra ensuite créer l'enregistrement DNS de cette adresse vers ce serveur. Vide = pas de routage (vous le ferez vous-même)."
-  DOM=$$(ask "Adresse web de l'interface (facultatif)" "" "" "Celle par laquelle vous ouvrirez l'interface. Un fichier armadok.yml la relie à Traefik." "Exemple : armadok.exemple.fr" "Laissez vide pour ne créer aucun routage.")
+  DOM=$$(ask "Adresse web de l'interface (facultatif)" "" K_DOM "Celle par laquelle vous ouvrirez l'interface. Un fichier armadok.yml la relie à Traefik." "Exemple : armadok.exemple.fr" "Laissez vide pour ne créer aucun routage.")
   MW=""; EP=""
   if [ -n "$$DOM" ]; then
     EP=$${EPS##*,}; [ "$$EP" = "web" ] && EP=websecure; case ",$$EPS," in *,websecure,*) EP=websecure;; esac
-    MW=$$(ask "Protections de l'accès (middlewares Traefik, facultatif)" "" "" "Liste d'adresses autorisées, SSO… : les noms des middlewares, séparés par des virgules." "Sans protection, l'interface est ouverte à tous." "Exemple : chain-private@file" "Laissez vide pour aucune protection.")
+    MW=$$(ask "Protections de l'accès (middlewares Traefik, facultatif)" "" K_MW "Liste d'adresses autorisées, SSO… : les noms des middlewares, séparés par des virgules." "Sans protection, l'interface est ouverte à tous." "Exemple : chain-private@file" "Laissez vide pour aucune protection.")
     [ -n "$$MW" ] || warnl "Aucune protection : pensez à en ajouter une dans le fichier armadok.yml."
   fi
 }
@@ -472,7 +511,9 @@ install_hub() {
   if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
   banner "Armadok — installation du hub"
   printf '\n'
+  resume_check hub
   choose_mode
+  [ "$${FILES_ONLY:-}" = 1 ] || state_put K_KIND hub
   if [ "$${FILES_ONLY:-}" = 1 ]; then
     say "Mode fichiers : aucune question. Il écrit docker-compose.yml et .env (valeurs par défaut, secrets générés) sans rien démarrer."
   else
@@ -543,6 +584,7 @@ install_hub() {
     good "docker-compose.yml créé."
     good ".env créé (droits 600, secrets générés)."
     good "data/ créé (base, sauvegardes, audit : à sauvegarder)."
+    state_clear   # installé : les réponses sont dans le .env
     write_route
     banner "Terminé — rien n'est démarré"
     printf '\n'
@@ -572,7 +614,9 @@ install_worker() {
   if [ -f .env ]; then die "Un .env existe déjà ici : rien n'est écrasé. « make up » le démarre, ou déplacez-le pour réinstaller."; fi
   banner "Armadok — installation d'un worker"
   printf '\n'
+  resume_check worker
   choose_mode
+  [ "$${FILES_ONLY:-}" = 1 ] || state_put K_KIND worker
   say "Un worker relie CETTE machine (son Traefik et/ou son Docker) à l'interface (le hub) installée ailleurs : le hub peut alors la gérer."
   say "Le worker appelle le hub (connexion sortante) : aucun port à ouvrir ici."
   if [ "$${FILES_ONLY:-}" = 1 ]; then
@@ -628,9 +672,9 @@ install_worker() {
   done
   PROJECT_ROOTS="$$norm"
   DGID=$$(getent group docker | cut -d: -f3 || true)
-  [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" "" "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
+  [ -n "$$DGID" ] || DGID=$$(ask "Numéro du groupe « docker »" "" K_DGID "Il donne accès au socket Docker sans être root." "Pour le trouver : getent group docker | cut -d: -f3" "Exemple : 999")
   [ -n "$$OWNER" ] || { OWNER=$$(stat -c '%u:%g' "$${PROJECT_ROOTS%%,*}" 2>/dev/null || echo "$$(id -u):$$(id -g)"); good "Le worker tournera avec l'identité $$OWNER (propriétaire du premier dossier de projets)."; }
-  if yes "Autoriser le terminal dans les conteneurs de cette machine ?" "Ouvrir un terminal dans un conteneur, et lancer des commandes depuis le hub (onglet Avancé, Makefile)." "Le droit « terminal » du hub n'est jamais donné d'office, et reste refusé ici tant que vous ne l'autorisez pas." "Répondez « n » en cas de doute : vous pourrez l'activer plus tard (WORKER_ALLOW_EXEC)."; then WORKER_ALLOW_EXEC=true; fi
+  if yesk K_EXEC "Autoriser le terminal dans les conteneurs de cette machine ?" "Ouvrir un terminal dans un conteneur, et lancer des commandes depuis le hub (onglet Avancé, Makefile)." "Le droit « terminal » du hub n'est jamais donné d'office, et reste refusé ici tant que vous ne l'autorisez pas." "Répondez « n » en cas de doute : vous pourrez l'activer plus tard (WORKER_ALLOW_EXEC)."; then WORKER_ALLOW_EXEC=true; fi
   WORKER_ADDRESSES=$$(ask "Adresse de cette machine, pour le Traefik d'un autre nœud (facultatif)" "$$(hostname -I 2>/dev/null | awk '{print $$1}')" WORKER_ADDRESSES "Si les sites de cette machine sont publiés par le Traefik d'un AUTRE nœud (celui du hub, par exemple) :" "l'adresse par laquelle ce Traefik joint cette machine (IP du réseau local ou du VPN, ou un nom)." "Plusieurs adresses : séparez-les par des virgules." "Laissez vide si cette machine a son propre Traefik ou aucun site." "Ensuite : « Ce nœud » → Docker → « Publier les sites avec le Traefik de… ».")
   WORKER_ADDRESSES=$${WORKER_ADDRESSES// /}
   fi
@@ -693,6 +737,7 @@ install_worker() {
   } > .env
   chmod 600 .env
   good "docker-compose.yml et .env (droits 600) créés, data/ prêt."
+  state_clear   # installé : les réponses sont dans le .env
   if [ "$${FILES_ONLY:-}" = 1 ]; then
     banner "Terminé — rien n'est démarré"
     printf '\n'
@@ -766,6 +811,16 @@ install: ## Installation guidée : hub ou worker (interactive, ou seulement le .
 	  3|native|n) exec $(MAKE) --no-print-directory worker-native;;
 	  *) die "Choix invalide.";;
 	esac
+
+continue: ## Reprend l'installation interrompue (hub, worker ou worker natif) avec les réponses déjà données
+	eval "$$SH_FUNCS"
+	NSTATE="$${XDG_CONFIG_HOME:-$$HOME/.config}/armadok-worker-install.env"
+	case "$$(state_get K_KIND)" in
+	  hub) exec env RESUME_NOW=1 INTERACTIVE=1 $(MAKE) --no-print-directory hub;;
+	  worker) exec env RESUME_NOW=1 INTERACTIVE=1 $(MAKE) --no-print-directory worker;;
+	esac
+	if [ -s "$$NSTATE" ]; then exec env NATIVE_RESUME=1 $(MAKE) --no-print-directory worker-native; fi
+	die "Aucune installation interrompue ici. Lancez « make install » pour commencer (les réponses sont gardées au fur et à mesure)."
 
 hub: ## Installe le hub avec Docker Compose (écrit docker-compose.yml et .env, ne démarre rien)
 	eval "$$SH_FUNCS"
@@ -942,4 +997,4 @@ reset-2fa: ## Désactive la double authentification (hub) : make reset-2fa NAME=
 	@[ -n "$(NAME)" ] || { echo "Usage : make reset-2fa NAME=utilisateur"; exit 1; }
 	docker compose run --rm $(HUB_SVC) python -m app.tools.reset_2fa "$(NAME)"
 
-.PHONY: help install hub worker worker-native native-check native-status native-logs native-restart native-stop native-start native-backup native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
+.PHONY: help install continue hub worker worker-native native-check native-status native-logs native-restart native-stop native-start native-backup native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
