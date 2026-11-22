@@ -677,8 +677,13 @@ install_worker() {
     *) die "Adresse invalide : elle doit commencer par https://";;
   esac
   if command -v curl >/dev/null; then
-  	if curl -fsS --max-time 8 "$$HUB/api/health" >/dev/null 2>&1; then good "Le hub répond."
-  	else warnl "Le hub ne répond pas depuis cette machine (DNS, pare-feu, certificat ?)."; yes "Continuer quand même ?" || exit 1; fi
+  	C="$$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -X POST -H 'Content-Type: application/json' -d '{}' "$$HUB/api/worker/enroll" 2>/dev/null)"   # le chemin du worker lui-même : seul /api/worker est ouvert derrière un filtre IP ; un corps vide est refusé (422) avant tout traitement, rien n'est enrôlé
+  	case "$$C" in
+  	  422) good "Le hub répond.";;
+  	  403) warnl "Le hub répond 403 : un filtre IP (middleware Traefik) refuse cette machine. Autorisez-la ou ouvrez la route /api/worker (voir « Hub derrière un filtre IP » dans le README)."; yes "Continuer quand même ?" || exit 1;;
+  	  404) warnl "Le hub répond mais pas Armadok sur /api/worker (routage Traefik ? adresse ?)."; yes "Continuer quand même ?" || exit 1;;
+  	  *) warnl "Le hub ne répond pas depuis cette machine (DNS, pare-feu, certificat ?)."; yes "Continuer quand même ?" || exit 1;;
+  	esac
   fi
   fi
   step "3/4 · Jeton d'enrôlement"

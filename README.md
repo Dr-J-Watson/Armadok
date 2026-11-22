@@ -767,7 +767,7 @@ Le script **vérifie d'abord la machine, sans rien modifier**, et affiche une ch
 |---|---|
 | Système | Linux, systemd, droits root ou `sudo`, `curl` et `tar`, espace disque |
 | Python | 3.12 ou plus, `pip`, module `venv` (si activé), Python « géré par le système » (PEP 668) |
-| Hub | adresse en HTTPS, nom résolu (adresse privée signalée), réponse de `/api/health`, certificat valide, **403 d'un filtre IP** repéré, format du jeton |
+| Hub | adresse en HTTPS, nom résolu (adresse privée signalée), réponse de `/api/worker` (le chemin du worker, seul ouvert derrière un filtre IP), certificat valide, **403 d'un filtre IP** repéré, format du jeton |
 | Traefik | dossier dynamique et droits d'écriture du service, API (facultatif), journal d'accès JSON (facultatif), `acme.json` et son mode 600 (facultatif) |
 | Installation | installation précédente détectée (rien n'est écrasé sans le dire) |
 

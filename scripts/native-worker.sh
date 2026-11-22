@@ -117,7 +117,6 @@ blocking_parent() {
 can_test() { is_root || [ "$(id -un)" = "$1" ]; }   # tester les droits d'un AUTRE utilisateur demande root
 can_write() { as_user "$1" test -w "$2" 2>/dev/null && as_user "$1" test -x "$2" 2>/dev/null; }
 can_read() { as_user "$1" test -r "$2" 2>/dev/null; }
-hub_get() { curl -fsS --max-time 8 "$HUB/api/health" 2>&1; }
 
 # ── paramètres (valeurs actuelles, ou par défaut) ──────────────────────────────────────────────────────────────────
 DIR="${NATIVE_DIR:-/opt/armadok-worker}"
@@ -179,10 +178,11 @@ check_hub() {
       *) ok "« $host » se résout ($ip)";;
     esac
   else bad "« $host » ne se résout pas" "Vérifiez le DNS de cette machine (/etc/resolv.conf)."; fi
-  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 "$HUB/api/health" 2>/tmp/.armadok-curl.$$)"
+  code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 8 -X POST -H 'Content-Type: application/json' -d '{}' "$HUB/api/worker/enroll" 2>/tmp/.armadok-curl.$$)"   # le chemin du worker lui-même : seul /api/worker est ouvert derrière un filtre IP ; un corps vide est refusé (422) avant tout traitement, rien n'est enrôlé
   out="$(cat /tmp/.armadok-curl.$$ 2>/dev/null)"; rm -f /tmp/.armadok-curl.$$
   case "$code" in
-    200) ok "Le hub répond (/api/health)";;
+    422) ok "Le hub répond (/api/worker)";;
+    404) bad "Le hub répond, mais pas Armadok sur /api/worker" "Vérifiez l'adresse (HUB_URL) et le routage Traefik : /api/worker doit arriver à Armadok.";;
     403) bad "Le hub répond 403" "Un filtre IP (middleware Traefik du hub) refuse cette machine : autorisez son adresse ou ouvrez la route /api/worker (voir « Hub derrière un filtre IP » dans le README).";;
     000) case "$out" in
            *certificate*|*SSL*) bad "Certificat du hub refusé : ${out##*: }" "Le certificat doit être valide (Let's Encrypt, ou une autorité installée sur cette machine).";;
