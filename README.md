@@ -1029,6 +1029,7 @@ Le conteneur doit tourner avec un utilisateur autorisé à **écrire** dans le d
 | `make hub` · `make worker` | lance directement l'un ou l'autre (`INTERACTIVE=0` : fichiers seulement ; `make hub` ne démarre jamais rien) |
 | `make worker-native` | installe un worker **sans Docker** (service systemd) : vérifie la machine, installe, rend une checklist |
 | `make native-check` · `native-status` · `native-update` · `native-uninstall` | vérifier sans rien installer · état du service · mise à jour (garde `.env` et `data/`) · retrait |
+| `make native-logs` · `native-restart` · `native-stop` · `native-start` · `native-backup` | au quotidien, sur un worker natif : journaux en direct · redémarrer (et attendre la connexion au hub) · arrêter · démarrer · archive datée de l'identité (clé) et de la configuration |
 | `make doctor` | **vérifie l'installation** (variables, droits, dossiers, réseau, conteneur) |
 | `make config` | valide `docker-compose.yml` avec le `.env` |
 | `make status` | état, et connexion d'un worker |

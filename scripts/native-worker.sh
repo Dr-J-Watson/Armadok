@@ -668,10 +668,54 @@ do_uninstall() {
   printf '\n%s✓ Désinstallé.%s\n' "$G" "$Z"
 }
 
+# ── au quotidien ─────────────────────────────────────────────────────────────────────────────────────────────────
+need_install() { [ -f "$ENVF" ] || die "Aucune installation dans $DIR (si elle est ailleurs : NATIVE_DIR=/chemin)."; }
+relay_here() { [ -f "$UNIT_DIR/$RELAY.service" ]; }
+
+do_logs() {   # les journaux de systemd : en direct, 100 dernières lignes d'abord (NATIVE_LINES pour changer)
+  need_install; is_root || exec sudo -E bash "$0" logs
+  local units=(-u "$SERVICE"); relay_here && units+=(-u "$RELAY")
+  hint "Journaux du worker (Ctrl+C pour quitter)."
+  exec journalctl "${units[@]}" -f -n "${NATIVE_LINES:-100}" --no-pager
+}
+
+do_service() {   # start | stop | restart
+  local act="$1"
+  need_install; is_root || exec sudo -E bash "$0" "$act"
+  [ -f "$UNIT_DIR/$SERVICE.service" ] || die "Le service $SERVICE n'est pas installé (make worker-native)."
+  if relay_here; then systemctl "$act" "$RELAY" >/dev/null 2>&1 || true; fi
+  systemctl "$act" "$SERVICE" || die "systemctl $act $SERVICE a échoué : journalctl -u $SERVICE -n 30"
+  case "$act" in
+    stop) say "Worker arrêté. Il redémarrera au prochain démarrage de la machine (pour l'en empêcher : systemctl disable $SERVICE).";;
+    *)
+      say "Service $([ "$act" = start ] && echo démarré || echo redémarré) : attente de la connexion au hub (30 s au plus)…"
+      for _ in $(seq 1 15); do
+        journalctl -u "$SERVICE" --since "-1min" --no-pager 2>/dev/null | grep -q "connecté au hub" && { printf '  %s✅%s Connecté au hub.\n' "$G" "$Z"; return 0; }
+        sleep 2
+      done
+      printf '  %s⚠️ %s Pas encore connecté.\n' "$Y" "$Z"; hint "→ journalctl -u $SERVICE -n 30   ou   make native-logs"
+    ;;
+  esac
+}
+
+do_backup() {   # l'identité du nœud (clé) et la configuration, dans une archive datée du dossier courant
+  need_install; is_root || exec sudo -E bash "$0" backup
+  local f; f="armadok-worker-data-$(date +%Y%m%d-%H%M%S).tar.gz"
+  [ -d "$DIR/data" ] || die "Pas de dossier data/ dans $DIR (le worker n'a pas encore été enrôlé)."
+  ( umask 077; tar czf "$f" -C "$DIR" data .env ) || die "Sauvegarde impossible."
+  [ -n "${SUDO_USER:-}" ] && chown "$SUDO_USER" "$f" 2>/dev/null
+  chmod 600 "$f"
+  printf '  %s✅%s Sauvegarde : %s/%s\n' "$G" "$Z" "$PWD" "$f"
+  hint "Elle contient la CLÉ de ce nœud : gardez-la en lieu sûr. Pour restaurer : arrêtez le worker, extrayez l'archive dans $DIR, redémarrez."
+}
+
 case "$CMD" in
   install|check) do_install;;
+  logs) do_logs;;
+  start|stop|restart) do_service "$CMD";;
+  backup) do_backup;;
   update) do_update;;
   status) do_status;;
   uninstall) do_uninstall;;
-  *) die "Commande inconnue : $CMD (check, install, update, status, uninstall)";;
+  *) die "Commande inconnue : $CMD (check, install, update, status, logs, start, stop, restart, backup, uninstall)";;
 esac

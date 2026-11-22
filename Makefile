@@ -790,6 +790,26 @@ native-status: ## État du worker natif : service, démarrage au boot, connexion
 	$(NATIVE_GET)
 	exec bash "$$s" status
 
+native-logs: ## Affiche les journaux du worker natif en direct (journalctl)
+	$(NATIVE_GET)
+	exec bash "$$s" logs
+
+native-restart: ## Redémarre le worker natif et attend sa connexion au hub
+	$(NATIVE_GET)
+	exec bash "$$s" restart
+
+native-stop: ## Arrête le worker natif (il redémarrera au prochain démarrage de la machine)
+	$(NATIVE_GET)
+	exec bash "$$s" stop
+
+native-start: ## Démarre le worker natif et attend sa connexion au hub
+	$(NATIVE_GET)
+	exec bash "$$s" start
+
+native-backup: ## Sauvegarde l'identité (clé) et la configuration du worker natif dans une archive datée
+	$(NATIVE_GET)
+	exec bash "$$s" backup
+
 native-update: ## Met à jour le worker natif (code et dépendances), en gardant .env et data/
 	$(NATIVE_GET)
 	exec bash "$$s" update
@@ -922,4 +942,4 @@ reset-2fa: ## Désactive la double authentification (hub) : make reset-2fa NAME=
 	@[ -n "$(NAME)" ] || { echo "Usage : make reset-2fa NAME=utilisateur"; exit 1; }
 	docker compose run --rm $(HUB_SVC) python -m app.tools.reset_2fa "$(NAME)"
 
-.PHONY: help install hub worker worker-native native-check native-status native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
+.PHONY: help install hub worker worker-native native-check native-status native-logs native-restart native-stop native-start native-backup native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
