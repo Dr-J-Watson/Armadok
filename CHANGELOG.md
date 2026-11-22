@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.13.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.12.0...v1.13.0) (2026-11-22)
+
+
+### Nouveautés
+
+* **projets:** dossier de stockage choisi à la création (plusieurs racines), redéploiement d'une seule image, onglet Avancé (actions personnalisées en plusieurs étapes, sans shell, droit du terminal), aide et README ([5dfce19](https://github.com/Dr-J-Watson/Armadok/commit/5dfce19f26eadfd0d1dafcfa507c2fe710441a34))
+
+
+### Corrections
+
+* **projets:** l'onglet Avancé passe en dernier ([ffdbf99](https://github.com/Dr-J-Watson/Armadok/commit/ffdbf99dee0b5ec20ca3c3b79995acc2697518de))
+* **projets:** le menu « … » de l'explorateur de fichiers n'est plus rogné par la liste (position fixe, retourné vers le haut si la place manque) ([c0dc979](https://github.com/Dr-J-Watson/Armadok/commit/c0dc97997f4d86adffe209a0d559ec6db29f79ac))
+
 ## [1.12.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.11.1...v1.12.0) (2026-11-22)
 
 
