@@ -761,7 +761,7 @@ curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
 make worker-native HUB_URL=https://hub.exemple.fr ENROLL_TOKEN=enr_… NATIVE_REF=v1.11.0
 ```
 
-Le script **vérifie d'abord la machine, sans rien modifier**, et affiche une checklist (✅ OK · ⚠ avertissement · ❌ bloquant) avec la correction exacte de chaque point. Un ❌ interrompt l'installation ; `make native-check` ne fait que ces vérifications.
+**Tout est dans le Makefile** : aucun script à côté, rien d'autre à télécharger que le code du worker lui-même (la version demandée par `NATIVE_REF`). Le Makefile **vérifie d'abord la machine, sans rien modifier**, et affiche une checklist (✅ OK · ⚠ avertissement · ❌ bloquant) avec la correction exacte de chaque point. Un ❌ interrompt l'installation ; `make native-check` ne fait que ces vérifications.
 
 Chaque question s'accompagne d'une explication et d'un exemple. **Vos réponses sont gardées au fur et à mesure** (jamais le jeton d'enrôlement) dans `~/.config/armadok-worker-install.env` (droits 600) : si vous interrompez le script pour corriger un point (installer `pip`, par exemple), le lancement suivant propose de **reprendre avec les mêmes réponses** au lieu de tout redemander. Elles sont effacées quand l'installation est terminée. Pour le fichier des certificats, donnez `acme.json` lui-même ; un dossier qui le contient est aussi accepté.
 
