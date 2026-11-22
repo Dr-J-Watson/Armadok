@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { createPortal } from 'react-dom'
 import { CheckCircle2, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Ellipsis, FilePlus, Folder, FolderOpen, FolderPlus, History, Pencil, RefreshCw, Save, Tags, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Loading, Modal, useUi } from './ui.jsx'
@@ -44,8 +45,20 @@ export function FileMark({ path, size = 15 }) {
 
 function Tree({ entries, sel, cur, onPick, onDir, collapsed, toggle, dirty, perms, onAction }) {
   const rows = useMemo(() => buildRows(entries, collapsed), [entries, collapsed])
-  const [menu, setMenu] = useState(null)
-  useEffect(() => { if (!menu) return; const close = () => setMenu(null); window.addEventListener('click', close); window.addEventListener('keydown', close); return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', close) } }, [menu])
+  const [menu, setMenu] = useState(null)   // { path, type, x, y } : position fixe, hors de la liste qui défile (sinon elle rogne le menu)
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    window.addEventListener('click', close); window.addEventListener('keydown', close); window.addEventListener('resize', close); window.addEventListener('scroll', close, true)
+    return () => { window.removeEventListener('click', close); window.removeEventListener('keydown', close); window.removeEventListener('resize', close); window.removeEventListener('scroll', close, true) }
+  }, [menu])
+  const openMenu = (ev, e) => {
+    ev.stopPropagation()
+    if (menu?.path === e.path) { setMenu(null); return }
+    const r = ev.currentTarget.getBoundingClientRect(); const w = 220; const h = e.type === 'dir' ? 170 : 90
+    const x = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)); const y = r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4
+    setMenu({ path: e.path, type: e.type, x, y })
+  }
   return (
     <div className="ft" role="tree">
       {rows.map((e) => {
@@ -59,19 +72,18 @@ function Tree({ entries, sel, cur, onPick, onDir, collapsed, toggle, dirty, perm
               {k?.key && <span className={'ft-tag fk-bg-' + k.id}>{k.label}</span>}
               {dirty && sel === e.path && <i className="dot warn" title="Modifié, pas encore enregistré" />}
             </button>
-            {perms.edit && <button type="button" className="ft-more" aria-label={`Actions sur ${e.name}`} onClick={(ev) => { ev.stopPropagation(); setMenu(menu === e.path ? null : e.path) }}><Ellipsis size={15} /></button>}
-            {menu === e.path && (
-              <div className="ft-menu" onClick={(ev) => ev.stopPropagation()}>
-                {dir && <button type="button" onClick={() => { setMenu(null); onAction('new-file', e.path) }}><FilePlus size={14} /> Nouveau fichier ici</button>}
-                {dir && <button type="button" onClick={() => { setMenu(null); onAction('new-dir', e.path) }}><FolderPlus size={14} /> Nouveau dossier ici</button>}
-                <button type="button" onClick={() => { setMenu(null); onAction('move', e.path, e.type) }}><Pencil size={14} /> Renommer / déplacer</button>
-                <button type="button" className="danger" onClick={() => { setMenu(null); onAction('delete', e.path, e.type) }}><Trash2 size={14} /> Supprimer</button>
-              </div>
-            )}
+            {perms.edit && <button type="button" className="ft-more" aria-label={`Actions sur ${e.name}`} aria-haspopup="menu" aria-expanded={menu?.path === e.path} onClick={(ev) => openMenu(ev, e)}><Ellipsis size={15} /></button>}
           </div>
         )
       })}
       {!rows.length && <div className="muted small" style={{ padding: 8 }}>Dossier vide.</div>}
+      {menu && createPortal(
+        <div className="ft-menu" role="menu" style={{ position: 'fixed', left: menu.x, top: menu.y, right: 'auto', width: 220 }} onClick={(ev) => ev.stopPropagation()}>
+          {menu.type === 'dir' && <button type="button" onClick={() => { setMenu(null); onAction('new-file', menu.path) }}><FilePlus size={14} /> Nouveau fichier ici</button>}
+          {menu.type === 'dir' && <button type="button" onClick={() => { setMenu(null); onAction('new-dir', menu.path) }}><FolderPlus size={14} /> Nouveau dossier ici</button>}
+          <button type="button" onClick={() => { setMenu(null); onAction('move', menu.path, menu.type) }}><Pencil size={14} /> Renommer / déplacer</button>
+          <button type="button" className="danger" onClick={() => { setMenu(null); onAction('delete', menu.path, menu.type) }}><Trash2 size={14} /> Supprimer</button>
+        </div>, document.body)}
     </div>
   )
 }
