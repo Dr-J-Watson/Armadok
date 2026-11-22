@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.14.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.13.1...v1.14.0) (2026-11-22)
+
+
+### Nouveautés
+
+* **make:** fichier d'état et « make continue » : les réponses des installations (hub, worker, worker natif) sont gardées au fur et à mesure et reprises après une interruption ([bd55143](https://github.com/Dr-J-Watson/Armadok/commit/bd55143bdfdf777f542f8dd52dd5af4542efb4eb))
+* **make:** toutes les questions de l'installation (hub, worker Docker, menu) reprises : titre, explication, exemple, invite sur sa ligne ; la couleur n'est plus écrasée par la sonde du hub ([d9fdc09](https://github.com/Dr-J-Watson/Armadok/commit/d9fdc09f441aef296c6fb4bbc526cd3764bf72fd))
+* **worker natif:** commandes du quotidien (native-logs, native-restart, native-stop, native-start, native-backup), aide et README ([7cf608f](https://github.com/Dr-J-Watson/Armadok/commit/7cf608f7d3430048201e58938015665b2d9a196a))
+
+
+### Corrections
+
+* **worker natif:** le venv et l'API de Traefik deviennent de vraies questions (expliquées, mémorisées pour la reprise) ([aea3c71](https://github.com/Dr-J-Watson/Armadok/commit/aea3c71d01001aaafef7d76d253f3870256ea6ca))
+
 ## [1.13.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.13.0...v1.13.1) (2026-11-22)
 
 
