@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.13.1](https://github.com/Dr-J-Watson/Armadok/compare/v1.13.0...v1.13.1) (2026-11-22)
+
+
+### Corrections
+
+* **worker natif:** questions reformulées (titre, explication, exemple, invite sur sa ligne), acme.json accepté en dossier, adresse IP du hub non signalée, réponses gardées et reprise après interruption ([ba6abb3](https://github.com/Dr-J-Watson/Armadok/commit/ba6abb36261a6014a3872025fb131a6067e54dad))
+* **worker:** la vérification du hub passe par /api/worker (POST à vide, refusé en 422 sans rien enrôler) au lieu de /api/health : plus de règle supplémentaire derrière un filtre IP ([e9ab8d5](https://github.com/Dr-J-Watson/Armadok/commit/e9ab8d5a9d8ec4e1fabee00a568b2119502df33c))
+
 ## [1.13.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.12.0...v1.13.0) (2026-11-22)
 
 
