@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.14.0...v1.15.0) (2026-11-23)
+
+
+### Nouveautés
+
+* barre latérale repliable, boutons par service, suppression avec DNS, comptes DNS par nœud ([4db1f9a](https://github.com/Dr-J-Watson/Armadok/commit/4db1f9a99e07fc3f09bab192fc73d876c1824643))
+
 ## [1.14.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.13.1...v1.14.0) (2026-11-22)
 
 
