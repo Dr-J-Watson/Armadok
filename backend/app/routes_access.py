@@ -12,9 +12,9 @@ from .config import settings
 from .crypto import enc
 from .ovh_client import OvhError, OvhService, registry
 from .dns_providers import DUCK_SUFFIX, LOCAL_SERVERS, PROVIDERS, DuckDnsService, capabilities, clean_duck_name, clean_hostname, clean_server_url, new_service
-from .nodes import RANK, NodeCtx, link_domain, local_node_id, node_optional, place_domains, scoped
+from .nodes import NodeCtx, link_domain, local_node_id, node_optional, place_domains, scoped
 from .ovh_client import RECORD_TYPES
-from .perms import DOMAIN_SQL, LEVELS, Principal, accessible_domains, admin_only, current_user, require_domain
+from .perms import Principal, accessible_domains, admin_only, current_user, require_domain
 
 router = APIRouter(prefix="/api")
 
@@ -252,15 +252,25 @@ def _ovh_only(r):
         raise HTTPException(400, f"Cette opération n'existe que pour les comptes OVH (ici : {PROVIDERS[r['provider']]['label']})")
 
 
-def _cred_out(r, with_domains=True) -> dict:
+def _cred_out(r, with_domains=True, node_id: str | None = None) -> dict:
+    """Un compte DNS. Avec `node_id`, seuls les domaines de CE nœud (et ceux qui ne sont sur aucun nœud) sont listés ;
+    `elsewhere` compte ceux qui ne sont que sur d'autres nœuds : on ne les montre pas ici, mais on le dit (supprimer le compte les retire aussi)."""
     out = {"id": r["id"], "label": r["label"], "endpoint": r["endpoint"], "source": r["source"], "system": r["owner_id"] is None,
            "provider": r["provider"], "providerLabel": PROVIDERS[r["provider"]]["label"]}
     if r["provider"] in LOCAL_SERVERS:   # l'adresse du serveur n'est pas un secret ; l'identifiant et le mot de passe ne sortent jamais
         out["url"] = r["endpoint"]
         out["insecureTls"] = bool(json.loads(r["options"] or "{}").get("insecureTls")) if r["options"] else False
     if with_domains:
-        out["domains"] = [d["name"] for d in db.rows("SELECT name FROM domains WHERE credential_id=? ORDER BY name", (r["id"],))]
-        out["nodeless"] = [d["name"] for d in db.rows("SELECT name FROM domains WHERE credential_id=? AND id NOT IN (SELECT domain_id FROM node_domains) ORDER BY name", (r["id"],))]
+        nodeless = [d["name"] for d in db.rows("SELECT name FROM domains WHERE credential_id=? AND id NOT IN (SELECT domain_id FROM node_domains) ORDER BY name", (r["id"],))]
+        if node_id is None:
+            out["domains"] = [d["name"] for d in db.rows("SELECT name FROM domains WHERE credential_id=? ORDER BY name", (r["id"],))]
+        else:
+            here = [d["name"] for d in db.rows("SELECT name FROM domains WHERE credential_id=? AND id IN (SELECT domain_id FROM node_domains WHERE node_id=?)", (r["id"], node_id))]
+            out["domains"] = sorted(set(here) | set(nodeless))
+            out["here"] = len(here)
+            out["elsewhere"] = db.one("SELECT COUNT(*) c FROM domains WHERE credential_id=? AND id IN (SELECT domain_id FROM node_domains) "
+                                      "AND id NOT IN (SELECT domain_id FROM node_domains WHERE node_id=?)", (r["id"], node_id))["c"]
+        out["nodeless"] = nodeless
     return out
 
 
@@ -271,11 +281,17 @@ def _available(svc: OvhService) -> list[dict]:
 
 
 @router.get("/credentials")
-def list_credentials(p: Principal = Depends(current_user)):
-    out = [_cred_out(r) for r in db.rows("SELECT * FROM credentials WHERE owner_id=? ORDER BY label", (p.id,))]
-    if p.is_admin:  # le compte principal est visible (sans ses clés) des administrateurs
-        out = [_cred_out(r) for r in db.rows("SELECT * FROM credentials WHERE source='env'")] + out
-    return out
+def list_credentials(all: bool = False, p: Principal = Depends(current_user), ctx: NodeCtx | None = Depends(node_optional)):
+    """Les comptes DNS de l'utilisateur (et, pour un administrateur, le compte principal, sans ses clés), sur LE NŒUD COURANT :
+    un compte dont tous les domaines sont rattachés à d'autres nœuds n'apparaît pas ici (la page propose de les importer).
+    Un compte sans domaine, ou dont les domaines ne sont sur aucun nœud, reste visible. Sans nœud accessible : tous les comptes.
+    `all=1` : tous les comptes de l'utilisateur, sans le filtre du nœud (pour choisir à quel compte ajouter un domaine)."""
+    nid = None if all or not ctx else ctx.id
+    rows = [r for r in db.rows("SELECT * FROM credentials WHERE owner_id=? ORDER BY label", (p.id,))]
+    if p.is_admin:
+        rows = [r for r in db.rows("SELECT * FROM credentials WHERE source='env'")] + rows
+    out = [_cred_out(r, node_id=nid) for r in rows]
+    return [c for c in out if nid is None or c["here"] > 0 or c["elsewhere"] == 0]
 
 
 @router.post("/credentials")
@@ -513,23 +529,12 @@ def add_server_names(cid: int, body: NamesIn, p: Principal = Depends(current_use
     return {"added": added, "skipped": skipped}
 
 
-class LocalIn(BaseModel):
-    names: list[str] = Field(min_length=1, max_length=50)
-
-
 @router.post("/domains/local")
-def add_local_domains(body: LocalIn, p: Principal = Depends(current_user), ctx: NodeCtx | None = Depends(node_optional)):
+def add_local_domains(body: NamesIn, p: Principal = Depends(current_user), ctx: NodeCtx | None = Depends(node_optional)):
     """Domaines résolus par un DNS local : aucun compte, aucune clé, rien n'est publié. Réservé à ceux qui peuvent ajouter
     des domaines, ou qui administrent le nœud visé."""
     _need_can_add(p, ctx)
-    taken = {r["name"].lower() for r in db.rows("SELECT name FROM domains")}
-    added, skipped = [], []
-    for raw in body.names:
-        n = clean_hostname(raw)
-        if not n or n in taken or n in added:
-            skipped.append(raw)
-        else:
-            added.append(n)
+    added, skipped = _clean_names(body.names)
     if not added:
         raise HTTPException(422, "Aucun nom valide ou disponible (ex. maison.exemple.fr ou home.lan, un point au minimum)")
     cred = db.one("SELECT id FROM credentials WHERE owner_id=? AND provider='local'", (p.id,))

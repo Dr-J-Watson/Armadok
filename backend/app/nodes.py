@@ -745,7 +745,8 @@ def importable(ctx: NodeCtx = Depends(_path_cap("node.domains.link"))):
         if d["id"] in linked:
             continue
         where = [r["name"] for r in db.rows("SELECT n.name FROM node_domains nd JOIN nodes n ON n.id=nd.node_id WHERE nd.domain_id=?", (d["id"],))]
-        out.append({"name": d["name"], "account": d["cred_label"], "nodes": where})
+        out.append({"name": d["name"], "account": d["cred_label"], "accountId": d["credential_id"], "provider": d["provider"],
+                    "mine": d["cred_owner"] == ctx.p.id, "nodes": where})
     return out
 
 

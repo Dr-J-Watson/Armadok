@@ -262,7 +262,13 @@ def p_project(a: dict) -> dict:
     return entry(d, a.get("files") or None)
 
 
-def p_info(_a: dict) -> dict:
+_compose_seen = 0.0   # dernier instant où « docker compose version » a répondu : la liste des projets le demande à chaque rafraîchissement
+
+
+def _compose_ok() -> bool:
+    global _compose_seen
+    if time.monotonic() - _compose_seen < 300:
+        return True
     cli = shutil.which("docker")
     ok = False
     if cli:
@@ -270,6 +276,13 @@ def p_info(_a: dict) -> dict:
             ok = subprocess.run([cli, "compose", "version"], capture_output=True, timeout=10, env=_env()).returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             ok = False
+    if ok:
+        _compose_seen = time.monotonic()
+    return ok
+
+
+def p_info(_a: dict) -> dict:
+    ok = _compose_ok()
     return {"roots": [str(x) for x in roots()], "configuredRoots": list(settings.project_roots), "compose": ok}
 
 
@@ -558,7 +571,8 @@ def p_validate(a: dict) -> dict:
 
 
 COMPOSE_ACTIONS = {"up": ["up", "-d", "--remove-orphans"], "recreate": ["up", "-d", "--force-recreate", "--remove-orphans"], "down": ["down"], "restart": ["restart"], "stop": ["stop"],
-                   "start": ["start"], "pull": ["pull"], "build": ["build"], "config": ["config"], "ps": ["ps", "-a"]}
+                   "start": ["start"], "pull": ["pull"], "build": ["build"], "config": ["config"], "ps": ["ps", "-a"],
+                   "rm": ["rm", "-f", "-s"]}   # « rm » : arrête puis supprime les conteneurs d'UN service (volumes gardés) ; jamais sans service, ni dans une action personnalisée
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.Lock()
 MAX_JOB_LINES = 8000
@@ -608,7 +622,7 @@ def _spawn(d: Path, argv: list[str], label: str, action: str, env: dict | None =
 # « docker compose up/down/restart » lancé PAR le conteneur d'Armadok (hub ou worker) sur SON PROPRE projet s'arrête au milieu : Docker stoppe ce conteneur,
 # la commande meurt avec lui, et le nouveau conteneur reste « Created », jamais démarré. La commande est donc confiée à un conteneur auxiliaire éphémère,
 # qui survit au redémarrage et termine le travail.
-SELF_ACTIONS = ("up", "recreate", "down", "stop", "start", "restart")
+SELF_ACTIONS = ("up", "recreate", "down", "stop", "start", "restart", "rm")
 
 
 def _self_container() -> dict | None:
@@ -739,6 +753,8 @@ def _compose_cmd(a: dict) -> tuple[Path, list[str], str]:
     svcs = [str(x) for x in (a.get("services") or [])]
     if any(x not in names or x.startswith("-") for x in svcs) or len(svcs) > 50:
         raise StoreError("Service inconnu dans ce projet", 422)   # un nom en « - » serait lu comme une option (--volumes)
+    if action == "rm" and not svcs:
+        raise StoreError("Indiquez le service à supprimer (pour tout supprimer, utilisez « Down »)", 422)
     args = list(COMPOSE_ACTIONS[action])
     if action in ("up", "recreate") and a.get("build"):
         args.append("--build")
@@ -766,7 +782,7 @@ def p_compose(a: dict) -> dict:
 
 # ------------------------------------------------------------------ une action personnalisée : plusieurs étapes d'affilée
 MAX_STEPS = 10
-STEP_ACTIONS = tuple(k for k in COMPOSE_ACTIONS if k not in ("config", "ps"))   # « config » affiche les valeurs du .env : jamais dans une suite
+STEP_ACTIONS = tuple(k for k in COMPOSE_ACTIONS if k not in ("config", "ps", "rm"))   # « config » affiche les valeurs du .env : jamais dans une suite ; « rm » vise un service précis
 
 
 def _cmd_argv(line: str) -> list[str]:

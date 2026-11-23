@@ -19,12 +19,11 @@ import TerminalModal from '../components/TerminalModal.jsx'
 import { LogViewer } from '../components/DockerBits.jsx'
 import { NetworkModal, VolumeModal } from '../components/DockerDetail.jsx'
 import { SVC_DOT, STATUS, useProjectStats } from './Projects.jsx'
-import { fmtSize, portLabel } from '../lib/docker.js'
+import { enc, fmtSize, portLabel } from '../lib/docker.js'
 import { fmtNum } from '../lib/features.js'
 import { useGo } from '../lib/nav.js'
 
 const SVC_LABEL = { running: 'En marche', partial: 'Partiel', stopped: 'Arrêté', absent: 'Non démarré' }
-const enc = encodeURIComponent
 const svcLabel = (x) => (x.done ? 'Terminé' : SVC_LABEL[x.state])
 const svcDot = (x) => (x.done ? SVC_DOT.absent : SVC_DOT[x.state])
 
@@ -74,6 +73,7 @@ export default function Project() {
           <div className="project-grid">{p.services.map((x) => (
             <div key={x.name} className="card col" style={{ gap: 8 }}>
               <div className="row"><i className="dot" style={{ background: svcDot(x) }} /><b className="grow">{x.name}</b><Badge kind={x.state === 'running' ? 'ok' : x.state === 'partial' ? 'warn' : ''} title={x.done ? 'Le conteneur s\'est arrêté normalement (code 0) : service ponctuel, par exemple une initialisation.' : undefined}>{svcLabel(x)}</Badge></div>
+              {p.perms.deploy && <div className="row" style={{ gap: 2, margin: '-2px 0 0 -6px' }}><ServiceActions id={id} svc={x} perms={p.perms} onDone={() => q.refetch()} removable /></div>}
               <div className="muted small ellipsis">{x.image || (x.build ? 'build local' : '—')}</div>
               {x.containers.map((c) => <div key={c.id} className="row" style={{ gap: 6, flexWrap: 'wrap' }}><span className="mono small">{c.name}</span>{c.ports.slice(0, 2).map((pt, i) => <Badge key={i}>{portLabel(pt)}</Badge>)}<Btn small kind="ghost" className="right" onClick={() => set({ c: c.name, ct: null })}>Détails</Btn></div>)}
               {tf && (can('sites.create') || via) && x.containers.length > 0 && x.hosts.length === 0 && <Btn small onClick={() => publishNow(x.containers[0].name, toast, setNode)}><Globe size={13} /> Publier sur Traefik</Btn>}

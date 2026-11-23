@@ -12,6 +12,7 @@ import { useNode, useNodeList } from '../node.jsx'
 import { NodeChip } from '../components/NodeSwitcher.jsx'
 import { certKind, certLabel } from './Certs.jsx'
 import MissingDns from '../components/MissingDns.jsx'
+import { useSiteRemoval } from '../components/SiteRemoval.jsx'
 import { useMeta, useOverview } from './Traefik.jsx'
 import { extractHosts } from '../lib/util.js'
 import { useFeatures } from '../lib/features.js'
@@ -77,7 +78,7 @@ function SitesOne({ openSite, openWizard }) {
   const ov = useOverview(); const meta = useMeta(); const qc = useQueryClient(); const { toast, confirm } = useUi()
   const [params, setParams] = useSearchParams()
   const [q, setQ] = useState(''); const [add, setAdd] = useState(null); const [flt, setFlt] = useState('all'); const [view, setView] = usePersist('sites-view', 'cards')
-  const { toggle, busy } = useToggler(); const { canManage, can } = useNode(); const go = useGo()
+  const { toggle, busy } = useToggler(); const { canManage, can } = useNode(); const go = useGo(); const removal = useSiteRemoval()
   const feat = useFeatures(); const statsOn = !!(feat && feat.metrics.enabled && feat.metrics.allowed)
   const sync = useQuery({ queryKey: ['sync'], queryFn: () => api.get('/sync'), enabled: !!meta.data?.dnsEnabled })
   const certs = useQuery({ queryKey: ['certs'], queryFn: () => api.get('/traefik/certs'), staleTime: 60000, retry: false })
@@ -121,8 +122,9 @@ function SitesOne({ openSite, openWizard }) {
   const missing = (sync.data?.rows || []).filter((r) => r.status === 'missing' && r.canEdit)
 
   const del = async (r) => {
-    if (!(await confirm({ title: `Supprimer « ${r.name} » ?`, message: `Le site ne sera plus servi par Traefik. Son service est supprimé s'il n'est utilisé par personne d'autre.\nL'enregistrement DNS n'est pas touché.`, confirmLabel: 'Supprimer' }))) return
-    try { await api.post('/traefik/site/delete', { name: r.name, deleteService: true }); qc.invalidateQueries(); toast('Site supprimé') } catch (e) { toast(e.message, 'err') }
+    const choice = await removal.confirmRemoval({ title: `Supprimer « ${r.name} » ?`, message: 'Le site ne sera plus servi par Traefik. Son service est supprimé s\'il n\'est utilisé par personne d\'autre.\nSans case cochée ci-dessous, l\'enregistrement DNS n\'est pas touché.',
+      confirmLabel: 'Supprimer', sites: [{ name: r.name, hosts: extractHosts(r.spec.rule), locked: true }] })
+    if (choice) await removal.apply(choice)
   }
 
   if (ov.isLoading) return <Loading />
@@ -156,6 +158,7 @@ function SitesOne({ openSite, openWizard }) {
                   {canFold && <Btn small kind="ghost" icon title="Ranger dans un dossier" aria-label="Ranger dans un dossier" onClick={() => setMoveS([r])}><FolderInput size={14} /></Btn>}
                   {r.editable && !r.disabled && can('sites.toggle') && <Switch value title="Mettre ce site en pause" busy={busy} onChange={() => toggle({ ids: [r.id], enable: false, label: `« ${hosts[0] || r.name} »` })} />}
                   {r.editable && r.disabled && can('sites.toggle') && <Btn small kind="primary" busy={busy} onClick={() => toggle({ ids: [r.id], enable: true, label: `« ${hosts[0] || r.name} »` })}><Play size={13} /> Reprendre</Btn>}
+                  {r.editable && can('sites.delete') && <Btn small kind="ghost" icon title="Supprimer ce site" aria-label="Supprimer ce site" onClick={() => del(r)}><Trash2 size={14} /></Btn>}
                   <SiteMenu site={r} host={hosts[0]} dnsRow={(hosts.map((h) => dnsOf[h]).filter(Boolean))[0]} statsService={statsOn && !r.disabled ? r.spec.service : null} canCerts={can('certs.view')} canDuplicate={can('sites.create')} onDuplicate={() => openWizard({ from: r })} />
                 </td>
               </tr>) })}</tbody></table></div>
@@ -191,7 +194,7 @@ function SitesOne({ openSite, openWizard }) {
                 {r.editable && <div className="row site-actions" onClick={(e) => e.stopPropagation()}>
                   {r.disabled ? (can('sites.toggle') ? <Btn small kind="primary" busy={busy} onClick={() => toggle({ ids: [r.id], enable: true, label: `« ${hosts[0] || r.name} »` })}><Play size={13} /> Reprendre</Btn> : null)
                     : (can('sites.edit') ? <Btn small kind="ghost" onClick={() => openSite(r)}><Pencil size={13} /> Modifier</Btn> : null)}
-                  <span className="right row">{!r.disabled && can('sites.toggle') && <Switch value title="Mettre ce site en pause : Traefik cesse de le servir, rien n'est supprimé. Réversible à tout moment." busy={busy} onChange={() => toggle({ ids: [r.id], enable: false, label: `« ${hosts[0] || r.name} »` })} />}{can('sites.delete') && <Btn small kind="ghost" onClick={() => del(r)}><Trash2 size={13} /></Btn>}</span></div>}
+                  <span className="right row">{!r.disabled && can('sites.toggle') && <Switch value title="Mettre ce site en pause : Traefik cesse de le servir, rien n'est supprimé. Réversible à tout moment." busy={busy} onChange={() => toggle({ ids: [r.id], enable: false, label: `« ${hosts[0] || r.name} »` })} />}{can('sites.delete') && <Btn small kind="ghost" title="Supprimer ce site" aria-label="Supprimer ce site" onClick={() => del(r)}><Trash2 size={13} /></Btn>}</span></div>}
               </div>
             )
           })}
@@ -200,6 +203,7 @@ function SitesOne({ openSite, openWizard }) {
       {fmodal && <FolderModal folder={fmodal.folder} parentId={fmodal.parentId} folders={folders} busy={saveFolder.isPending} onClose={() => setFmodal(null)} onSave={(b) => saveFolder.mutate({ id: fmodal.folder?.id, ...b })} />}
       {moveS && <MoveModal noun="site" projects={moveS.map((r) => ({ id: r.name, name: extractHosts(r.spec.rule)[0] || r.name }))} folders={folders} current={folderOf(moveS[0])} busy={regroup.isPending} onClose={() => setMoveS(null)} onMove={(to) => regroup.mutate({ routers: moveS.map((r) => r.name), folderId: to })} />}
       {add && <MissingDns rows={add} onClose={() => setAdd(null)} />}
+      {removal.dialog}
     </>
   )
 }

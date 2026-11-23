@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Download, FileStack, MoreHorizontal, Play, Power, Rocket, RotateCw, Square } from 'lucide-react'
+import { ArrowDown, ArrowUp, Download, FileStack, MoreHorizontal, Play, Power, Rocket, RotateCw, Square, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Modal, useUi } from './ui.jsx'
 import { stripAnsi } from '../lib/docker.js'
+import { sitesFromLinks, useSiteRemoval } from './SiteRemoval.jsx'
 
-const TITLES = { make: 'Commande du Makefile', 'git-pull': 'Récupération des changements (git pull)', 'git-fetch': 'Interrogation du dépôt', 'git-checkout': 'Changement de version', 'git-clone': 'Clonage du dépôt', up: 'Déploiement', recreate: 'Recréation', down: 'Arrêt et suppression des conteneurs', restart: 'Redémarrage', stop: 'Arrêt', start: 'Démarrage', pull: 'Téléchargement des images', build: 'Construction des images', config: 'Configuration résolue', ps: 'État' }
+const TITLES = { make: 'Commande du Makefile', 'git-pull': 'Récupération des changements (git pull)', 'git-fetch': 'Interrogation du dépôt', 'git-checkout': 'Changement de version', 'git-clone': 'Clonage du dépôt', up: 'Déploiement', recreate: 'Recréation', down: 'Arrêt et suppression des conteneurs', rm: 'Suppression du service', restart: 'Redémarrage', stop: 'Arrêt', start: 'Démarrage', pull: 'Téléchargement des images', build: 'Construction des images', config: 'Configuration résolue', ps: 'État' }
 
 // Petits boutons d'action d'UN service (selon son état) : chaque commande ne vise que lui (docker compose <action> <service>).
-export function ServiceActions({ id, svc, perms, onDone }) {
-  const { toast } = useUi(); const [job, setJob] = useState(null)
+export function ServiceActions({ id, svc, perms, onDone, removable = false }) {
+  const { toast } = useUi(); const [job, setJob] = useState(null); const removal = useSiteRemoval(); const extra = useRef(null)
   const run = useMutation({ mutationFn: (action) => api.post(`/projects/${id}/compose`, { action, services: [svc.name] }), onSuccess: (r, action) => setJob({ ...r, action }), onError: (e) => toast(e.message, 'err') })
   if (!perms.deploy) return null
   const st = svc.done ? 'done' : svc.state
@@ -20,10 +21,18 @@ export function ServiceActions({ id, svc, perms, onDone }) {
     : st === 'stopped' ? [['start', Play, 'Démarrer ce service'], REDEPLOY]
     : st === 'done' ? [['up', Play, 'Relancer ce service (il s\'est terminé)']]
     : [['up', Play, 'Déployer ce service (créer et démarrer son conteneur)']]
+  // supprimer le service : son conteneur est arrêté puis retiré ; la confirmation propose aussi ses sites Traefik et leur enregistrement DNS (rien n'est coché d'office)
+  const drop = async () => {
+    const choice = await removal.confirmRemoval({ title: `Supprimer le service « ${svc.name} » ?`, message: 'Son conteneur est arrêté puis supprimé. Les volumes et les fichiers du projet sont conservés ; « Déployer » le recrée.', confirmLabel: 'Supprimer', sites: sitesFromLinks(svc.links) })
+    if (!choice) return
+    extra.current = choice; run.mutate('rm')
+  }
   return (
     <>
       {items.map(([action, Icon, tip]) => <Btn key={action} small kind="ghost" title={tip} aria-label={tip} disabled={run.isPending} onClick={() => run.mutate(action)}><Icon size={14} /></Btn>)}
-      {job && <JobOutput id={id} job={job} onClose={() => { setJob(null); onDone?.() }} />}
+      {removable && svc.containers?.length > 0 && <Btn small kind="ghost" title="Arrêter puis supprimer le conteneur de ce service (volumes et fichiers gardés)" aria-label="Supprimer ce service" disabled={run.isPending} onClick={drop}><Trash2 size={14} /></Btn>}
+      {job && <JobOutput id={id} job={job} onFinished={(code) => { const c = extra.current; extra.current = null; if (code === 0 && c) removal.apply(c) }} onClose={() => { setJob(null); onDone?.() }} />}
+      {removal.dialog}
     </>
   )
 }

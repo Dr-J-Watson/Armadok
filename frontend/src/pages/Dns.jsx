@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { CloudUpload, Download, History, Pause, Pencil, Play, Plus, RefreshCw, Route, Share2, ShieldCheck, Trash2, Upload, Wand2 } from 'lucide-react'
+import { Cloud, CloudUpload, Download, Globe, History, Pause, Pencil, Play, Plus, RefreshCw, Route, Share2, ShieldCheck, Trash2, Upload, Wand2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Copyable, Empty, Loading, Modal, SearchBox, Switch, useSort, useUi } from '../components/ui.jsx'
 import CodeEditor from '../components/CodeEditor.jsx'
 import RecordModal from '../components/RecordModal.jsx'
 import { useOverview } from './Traefik.jsx'
 import { extractHosts, fmtDate } from '../lib/util.js'
+import { downloadBlob } from '../lib/csv.js'
 import ShareModal from '../components/ShareModal.jsx'
 import { useToggler } from '../components/Toggle.jsx'
 import { CertHelp, ProviderPanel } from '../components/ProviderPanel.jsx'
@@ -26,7 +27,7 @@ export default function Dns({ openWizard }) {
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => api.get('/dns/zones') })
   const zone = params.get('zone') || zones.data?.[0]?.name
   const ov = useOverview()
-  const [q, setQ] = useState(params.get('q') || ''); const [type, setType] = useState('')
+  const [q, setQ] = useState(params.get('q') || ''); const [type, setType] = useState(''); const [usage, setUsage] = useState('')   // usage : '' | 'used' | 'unused'
   const [sel, setSel] = useState(new Set()); const [modal, setModal] = useState(null)
   const [auto, setAuto] = useState(localStorage.getItem('autoRefresh') !== '0')
   useEffect(() => setSel(new Set()), [zone])
@@ -39,7 +40,7 @@ export default function Dns({ openWizard }) {
   const cap = zinfo?.capabilities || {}
   const publishes = cap.publish !== false      // AdGuard Home : une réécriture est active dès qu'elle existe, rien à « appliquer »
   const showTtl = cap.ttl !== false
-  const { pauseDomain, busy: pausing } = useToggler()
+  const { toggle: toggleSite, pauseDomain, busy: pausing } = useToggler()
   const pstate = useQuery({ queryKey: ['pause-domains'], queryFn: () => api.get('/traefik/toggle/domains'), enabled: hasTraefik }).data?.find((d) => d.domain === zone?.toLowerCase())
   const routerByHost = useMemo(() => {
     const m = {}
@@ -47,10 +48,14 @@ export default function Dns({ openWizard }) {
     return m
   }, [ov.data])
 
-  const filtered = (recs.data || []).filter((r) => (!type || r.fieldType === type) && (!q || `${r.subDomain} ${r.fieldType} ${r.target}`.toLowerCase().includes(q.toLowerCase())))
-  const { rows, th } = useSort(filtered, null, { name: (r) => r.subDomain || '', type: (r) => r.fieldType, target: (r) => r.target })
-  const types = [...new Set((recs.data || []).map((r) => r.fieldType))]
   const fqdn = (r) => (r.subDomain ? `${r.subDomain}.${zone}` : zone)
+  const isWeb = (r) => ['A', 'AAAA', 'CNAME'].includes(r.fieldType) && !!r.subDomain   // seuls ces enregistrements peuvent porter un site
+  const usedBy = (r) => routerByHost[fqdn(r)] || []
+  const filtered = (recs.data || []).filter((r) => (!type || r.fieldType === type) && (!q || `${r.subDomain} ${r.fieldType} ${r.target}`.toLowerCase().includes(q.toLowerCase()))
+    && (usage === 'used' ? usedBy(r).length > 0 : usage === 'unused' ? isWeb(r) && usedBy(r).length === 0 : true))
+  const { rows, th } = useSort(filtered, null, { name: (r) => r.subDomain || '', type: (r) => r.fieldType, target: (r) => r.target, traefik: (r) => usedBy(r).length })
+  const types = [...new Set((recs.data || []).map((r) => r.fieldType))]
+  const usedCount = (recs.data || []).filter((r) => usedBy(r).length > 0).length
 
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['records'] }); qc.invalidateQueries({ queryKey: ['zones'] }); qc.invalidateQueries({ queryKey: ['sync'] }) }
   const refresh = useMutation({ mutationFn: () => api.post(`/dns/zones/${zone}/refresh`), onSuccess: () => { invalidate(); toast('Zone appliquée chez OVH') }, onError: (e) => toast(e.message, 'err') })
@@ -63,13 +68,23 @@ export default function Dns({ openWizard }) {
   if (zones.isLoading) return <Loading />
   if (zones.error) return <div className="banner err">{zones.error.message}</div>
   const toggle = (id) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n) }
+  if (zones.data.length === 0) {
+    return (
+      <>
+        <div className="page-head"><div><h1>Domaines DNS</h1><p>Aucun domaine pour l'instant</p></div></div>
+        <div className="card"><Empty><Globe size={30} />
+          {canAddDns ? <><div>Ajoutez un compte chez votre fournisseur DNS pour retrouver vos domaines ici.</div><Btn kind="primary" style={{ marginTop: 12 }} onClick={() => nav('/accounts')}><Cloud size={15} /> Ajouter un compte DNS</Btn></>
+            : <div>Aucun domaine n'est partagé avec vous : demandez un accès à son propriétaire.</div>}
+        </Empty></div>
+      </>
+    )
+  }
 
   return (
     <>
       <div className="page-head">
         <div><h1>Domaines DNS</h1><p>{zones.data.length} domaine(s){records ? <> · {recs.data?.length ?? '…'} enregistrements dans {zone}</> : zinfo && <> · {zone} : {zinfo.providerLabel}</>}</p></div>
         {canAddDns && <Btn kind="primary" className="right" title="Ajouter un domaine : chez OVH, chez DuckDNS, ou en DNS local (sans fournisseur)." onClick={() => setAdding(true)}><Plus size={15} /> Ajouter un domaine</Btn>}
-        {zones.data.length === 0 && <div className="banner info">Aucun domaine accessible pour l'instant : demandez un accès, ou ajoutez un compte (OVH, DuckDNS) ou un domaine en DNS local.</div>}
         <select className={'select ' + (canAddDns ? '' : 'right')} style={{ width: 'auto' }} value={zone} onChange={(e) => setParams({ zone: e.target.value })}>{zones.data.map((z) => <option key={z.name} value={z.name}>{z.name}{z.provider && z.provider !== 'ovh' ? ` · ${z.providerLabel}` : ''}</option>)}</select>
       </div>
       {publishes && zinfo?.dirty && !auto && canEdit && <div className="banner"><CloudUpload size={18} /> Modifications en attente : elles ne sont pas encore actives chez OVH.<Btn small kind="primary" className="right" busy={refresh.isPending} onClick={() => refresh.mutate()} disabled={!can('dns.publish')}>Appliquer maintenant</Btn></div>}
@@ -77,6 +92,7 @@ export default function Dns({ openWizard }) {
         {records && <>
         <SearchBox value={q} onChange={setQ} placeholder="Filtrer (sous-domaine, valeur…)" />
         <select className="select" style={{ width: 'auto' }} value={type} onChange={(e) => setType(e.target.value)}><option value="">Tous types</option>{types.map((t) => <option key={t}>{t}</option>)}</select>
+        {hasTraefik && <select className="select" style={{ width: 'auto' }} value={usage} onChange={(e) => setUsage(e.target.value)} title="Un enregistrement est « utilisé » quand un site Traefik de ce nœud répond à son adresse."><option value="">Utilisés ou non</option><option value="used">Utilisés par un site ({usedCount})</option><option value="unused">Sans site (A, AAAA, CNAME)</option></select>}
         {publishes && <label className="row small muted" title="Applique la zone chez OVH après chaque modification"><Switch value={auto} onChange={setAuto} /> Appliquer automatiquement</label>}</>}
         <div className="row right">
           {records && <Btn icon title="Recharger" onClick={() => { qc.invalidateQueries({ queryKey: ['records'] }); api.get(`/dns/zones/${zone}/records?force=true`).then(() => qc.invalidateQueries({ queryKey: ['records'] })) }}><RefreshCw size={15} /></Btn>}
@@ -92,10 +108,10 @@ export default function Dns({ openWizard }) {
       {!records && zinfo && <ProviderPanel zone={zone} zinfo={zinfo} canEdit={canEdit} onChanged={invalidate} />}
       {records && <div className="card flush">
         {recs.isLoading ? <Loading /> : rows.length === 0 ? <Empty>Aucun enregistrement.</Empty> : (
-          <table className="t"><thead><tr><th style={{ width: 30 }}><input type="checkbox" checked={sel.size === rows.length} onChange={(e) => setSel(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} /></th><th>{th('name', 'Nom')}</th><th>{th('type', 'Type')}<Info>{'A / AAAA : pointe vers une adresse IP (IPv4 / IPv6).\nCNAME : alias vers un autre nom.\nMX : serveur de messagerie. TXT : texte (SPF, vérifications).\nSRV, CAA… : usages techniques.'}</Info></th><th>{th('target', 'Cible')}</th>{showTtl && <th>TTL<Info>Durée de mémorisation (en secondes) par les serveurs DNS. Plus court = un changement se propage plus vite, mais génère plus de requêtes.</Info></th>}<th>Traefik<Info>Si cette adresse est déjà servie par un site Traefik de ce nœud, ou un raccourci pour en créer un.</Info></th><th /></tr></thead>
+          <table className="t"><thead><tr><th style={{ width: 30 }}><input type="checkbox" checked={sel.size === rows.length} onChange={(e) => setSel(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())} /></th><th>{th('name', 'Nom')}</th><th>{th('type', 'Type')}<Info>{'A / AAAA : pointe vers une adresse IP (IPv4 / IPv6).\nCNAME : alias vers un autre nom.\nMX : serveur de messagerie. TXT : texte (SPF, vérifications).\nSRV, CAA… : usages techniques.'}</Info></th><th>{th('target', 'Cible')}</th>{showTtl && <th>TTL<Info>Durée de mémorisation (en secondes) par les serveurs DNS. Plus court = un changement se propage plus vite, mais génère plus de requêtes.</Info></th>}<th>{th('traefik', 'Traefik')}<Info>Si cette adresse est déjà servie par un site Traefik de ce nœud, ou un raccourci pour en créer un.</Info></th><th /></tr></thead>
             <tbody>{rows.map((r) => {
-              const routers = routerByHost[fqdn(r)] || []
-              const web = ['A', 'AAAA', 'CNAME'].includes(r.fieldType) && r.subDomain
+              const routers = usedBy(r)
+              const web = isWeb(r)
               return (
                 <tr key={r.id}>
                   <td><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>
@@ -103,7 +119,8 @@ export default function Dns({ openWizard }) {
                   <td><Badge kind={TYPE_COLORS[r.fieldType]}>{r.fieldType}</Badge></td>
                   <td><div className="row"><code className="ellipsis" title={r.target}>{r.target}</code><CopyBtn text={r.target} /></div></td>
                   {showTtl && <td className="muted">{r.ttl || 'défaut'}</td>}
-                  <td>{routers.length ? routers.map((x) => <Badge key={x.id} kind="ok"><span className="pill-link" onClick={() => nav(x.proto === 'http' ? `/sites?open=${encodeURIComponent(x.name)}` : `/traefik?edit=${encodeURIComponent(x.id)}`)}><Route size={11} /> {x.name}</span></Badge>)
+                  <td>{routers.length ? <div className="row wrap" style={{ gap: 4 }}>{routers.map((x) => <span key={x.id} className="row" style={{ gap: 2 }}><Badge kind={x.disabled ? 'warn' : 'ok'}><span className="pill-link" onClick={() => nav(x.proto === 'http' ? `/sites?open=${encodeURIComponent(x.name)}` : `/traefik?edit=${encodeURIComponent(x.id)}`)}><Route size={11} /> {x.name}{x.disabled ? ' · en pause' : ''}</span></Badge>
+                    {x.proto === 'http' && x.editable && can('sites.toggle') && <Btn kind="ghost" small icon busy={pausing} title={x.disabled ? 'Remettre ce site en service' : 'Mettre ce site en pause (Traefik cesse de le servir, le DNS reste en place)'} aria-label={x.disabled ? 'Reprendre ce site' : 'Mettre ce site en pause'} onClick={() => toggleSite({ ids: [x.id], enable: !!x.disabled, label: `« ${fqdn(r)} »` })}>{x.disabled ? <Play size={13} /> : <Pause size={13} />}</Btn>}</span>)}</div>
                     : web && canEdit && hasTraefik && can('sites.create') ? <Btn small kind="ghost" title="Créer un routeur Traefik pour ce sous-domaine" onClick={() => openWizard({ sub: r.subDomain, zone, dns: false })}><Plus size={12} /> route</Btn> : ''}</td>
                   <td className="actions">{canEdit && <>{can('dns.records.edit') && <Btn kind="ghost" small icon onClick={() => setModal({ t: 'rec', record: r })}><Pencil size={14} /></Btn>}{can('dns.records.delete') && <Btn kind="ghost" small icon onClick={() => remove([r.id])}><Trash2 size={14} /></Btn>}</>}</td>
                 </tr>
@@ -139,7 +156,7 @@ function ZoneTools({ zone, info, level, onClose, onChanged }) {
     <Modal wide title={`Zone ${zone}`} onClose={onClose}>
       <div className="tabs">{tabs.map(([id, l]) => <button key={id} className={'tab ' + (tab === id ? 'active' : '')} onClick={() => setTab(id)}>{l}</button>)}</div>
       {tab === 'export' && <div className="col"><div className="editor-wrap" style={{ height: 380 }}><CodeEditor language="plaintext" value={exp.data?.zoneFile || ''} readOnly /></div>
-        <div><Btn onClick={() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([exp.data.zoneFile])); a.download = `${zone}.zone`; a.click() }}><Download size={14} /> Télécharger</Btn></div></div>}
+        <div><Btn onClick={() => { downloadBlob(`${zone}.zone`, exp.data.zoneFile) }}><Download size={14} /> Télécharger</Btn></div></div>}
       {tab === 'import' && <div className="col"><div className="banner">Attention : l'import remplace TOUT le contenu de la zone.</div>
         <div className="editor-wrap" style={{ height: 300 }}><CodeEditor language="plaintext" value={imp} onChange={setImp} /></div>
         <div><Btn kind="danger" disabled={!imp.trim()} onClick={async () => (await confirm({ message: `Remplacer toute la zone ${zone} ?`, confirmLabel: 'Importer' })) && run(() => api.post(`/dns/zones/${zone}/import`, { zoneFile: imp }), 'Zone importée')}><Upload size={14} /> Importer</Btn></div></div>}

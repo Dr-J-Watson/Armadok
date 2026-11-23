@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Cloud, Home, Pencil, Plug, Plus, Share2, Shield, Trash2, Users } from 'lucide-react'
+import { Cloud, Download, Home, Pencil, Plug, Plus, Share2, Shield, Trash2, Users } from 'lucide-react'
 import { api } from '../api.js'
-import { Badge, Btn, Empty, Field, Info, Loading, Modal, useUi } from '../components/ui.jsx'
+import { Badge, Btn, Empty, Field, Loading, Modal, useUi } from '../components/ui.jsx'
 import ShareModal from '../components/ShareModal.jsx'
 import { useAuth } from '../auth.jsx'
 import { useNode } from '../node.jsx'
@@ -36,7 +36,10 @@ const PROVIDERS = [
 
 export default function Accounts() {
   const { toast, confirm } = useUi(); const qc = useQueryClient(); const { user } = useAuth(); const { can, node } = useNode(); const canManage = can('node.domains.link')
-  const creds = useQuery({ queryKey: ['credentials'], queryFn: () => api.get('/credentials') })
+  const creds = useQuery({ queryKey: ['credentials', node?.id], queryFn: () => api.get('/credentials') })   // seulement ce qui est rattaché à CE nœud
+  // Ce que je gère déjà ailleurs et que je peux rattacher ici (le serveur refuse sans le droit « lier des domaines » ; on ne demande donc que si on l'a)
+  const canImport = !!node && canManage && !!user.canAddDomains
+  const importable = useQuery({ queryKey: ['importable', node?.id], queryFn: () => api.get(`/nodes/${node.id}/importable`), enabled: canImport, retry: false })
   const ov = useOverview(); const go = useGo()
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => api.get('/dns/zones'), retry: false })
   const zoneOf = (n) => (zones.data || []).find((z) => z.name === n)
@@ -44,15 +47,31 @@ export default function Accounts() {
   const doms = useQuery({ queryKey: ['domains'], queryFn: () => api.get('/domains') })
   const [add, setAdd] = useState(false); const [imp, setImp] = useState(null); const [share, setShare] = useState(null); const [more, setMore] = useState(null); const [srvNames, setSrvNames] = useState(null); const [srvEdit, setSrvEdit] = useState(null)
   const testSrv = (c) => api.post(`/credentials/${c.id}/test`).then((r) => toast(`Connexion réussie · ${r.rewrites} entrée(s)${r.version ? ' · ' + r.version : ''}`)).catch((e) => toast(e.message, 'err'))
-  const refresh = () => { qc.invalidateQueries({ queryKey: ['credentials'] }); qc.invalidateQueries({ queryKey: ['domains'] }); qc.invalidateQueries({ queryKey: ['zones'] }); qc.invalidateQueries({ queryKey: ['meta'] }); qc.invalidateQueries({ queryKey: ['sync'] }) }
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['credentials'] }); qc.invalidateQueries({ queryKey: ['domains'] }); qc.invalidateQueries({ queryKey: ['zones'] }); qc.invalidateQueries({ queryKey: ['meta'] }); qc.invalidateQueries({ queryKey: ['sync'] }); qc.invalidateQueries({ queryKey: ['importable'] }); qc.invalidateQueries({ queryKey: ['node-domains'] }) }
   const levelOf = (n) => doms.data?.find((d) => d.name === n)
-  const delCred = async (c) => { if (await confirm({ title: `Supprimer « ${c.label} » ?`, message: c.provider === 'local' ? 'Ses domaines disparaissent de l\'interface (rien n\'est modifié dans votre DNS local).' : 'Les clés sont effacées et ses domaines disparaissent de l\'interface (rien n\'est modifié chez le fournisseur).', confirmLabel: 'Supprimer' })) api.del(`/credentials/${c.id}`).then(() => { refresh(); toast('Compte supprimé') }).catch((e) => toast(e.message, 'err')) }
+  const delCred = async (c) => { if (await confirm({ title: `Supprimer « ${c.label} » ?`, message: (c.provider === 'local' ? 'Ses domaines disparaissent de l\'interface (rien n\'est modifié dans votre DNS local).' : 'Les clés sont effacées et ses domaines disparaissent de l\'interface (rien n\'est modifié chez le fournisseur).') + (c.elsewhere > 0 ? `\n\nAttention : ${c.elsewhere} domaine${c.elsewhere > 1 ? 's' : ''} de ce compte ${c.elsewhere > 1 ? 'sont rattachés' : 'est rattaché'} à d'autres nœuds : ${c.elsewhere > 1 ? 'ils disparaissent' : 'il disparaît'} aussi de là-bas.` : ''), confirmLabel: 'Supprimer' })) api.del(`/credentials/${c.id}`).then(() => { refresh(); toast('Compte supprimé') }).catch((e) => toast(e.message, 'err')) }
   const delDom = async (n) => { if (await confirm({ title: `Retirer ${n} ?`, message: 'Le domaine disparaît de l\'interface et ses partages sont supprimés. Rien n\'est modifié chez le fournisseur ni dans votre DNS.', confirmLabel: 'Retirer' })) api.del(`/domains/${n}`).then(() => { refresh(); toast('Domaine retiré') }).catch((e) => toast(e.message, 'err')) }
+  const doImport = useMutation({ mutationFn: (names) => api.post(`/nodes/${node.id}/domains`, { names }), onSuccess: (r) => { refresh(); toast(r.added.length ? `${r.added.length} domaine${r.added.length > 1 ? 's' : ''} rattaché${r.added.length > 1 ? 's' : ''} à « ${node.name} »` : 'Rien à importer') }, onError: (e) => toast(e.message, 'err') })
+  const groups = (() => { const m = new Map(); for (const d of importable.data || []) { if (!m.has(d.accountId)) m.set(d.accountId, { id: d.accountId, label: d.account, mine: d.mine, items: [] }); m.get(d.accountId).items.push(d) } return [...m.values()] })()
   if (creds.isLoading) return <Loading />
   return (
     <>
       <div className="page-head"><div><h1>Comptes DNS</h1><p>Branchez vos fournisseurs (OVH, DuckDNS) ou déclarez un domaine en DNS local, et choisissez qui peut y accéder.{node && <> Les domaines ajoutés ici rejoignent le nœud <b>{node.name}</b>.</>}</p></div><Btn kind="primary" className="right" onClick={() => setAdd(true)}><Plus size={15} /> Ajouter un compte</Btn></div>
-      {creds.data.length === 0 && <div className="card"><Empty><Cloud size={30} /><div>Rien pour l'instant : ajoutez un compte ou un domaine local.</div></Empty></div>}
+      {groups.length > 0 && <div className="card col" style={{ gap: 10, marginBottom: 14 }}>
+        <div className="row wrap"><Download size={18} /><h2>Importer sur ce nœud</h2><Badge>{importable.data.length}</Badge>
+          <Btn small kind="primary" className="right" busy={doImport.isPending} title="Rattache tous ces domaines à ce nœud : vos clés ne sont jamais copiées" onClick={() => doImport.mutate(importable.data.map((d) => d.name))}><Download size={13} /> Tout importer</Btn></div>
+        <div className="muted small">Vous gérez déjà ces domaines, mais ils ne sont pas encore sur « {node.name} ». Importer ne copie pas vos clés : le domaine apparaît simplement aussi ici.</div>
+        {groups.map((g) => (
+          <div key={g.id} className="col" style={{ gap: 6 }}>
+            <div className="row wrap"><b>{g.label}</b>{!g.mine && <Badge kind="info" title="Ce compte n'est pas à vous : un domaine vous en est confié.">partagé</Badge>}
+              {g.items.length > 1 && <Btn small className="right" disabled={doImport.isPending} onClick={() => doImport.mutate(g.items.map((d) => d.name))}>Importer les {g.items.length}</Btn>}</div>
+            {g.items.map((d) => (
+              <div className="mini row wrap" style={{ '--bc': '#0c8599' }} key={d.name}><b className="grow">{d.name}</b>
+                {d.nodes.length ? d.nodes.map((n) => <Badge key={n} title="Déjà sur ce nœud">{n}</Badge>) : <Badge kind="warn" title="Ce domaine n'est encore sur aucun nœud">sur aucun nœud</Badge>}
+                <Btn small disabled={doImport.isPending} onClick={() => doImport.mutate([d.name])}><Download size={13} /> Importer</Btn></div>))}
+          </div>))}
+      </div>}
+      {creds.data.length === 0 && groups.length === 0 && <div className="card"><Empty><Cloud size={30} /><div>Aucun compte sur ce nœud : ajoutez un compte ou un domaine local.</div></Empty></div>}
       <div className="col gap-lg">
         {creds.data.map((c) => {
           const P = PROVIDERS.find((x) => x.id === c.provider) || PROVIDERS[0]
@@ -73,6 +92,7 @@ export default function Accounts() {
                     {d?.shared > 0 && <Badge kind="info"><Users size={11} /> {d.shared}</Badge>}
                     {d?.level === 'manage' && <><Btn small onClick={() => setShare(n)}><Share2 size={13} /> Accès</Btn>{!c.system && <Btn small kind="ghost" icon onClick={() => delDom(n)}><Trash2 size={13} /></Btn>}</>}
                   </div>) })}
+                {c.elsewhere > 0 && <div className="muted small" title="Ces domaines sont rattachés à d'autres de vos nœuds : ils se voient en changeant de nœud.">+ {c.elsewhere} domaine{c.elsewhere > 1 ? 's' : ''} sur d'autres nœuds (non affiché{c.elsewhere > 1 ? 's' : ''} ici)</div>}
               </div>
             </div>)
         })}
@@ -93,7 +113,7 @@ export default function Accounts() {
 //  - mode « domain » (page Domaines) : obtenir un DOMAINE, d'abord depuis ce qu'on a déjà (comptes existants, DNS local), sinon un nouveau fournisseur.
 export function AddAccount({ onClose, onDone, canKeys, only, mode = 'account', onImport, currentCred, currentName }) {
   const [pick, setPick] = useState(only)
-  const creds = useQuery({ queryKey: ['credentials'], queryFn: () => api.get('/credentials'), enabled: mode === 'domain' })
+  const creds = useQuery({ queryKey: ['credentials', 'all'], queryFn: () => api.get('/credentials?all=1'), enabled: mode === 'domain' })
   const providers = PROVIDERS.filter((p) => p.needsKey && canKeys)
   if (pick === 'ovh') return <AddCredential onClose={onClose} onDone={onDone} />
   if (pick === 'duckdns') return <AddDuck onClose={onClose} onDone={onDone} />

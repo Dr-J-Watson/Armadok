@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Activity, Boxes, Cloud, Container, FolderGit2, Search as SearchIcon, CornerDownLeft, FileCode2, Globe, Layers, LayoutDashboard, Lock, Plus, Route, Server, ShieldCheck, Users, Workflow, Wrench } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '../api.js'
 import { useFeatures } from '../lib/features.js'
 import { Modal } from './ui.jsx'
@@ -21,6 +21,20 @@ export default function CommandPalette({ onClose, openWizard }) {
   const certs = useQuery({ queryKey: ['certs'], queryFn: () => api.get('/traefik/certs'), enabled: hasTraefik && can('certs.view'), staleTime: 60000, retry: false })
   const zones = useQuery({ queryKey: ['zones'], queryFn: () => api.get('/dns/zones'), staleTime: 60000, retry: false })
   const listRef = useRef(null)
+  // Les enregistrements DNS (sous-domaines) de chaque domaine : chargés seulement quand on tape une recherche (même cache que la page Domaines).
+  const searching = q.trim().length >= 2
+  const recQs = useQueries({ queries: (zones.data || []).filter((z) => z.capabilities?.records !== false).slice(0, 12).map((z) => ({ queryKey: ['records', z.name], queryFn: () => api.get(`/dns/zones/${z.name}/records`), enabled: searching, staleTime: 60000, retry: false })) })
+  const recKey = recQs.map((r) => r.dataUpdatedAt).join()
+  const recEntries = useMemo(() => {
+    const out = []
+    ;(zones.data || []).filter((z) => z.capabilities?.records !== false).slice(0, 12).forEach((z, k) => {
+      for (const r of recQs[k]?.data || []) {
+        const fq = r.subDomain ? `${r.subDomain}.${z.name}` : z.name
+        out.push({ group: 'Enregistrements DNS', label: fq, sub: `${r.fieldType} → ${r.target}`, Icon: Globe, run: () => nav(`/dns?zone=${encodeURIComponent(z.name)}&q=${encodeURIComponent(r.subDomain || r.target)}`), extra: '' })
+      }
+    })
+    return out
+  }, [recKey, zones.data]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const entries = useMemo(() => {
     const e = []
@@ -65,7 +79,8 @@ export default function CommandPalette({ onClose, openWizard }) {
     const ipsOk = feats?.ips.enabled && feats.ips.allowed
     if (needle && ipsOk && feats.ips.reveal && /^[0-9a-f:.]{3,45}$/i.test(needle) && /[.:]/.test(needle)) extra.push({ group: 'Surveillance', label: `Chercher l'adresse ${q.trim()}`, sub: 'Dans les adresses IP vues par Traefik', Icon: Activity, run: () => nav(`/monitoring?tab=ips&s=${encodeURIComponent(q.trim())}`), extra: '' })
     if (needle.length >= 3 && ipsOk) extra.push({ group: 'Surveillance', label: `Chercher « ${q.trim()} » dans les requêtes`, sub: 'Adresse, site ou chemin demandé', Icon: SearchIcon, run: () => nav(`/monitoring?tab=ips&s=${encodeURIComponent(q.trim())}`), extra: '' })
-    const match = [...entries.filter((x) => !needle || `${x.label} ${x.sub} ${x.group} ${x.extra}`.toLowerCase().includes(needle)), ...extra]
+    const hit = (x) => !needle || `${x.label} ${x.sub} ${x.group} ${x.extra}`.toLowerCase().includes(needle)
+    const match = [...entries.filter(hit), ...(needle.length >= 2 ? recEntries.filter(hit) : []), ...extra]
     const order = []
     for (const x of match) if (!order.includes(x.group)) order.push(x.group)
     const groups = order.map((name) => {
@@ -73,7 +88,7 @@ export default function CommandPalette({ onClose, openWizard }) {
       return { name, total: all.length, items: all.slice(0, needle ? PER_GROUP_SEARCH : PER_GROUP) }
     })
     return { groups, flat: groups.flatMap((g) => g.items) }
-  }, [entries, q, feats])
+  }, [entries, recEntries, q, feats])
 
   useEffect(() => { listRef.current?.querySelector('.pal-row.sel')?.scrollIntoView({ block: 'nearest' }) }, [i, q])
   const go = (e) => { e.run(); onClose() }
@@ -82,7 +97,7 @@ export default function CommandPalette({ onClose, openWizard }) {
   let n = -1
   return (
     <Modal small title="Aller à…" onClose={onClose}>
-      <input className="input" autoFocus value={q} placeholder="Un site, un service, une protection, une page…" onChange={(e) => { setQ(e.target.value); setI(0) }}
+      <input className="input" autoFocus value={q} placeholder="Un site, un domaine, un sous-domaine, une page…" onChange={(e) => { setQ(e.target.value); setI(0) }}
         onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); move(1) } else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1) } else if (e.key === 'Enter' && flat[i]) go(flat[i]) }} />
       <div className="pal-list" ref={listRef}>
         {flat.length === 0 && <div className="empty">Rien ne correspond à « {q} ».</div>}

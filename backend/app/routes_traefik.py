@@ -4,7 +4,6 @@ import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .audit import audit
 from .config import settings
 from . import caps as capmod
 from . import org_folders, db

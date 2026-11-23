@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { NavLink, Route, Routes, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fmtDate } from './lib/util.js'
-import { Activity, ArrowLeft, BellRing, Menu as MenuIcon, X as XIcon, Boxes, Container, FolderGit2, LifeBuoy, KeyRound, Cloud, ShieldAlert, ShieldCheck, Globe, Layers, LayoutDashboard, LogOut, Plus, Search, Server, UserCog, Users, Wrench, Workflow } from 'lucide-react'
+import { downloadBlob } from './lib/csv.js'
+import { Activity, ArrowLeft, BellRing, Menu as MenuIcon, X as XIcon, Boxes, Container, FolderGit2, LifeBuoy, KeyRound, ChevronDown, ChevronRight, Cloud, PanelLeftClose, PanelLeftOpen, ShieldAlert, ShieldCheck, Globe, Layers, LayoutDashboard, LogOut, Plus, Search, Server, UserCog, Users, Wrench, Workflow } from 'lucide-react'
 import { useAuth } from './auth.jsx'
 import { useNode, useLiveInvalidate } from './node.jsx'
 import LiveDot from './components/LiveDot.jsx'
@@ -24,6 +25,7 @@ import Docker from './pages/Docker.jsx'
 import Projects from './pages/Projects.jsx'
 import Project from './pages/Project.jsx'
 import { useFeatures } from './lib/features.js'
+import { usePersist } from './lib/persist.js'
 import NoticeGate from './components/NoticeGate.jsx'
 import { Countdown } from './components/Countdown.jsx'
 import NodeSwitcher from './components/NodeSwitcher.jsx'
@@ -58,7 +60,7 @@ function TwoFactor({ user, onChange }) {
       <div><b>Codes de secours</b><div className="muted small">À conserver en lieu sûr : chacun sert une seule fois si vous perdez votre téléphone. Ils ne seront plus affichés.</div></div>
       <div className="rule-preview mono" style={{ columns: 2, lineHeight: 1.9 }}>{codes.map((c) => <div key={c}>{c}</div>)}</div>
       <div className="row"><Btn small onClick={() => { navigator.clipboard?.writeText(codes.join('\n')); toast('Copiés') }}>Copier</Btn>
-        <Btn small onClick={() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([codes.join('\n') + '\n'])); a.download = 'codes-de-secours.txt'; a.click() }}>Télécharger</Btn><Btn small kind="primary" className="right" onClick={() => setCodes(null)}>J'ai noté mes codes</Btn></div>
+        <Btn small onClick={() => { downloadBlob('codes-de-secours.txt', codes.join('\n') + '\n') }}>Télécharger</Btn><Btn small kind="primary" className="right" onClick={() => setCodes(null)}>J'ai noté mes codes</Btn></div>
     </div>)
   if (setup) return (
     <div className="col">
@@ -165,6 +167,27 @@ function ShortcutsModal({ onClose }) {
       <div className="muted small">{SHORTCUT_NOTE}</div></div></Modal>
 }
 
+// Écran étroit (téléphone) : la barre latérale y est un menu plein écran, jamais réduite aux icônes.
+function useNarrow() {
+  const q = '(max-width: 860px)'
+  const [m, setM] = useState(() => matchMedia(q).matches)
+  useEffect(() => { const mq = matchMedia(q); const f = () => setM(mq.matches); mq.addEventListener('change', f); return () => mq.removeEventListener('change', f) }, [])
+  return m
+}
+
+// Une catégorie de la barre latérale : son titre la replie / la déplie. Barre réduite aux icônes : plus de titre, un simple trait, tout reste visible.
+function NavGroup({ id, label, show = true, closed, toggle, rail, children }) {
+  if (!show) return null
+  if (rail) return <><div className="side-div" />{children}</>
+  const shut = !!closed[id]
+  return (
+    <div className={'side-grp ' + (shut ? 'shut' : '')}>
+      <button type="button" className="side-g" aria-expanded={!shut} onClick={() => toggle(id)} title={shut ? `Déplier « ${label} »` : `Replier « ${label} »`}>{shut ? <ChevronRight size={12} /> : <ChevronDown size={12} />}<span>{label}</span></button>
+      {!shut && children}
+    </div>
+  )
+}
+
 // Nœud distant dont le worker n'est pas (ou plus) connecté : rien de Traefik n'est lisible, on explique quoi faire.
 function NodeOffline({ node, canManage }) {
   const pending = node.connection === 'pending'
@@ -172,7 +195,7 @@ function NodeOffline({ node, canManage }) {
     <div className="card col gap-lg" style={{ maxWidth: 640 }}>
       <div className="row"><Server size={20} /><h2>{pending ? `Le worker de « ${node.name} » n'est pas encore installé` : `« ${node.name} » est hors ligne`}</h2></div>
       <div className="muted">{pending ? 'Ce nœud est créé, mais aucun worker ne s\'y est encore connecté : les sites et les fichiers Traefik de cette machine apparaîtront dès que le worker sera installé.' : 'Son worker ne répond plus : la machine est peut-être éteinte, ou sans accès Internet. Ses données reviendront dès qu\'il se reconnecte.'}</div>
-      {canManage ? <div><NavLink to="/node" className="btn primary">{pending ? 'Installer le worker' : 'Voir la connexion'}</NavLink></div> : <div className="muted">Demandez au propriétaire du nœud de terminer son installation.</div>}
+      {canManage ? <div><NavLink to="/node?tab=connection" className="btn primary">{pending ? 'Installer le worker' : 'Voir la connexion'}</NavLink></div> : <div className="muted">Demandez au propriétaire du nœud de terminer son installation.</div>}
     </div>
   )
 }
@@ -182,6 +205,10 @@ export default function App() {
   const tf = hasModule('traefik'); const dk = hasDocker && can('docker.view'); const pj = dk && can('projects.view'); const canManage = canManageAll && tf   // un nœud sans Traefik n'a ni Traefik avancé, ni middlewares, ni surveillance du trafic
   const [theme, setTheme] = useThemePrefs(); const feats = useFeatures()
   const [site, setSite] = useState(null) // { item?, prefill? }
+  const [railPref, setRail] = usePersist('nav-rail', false); const [closed, setClosed] = usePersist('nav-closed', {}); const narrow = useNarrow()
+  const rail = railPref && !narrow
+  const grp = { closed, rail, toggle: (id) => setClosed((c) => ({ ...c, [id]: !c[id] })) }
+  const canConn = canNode && can('node.connection')
   const [palette, setPalette] = useState(false); const [profile, setProfile] = useState(false); const [keys, setKeys] = useState(false); const nav = useNavigate(); const loc = useLocation(); const [sheet, setSheet] = useState(false)
   const meta = useQuery({ queryKey: ['meta'], queryFn: () => api.get('/meta'), enabled: !!user, staleTime: 60000 })
   useLiveInvalidate(); const sw = useSwitchNode()
@@ -232,36 +259,42 @@ export default function App() {
   const openSite = (item) => setSite({ item })
   const link = (to, icon, label, hint, dot) => <NavLink to={to} end={to === '/'} data-tip={hint} className={({ isActive }) => 'nav ' + (isActive ? 'active' : '')}>{icon}<span className="lbl">{label}</span>{dot ? <span className="nav-dot warn" title={dot} /> : null}</NavLink>
   return (
-    <div className="shell">
-      <aside className={'side ' + (sheet ? 'open' : '')}>
+    <div className={'shell ' + (rail ? 'rail' : '')}>
+      <aside className={'side ' + (sheet ? 'open ' : '') + (rail ? 'rail' : '')}>
         <NodeSwitcher />
         <button className="nav" data-tip="Aller directement à un site, un domaine ou une page (raccourci : Ctrl K)." onClick={() => setPalette(true)}><Search size={17} /><span className="lbl">Rechercher</span><span className="kbd" style={{ marginLeft: 'auto' }}>Ctrl K</span></button>
-        {tf && can('sites.create') && <button className="nav" data-tip="Assistant : adresse du site, protections, application de destination, et l'enregistrement DNS si besoin." onClick={() => openWizard({})} style={{ color: 'var(--accent)' }}><Plus size={17} /><span className="lbl">Nouveau site</span></button>}
         <div className="sep" />
         {link('/', <LayoutDashboard size={17} />, 'Accueil', 'Vue d\'ensemble : vos sites, vos domaines, les problèmes à régler et l\'activité récente.')}
-        {dk && <div className="side-g">Docker</div>}
-        {pj && link('/projects', <FolderGit2 size={17} />, 'Projets', 'Vos dossiers docker compose : état, services, sites et visiteurs de chacun, fichiers et déploiement.')}
-        {dk && link('/docker', <Container size={17} />, 'Docker', 'Les conteneurs, images, réseaux et volumes de ce nœud, avec les règles Traefik et les visiteurs de chacun.')}
-        {(hasTraefik || (tf && can('middlewares.view'))) && <div className="side-g">Sites</div>}
-        {hasTraefik && link('/sites', <Workflow size={17} />, 'Sites', 'Vos sites : chacun relie une adresse, des protections et l\'application qui répond.')}
-        {tf && can('middlewares.view') && link('/middlewares', <Layers size={17} />, 'Middlewares', 'Les protections et transformations appliquées avant d\'envoyer la requête à l\'application : créez-les, coupez-les, voyez qui les utilise.')}
-        <div className="side-g">DNS</div>
-        {link('/dns', <Globe size={17} />, 'Domaines', 'Vos domaines et leur DNS (OVH, DuckDNS ou DNS local) : enregistrements, adresse, partage d\'accès, aide certificats.')}
-        {(user.canAddDomains || can('node.domains.link')) && link('/accounts', <Cloud size={17} />, 'Comptes DNS', 'Vos fournisseurs DNS (OVH, DuckDNS) et vos domaines en DNS local : où se trouve le DNS de chaque domaine.')}
-        {(canNode || canRights || canManage || (feats && (feats.metrics.enabled || feats.alerts.enabled || feats.ips.enabled || feats.bans.enabled))) && <div className="side-g">Gestion du nœud</div>}
-        {canNode && link('/node', <Server size={17} />, 'Ce nœud', 'Réglages de cette instance Traefik : nom, adresses par défaut, membres et leurs droits, connexion.')}
-        {canRights && link('/rights', <KeyRound size={17} />, 'Droits', 'Rôles, groupes et attributions : qui peut faire quoi sur vos nœuds, pour une durée limitée si besoin.')}
-        {tf && feats && ((feats.metrics.enabled && feats.metrics.allowed) || (feats.alerts.enabled && feats.alerts.allowed) || (feats.ips.enabled && feats.ips.allowed) || (feats.bans.enabled && feats.bans.allowed)) && (
-          <NavLink to="/monitoring" data-tip="Trafic, erreurs, alertes, adresses IP qui se connectent et bannissements. Les parties non branchées (Prometheus, journal d'accès) sont masquées : l'aide explique comment les activer." className={({ isActive }) => 'nav ' + (isActive ? 'active' : '')}><Activity size={17} /><span className="lbl">Surveillance</span>{feats.firing > 0 && <span className="badge err" style={{ marginLeft: 'auto' }}>{feats.firing}</span>}</NavLink>)}
-        {canManage && link(certsBad ? '/traefik?tab=certs' : '/traefik', <Wrench size={17} />, 'Traefik avancé', 'Édition complète de la configuration : routeurs, services, middlewares, TLS et fichiers.', certsBad ? `${certsBad} site${certsBad > 1 ? 's' : ''} avec un certificat à régler` : null)}
-        {admin && <div className="side-g">Plateforme</div>}
-        {admin && link('/team', <Users size={17} />, 'Équipe', 'Les comptes de cette interface : rôles, quota de nœuds, double authentification.')}
-        {admin && link('/nodes', <Boxes size={17} />, 'Tous les nœuds', 'Vue super-admin de tous les nœuds : accès d\'urgence (tracé et notifié) et actions rapides.')}
+        <NavGroup id="docker" label="Docker" show={dk} {...grp}>
+          {pj && link('/projects', <FolderGit2 size={17} />, 'Projets', 'Vos dossiers docker compose : état, services, sites et visiteurs de chacun, fichiers et déploiement.')}
+          {link('/docker', <Container size={17} />, 'Docker', 'Les conteneurs, images, réseaux et volumes de ce nœud, avec les règles Traefik et les visiteurs de chacun.')}
+        </NavGroup>
+        <NavGroup id="sites" label="Sites" show={hasTraefik || (tf && can('middlewares.view'))} {...grp}>
+          {hasTraefik && link('/sites', <Workflow size={17} />, 'Sites', 'Vos sites : chacun relie une adresse, des protections et l\'application qui répond.')}
+          {tf && can('middlewares.view') && link('/middlewares', <Layers size={17} />, 'Middlewares', 'Les protections et transformations appliquées avant d\'envoyer la requête à l\'application : créez-les, coupez-les, voyez qui les utilise.')}
+        </NavGroup>
+        <NavGroup id="dns" label="DNS" {...grp}>
+          {link('/dns', <Globe size={17} />, 'Domaines', 'Vos domaines et leur DNS (OVH, DuckDNS ou DNS local) : enregistrements, adresse, partage d\'accès, aide certificats.')}
+          {(user.canAddDomains || can('node.domains.link')) && link('/accounts', <Cloud size={17} />, 'Comptes DNS', 'Vos fournisseurs DNS (OVH, DuckDNS) et vos domaines en DNS local : où se trouve le DNS de chaque domaine.')}
+        </NavGroup>
+        <NavGroup id="node" label="Gestion du nœud" show={!!(canNode || canRights || canManage || (feats && (feats.metrics.enabled || feats.alerts.enabled || feats.ips.enabled || feats.bans.enabled)))} {...grp}>
+          {canNode && link('/node', <Server size={17} />, 'Ce nœud', 'Réglages de cette instance Traefik : nom, adresses par défaut, membres et leurs droits, connexion.')}
+          {canRights && link('/rights', <KeyRound size={17} />, 'Droits', 'Rôles, groupes et attributions : qui peut faire quoi sur vos nœuds, pour une durée limitée si besoin.')}
+          {tf && feats && ((feats.metrics.enabled && feats.metrics.allowed) || (feats.alerts.enabled && feats.alerts.allowed) || (feats.ips.enabled && feats.ips.allowed) || (feats.bans.enabled && feats.bans.allowed)) && (
+            <NavLink to="/monitoring" data-tip="Trafic, erreurs, alertes, adresses IP qui se connectent et bannissements. Les parties non branchées (Prometheus, journal d'accès) sont masquées : l'aide explique comment les activer." className={({ isActive }) => 'nav ' + (isActive ? 'active' : '')}><Activity size={17} /><span className="lbl">Surveillance</span>{feats.firing > 0 && <span className="badge err nav-badge">{feats.firing}</span>}</NavLink>)}
+          {canManage && link(certsBad ? '/traefik?tab=certs' : '/traefik', <Wrench size={17} />, 'Traefik avancé', 'Édition complète de la configuration : routeurs, services, middlewares, TLS et fichiers.', certsBad ? `${certsBad} site${certsBad > 1 ? 's' : ''} avec un certificat à régler` : null)}
+        </NavGroup>
+        <NavGroup id="platform" label="Plateforme" show={admin} {...grp}>
+          {link('/team', <Users size={17} />, 'Équipe', 'Les comptes de cette interface : rôles, quota de nœuds, double authentification.')}
+          {link('/nodes', <Boxes size={17} />, 'Tous les nœuds', 'Vue super-admin de tous les nœuds : accès d\'urgence (tracé et notifié) et actions rapides.')}
+        </NavGroup>
         <div style={{ flex: 1 }} />
+        <div className="sep" />
         <ThemeMenu prefs={theme} set={setTheme} />
         {link('/help', <LifeBuoy size={17} />, 'Aide', 'Pense-bête par catégorie : certificats, site local, DNS, Docker, sécurité… ce qu\'il faut régler pour activer chaque fonctionnalité.')}
-        <button className="nav" onClick={() => setProfile(true)}><UserCog size={17} /><span className="lbl">{user.username}</span></button>
+        <button className="nav" data-tip="Votre compte : mot de passe, double authentification, sessions." onClick={() => setProfile(true)}><UserCog size={17} /><span className="lbl">{user.username}</span></button>
         <button className="nav" onClick={logout}><LogOut size={17} /><span className="lbl">Déconnexion</span></button>
+        <button className="nav rail-toggle" data-tip={rail ? 'Déplier la barre latérale.' : 'Replier la barre latérale : seules les icônes restent.'} onClick={() => setRail(!railPref)}>{rail ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}<span className="lbl">{rail ? 'Déplier' : 'Replier la barre'}</span></button>
         <LiveDot />
         <a className="side-foot" href="https://github.com/Dr-J-Watson/Armadok" target="_blank" rel="noreferrer" data-tip="Code source d'Armadok sur GitHub."><b>Armadok</b>{meta.data?.version && <span className="lbl">{/^v?\d/.test(meta.data.version) ? 'v' + meta.data.version.replace(/^v/, '') : meta.data.version}</span>}</a>
       </aside>
@@ -277,16 +310,16 @@ export default function App() {
         <ScopeBar />
         {node?.mfaBlocked?.length > 0 && !user.twoFactor && <MfaBanner caps={node.mfaBlocked} node={node} onActivate={() => setProfile(true)} />}
         {node?.emergency && <div className="banner err"><ShieldAlert size={18} /><span className="grow">Accès d'urgence au nœud « {node.name} » — expire dans <Countdown until={node.emergency.expires} onEnd={reload} />. Le propriétaire en est informé.</span><Btn small onClick={endEmergency}>Terminer</Btn></div>}
-        {node?.kind === 'remote' && node.connection !== 'online' && <div className="banner"><Server size={18} /><span className="grow">{node.connection === 'pending' ? `Le worker de « ${node.name} » n'est pas encore installé.` : `« ${node.name} » est hors ligne : son worker ne répond plus.`}</span>{canManage && <NavLink to="/node" className="btn sm">Voir la connexion</NavLink>}</div>}
+        {node?.kind === 'remote' && node.connection !== 'online' && <div className="banner"><Server size={18} /><span className="grow">{node.connection === 'pending' ? `Le worker de « ${node.name} » n'est pas encore installé.` : `« ${node.name} » est hors ligne : son worker ne répond plus.`}</span>{canConn && <NavLink to="/node?tab=connection" className="btn sm">{node.connection === 'pending' ? 'Installer le worker' : 'Voir la connexion'}</NavLink>}</div>}
         {suspended ? <div className="card"><Empty><ShieldAlert size={30} /><div><b>« {node.name} » est suspendu</b><br />L'administrateur de la plateforme a fermé ce nœud. Contactez-le pour en savoir plus ; vous pouvez changer de nœud dans le menu.</div></Empty></div> : <Routes>
           <Route path="/" element={<Dashboard openWizard={openWizard} />} />
-          <Route path="/sites" element={hasTraefik ? (tOffline ? <NodeOffline node={node} canManage={canManage} /> : <Sites openSite={openSite} openWizard={openWizard} />) : <Navigate to="/" />} />
+          <Route path="/sites" element={hasTraefik ? (tOffline ? <NodeOffline node={node} canManage={canConn} /> : <Sites openSite={openSite} openWizard={openWizard} />) : <Navigate to="/" />} />
           <Route path="/dns" element={<Dns openWizard={openWizard} />} />
           <Route path="/rights" element={canRights ? <Rights /> : <Navigate to="/" />} />
           <Route path="/accounts" element={user.canAddDomains || can('node.domains.link') ? <Accounts /> : <Navigate to="/" />} />
           <Route path="/team" element={admin ? <Team /> : <Navigate to="/" />} />
-          <Route path="/middlewares" element={tf && can('middlewares.view') ? (tOffline ? <NodeOffline node={node} canManage={canManage} /> : <Middlewares />) : <Navigate to="/" />} />
-          <Route path="/traefik" element={canManage ? (tOffline ? <NodeOffline node={node} canManage={canManage} /> : <Traefik />) : <Navigate to="/" />} />
+          <Route path="/middlewares" element={tf && can('middlewares.view') ? (tOffline ? <NodeOffline node={node} canManage={canConn} /> : <Middlewares />) : <Navigate to="/" />} />
+          <Route path="/traefik" element={canManage ? (tOffline ? <NodeOffline node={node} canManage={canConn} /> : <Traefik />) : <Navigate to="/" />} />
           <Route path="/node" element={canNode ? <Node /> : <Navigate to="/" />} />
           <Route path="/nodes" element={admin ? <Nodes /> : <Navigate to="/" />} />
           <Route path="/help" element={<Help />} />

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ArrowDown, ArrowUp, Box, CornerUpRight, Database, FileKey, FileType, FolderMinus, FolderPlus, Gauge, GripVertical, IndentDecrease, IndentIncrease, Globe, Link2, Network, Package, Plug, Plus, Puzzle, Replace, RotateCw, Shield, ShieldCheck, KeyRound, TriangleAlert, X, Zap, Lock, Send, Pencil, Code2 } from 'lucide-react'
+import { ArrowDown, ArrowUp, Box, Trash2, CornerUpRight, Database, FileKey, FileType, FolderMinus, FolderPlus, Gauge, GripVertical, IndentDecrease, IndentIncrease, Globe, Link2, Network, Package, Plug, Plus, Puzzle, Replace, RotateCw, Shield, ShieldCheck, KeyRound, TriangleAlert, X, Zap, Lock, Send, Pencil, Code2 } from 'lucide-react'
 import { api } from '../api.js'
 import { verifyDeployed } from '../lib/verify.js'
 import { refreshZone } from '../lib/dns.js'
+import { useSiteRemoval } from './SiteRemoval.jsx'
 import { Badge, Btn, Field, Info, Modal, Switch, useUi, SearchBox } from './ui.jsx'
 import { Chips } from './SchemaForm.jsx'
 import CodeEditor from './CodeEditor.jsx'
@@ -11,9 +12,8 @@ import { useAuth } from '../auth.jsx'
 import { useNode } from '../node.jsx'
 import { useHostStatus } from './HostDns.jsx'
 import { clampLevels, condRow, hostRow, rowsHosts, rowsToRule, ruleToRows } from '../lib/rule.js'
-import { toYamlPretty } from '../lib/util.js'
+import { extractHosts, toYamlPretty } from '../lib/util.js'
 import { COND_LABELS, GROUP_COLOR, humanOf, techName } from '../traefik/human.js'
-import { HTTP_MIDDLEWARES } from '../traefik/schema.js'
 import { useMeta, useOverview, ItemEditor } from '../pages/Traefik.jsx'
 
 const ICONS = { KeyRound, ShieldCheck, Network, FileKey, Shield, CornerUpRight, FolderPlus, FolderMinus, Replace, Package, FileType, Database, TriangleAlert, Link2, Plug, Gauge, RotateCw, Zap, Puzzle, Box }
@@ -149,7 +149,7 @@ function MwRow({ name, items, idx, total, move, onRemove, onEdit, dragProps, can
 // ------------------------------------------------------------------ constructeur
 export default function SiteBuilder({ item, prefill = {}, onClose, onReload }) {
   const { user } = useAuth(); const { canManage, can } = useNode(); const { toast, confirm } = useUi(); const qc = useQueryClient()
-  const ov = useOverview(); const meta = useMeta()
+  const ov = useOverview(); const meta = useMeta(); const removal = useSiteRemoval()
   const items = ov.data?.items || []
   const isAdmin = canManage // droits complets sur ce nœud (propriétaire / administrateur du nœud)
   const domainsQ = useQuery({ queryKey: ['domains'], queryFn: () => api.get('/domains') })
@@ -267,10 +267,17 @@ export default function SiteBuilder({ item, prefill = {}, onClose, onReload }) {
   const askIp = dnsMissing.some((r) => r.canEdit && (!r.suggestion.target || ['adguard', 'pihole'].includes(r.provider)))   // DNS local (AdGuard, Pi-hole) : l'adresse est celle de Traefik, on la laisse choisir
   const knownEps = meta.data?.entrypoints || []
 
+  const del = async () => {
+    const choice = await removal.confirmRemoval({ title: `Supprimer « ${item.name} » ?`, message: 'Le site ne sera plus servi par Traefik. Son service est supprimé s\'il n\'est utilisé par personne d\'autre.\nSans case cochée ci-dessous, l\'enregistrement DNS n\'est pas touché.',
+      confirmLabel: 'Supprimer', sites: [{ name: item.name, hosts: extractHosts(item.spec?.rule || ''), locked: true }] })
+    if (!choice) return
+    await removal.apply(choice); onClose()
+  }
   return (
     <>
       <Modal side title={<span>{isNew ? 'Nouveau site' : name} {!isNew && !editable && <Badge>lecture seule</Badge>}</span>} onClose={onClose}
-        footer={<>{problems.length > 0 && <span className="small" style={{ color: 'var(--warn)', marginRight: 'auto' }}>{problems[0]}</span>}
+        footer={<>{!isNew && item.editable && !gone && can('sites.delete') && <Btn kind="danger" title="Supprime ce site : Traefik ne le sert plus (rien d'autre n'est touché sans votre accord)" onClick={del}><Trash2 size={15} /> Supprimer le site</Btn>}
+          {problems.length > 0 && <span className="small" style={{ color: 'var(--warn)', marginRight: 'auto' }}>{problems[0]}</span>}
           <Btn kind="ghost" onClick={() => setShowYaml(!showYaml)}><Code2 size={15} /> YAML</Btn><Btn onClick={onClose}>Annuler</Btn>
           <Btn kind="primary" busy={busy} disabled={!editable || problems.length > 0 || !can(isNew ? 'sites.create' : 'sites.edit')} title={!can(isNew ? 'sites.create' : 'sites.edit') ? 'Vous n\'avez pas ce droit' : undefined} onClick={save}>{isNew ? 'Créer le site' : 'Enregistrer'}</Btn></>}>
         <fieldset disabled={!editable} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
@@ -375,6 +382,7 @@ export default function SiteBuilder({ item, prefill = {}, onClose, onReload }) {
       </Modal>
       {picker && <MwPicker items={mwItems} taken={mws || []} canCreate={isAdmin} onClose={() => setPicker(false)} onPick={(n) => { setMws([...(mws || []), n]); setPicker(false) }} onCreate={() => { setPicker(false); setCreating(true) }} />}
       {creating && <ItemEditor isNew proto="http" kind="middlewares" items={items} files={ov.data.files.map((f) => f.path)} meta={meta.data} onClose={() => setCreating(false)} onSaved={(n) => { setMws((m) => [...(m || []), n]); setCreating(false) }} />}
+      {removal.dialog}
       {editMw && <ItemEditor item={editMw} items={items} files={ov.data.files.map((f) => f.path)} meta={meta.data} onClose={() => setEditMw(null)} onOpenItem={setEditMw} />}
     </>
   )

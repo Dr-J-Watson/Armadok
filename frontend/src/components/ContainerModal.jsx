@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, Boxes, ExternalLink, FileText, Globe, Info as InfoIcon, Play, RotateCw, ShieldAlert, Square, SquareTerminal, Trash2, Workflow } from 'lucide-react'
 import { api } from '../api.js'
@@ -7,6 +7,7 @@ import { Badge, Btn, Copyable, Empty, Loading, Modal, Tabs, useUi } from './ui.j
 import { LogViewer, NameConfirm } from './DockerBits.jsx'
 import { publishNow } from '../lib/publish.js'
 import ConvertContainer from './ConvertContainer.jsx'
+import { sitesFromLinks, useSiteRemoval } from './SiteRemoval.jsx'
 import TerminalModal from './TerminalModal.jsx'
 import { enc, fmtSize, portLabel, PROTECTED, stateOf } from '../lib/docker.js'
 import { ago, fmtNum } from '../lib/features.js'
@@ -17,7 +18,8 @@ const Row = ({ k, children }) => <div className="kv"><span className="muted">{k}
 
 // La fiche d'un conteneur : ce qu'il est (Aperçu), quelles règles Traefik mènent à lui (Traefik), qui y accède (Accès), ses journaux (Logs).
 export default function ContainerModal({ name, tab: first, onClose }) {
-  const { toast, confirm } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode, traefikVia } = useNode()
+  const { toast } = useUi(); const qc = useQueryClient(); const go = useGo(); const { hasModule, can, node, setNode, traefikVia } = useNode()
+  const removal = useSiteRemoval(); const extra = useRef(null)   // sites et DNS cochés dans la confirmation de suppression : appliqués une fois le conteneur supprimé
   const [tab, setTab] = useState(first || 'overview'); const [ask, setAsk] = useState(null); const [term, setTerm] = useState(false); const [conv, setConv] = useState(false)
   const q = useQuery({ queryKey: ['docker-c', name], queryFn: () => api.get(`/docker/containers/${enc(name)}`), refetchInterval: 10000 })
   const refresh = () => { qc.invalidateQueries({ queryKey: ['docker-c'] }); qc.invalidateQueries({ queryKey: ['docker-list'] }); qc.invalidateQueries({ queryKey: ['docker-stats'] }) }
@@ -28,7 +30,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
   })
   const del = useMutation({
     mutationFn: ({ volumes, confirm: c }) => api.del(`/docker/containers/${enc(name)}?volumes=${volumes ? 'true' : 'false'}&force=true&confirm=${enc(c || '')}`),
-    onSuccess: () => { refresh(); toast('Conteneur supprimé'); onClose() },
+    onSuccess: () => { refresh(); toast('Conteneur supprimé'); const x = extra.current; extra.current = null; if (x) removal.apply(x); onClose() },
     onError: (e) => { if (/Retapez son nom/.test(e.message)) setAsk({ action: 'remove' }); else toast(e.message, 'err') },
   })
   if (q.isLoading) return <Modal title={name} onClose={onClose}><Loading /></Modal>
@@ -36,7 +38,10 @@ export default function ContainerModal({ name, tab: first, onClose }) {
   const c = q.data; const [stLabel, stKind] = stateOf({ state: c.state, health: c.health }); const running = c.state === 'running'
   const tf = hasModule('traefik') || !!node?.traefikVia || c.links.some((l) => l.node)   // un nœud sans Traefik montre quand même les sites servis ailleurs
   const tabs = [{ id: 'overview', label: 'Aperçu', icon: <InfoIcon size={14} /> }, ...(tf ? [{ id: 'traefik', label: 'Traefik', icon: <Workflow size={14} />, count: c.links.length || undefined }, { id: 'access', label: 'Accès', icon: <Activity size={14} /> }] : []), ...(c.canLogs ? [{ id: 'logs', label: 'Logs', icon: <FileText size={14} /> }] : [])]
-  const remove = async () => { if (await confirm({ title: `Supprimer « ${c.name} » ?`, message: 'Le conteneur est supprimé définitivement (ses volumes nommés sont conservés). Ses fichiers vivent dans le dossier du projet : ils ne sont pas touchés.', confirmLabel: 'Supprimer' })) del.mutate({ volumes: false }) }
+  const remove = async () => {
+    const choice = await removal.confirmRemoval({ title: `Supprimer « ${c.name} » ?`, message: 'Le conteneur est supprimé définitivement (ses volumes nommés sont conservés). Ses fichiers vivent dans le dossier du projet : ils ne sont pas touchés.', confirmLabel: 'Supprimer', sites: sitesFromLinks(c.links) })
+    if (choice) { extra.current = choice; del.mutate({ volumes: false }) }
+  }
   return (
     <Modal wide title={<span className="row" style={{ gap: 8 }}>{c.name}<Badge kind={stKind}>{stLabel}</Badge>{c.protected && <Badge kind="warn" title="Un arrêt ou une suppression demande de retaper le nom"><ShieldAlert size={11} /> {PROTECTED[c.protected]}</Badge>}</span>} onClose={onClose}
       footer={<>{c.canControl && (running
@@ -86,6 +91,7 @@ export default function ContainerModal({ name, tab: first, onClose }) {
         {tab === 'access' && <AccessPanel access={c.access} linked={c.links.length > 0} go={go} />}
         {tab === 'logs' && <LogViewer name={c.name} />}
       </div>
+      {removal.dialog}
       {conv && <ConvertContainer container={c.name} onClose={() => { setConv(false); onClose() }} />}
       {term && <TerminalModal container={c.name} onClose={() => setTerm(false)} />}
       {ask && <NameConfirm name={c.name} what={{ stop: 'Arrêter', restart: 'Redémarrer', remove: 'Supprimer' }[ask.action]} onCancel={() => setAsk(null)}

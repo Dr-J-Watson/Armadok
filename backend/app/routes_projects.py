@@ -463,7 +463,7 @@ def validate(pid: int, body: ValidateBody, ctx: NodeCtx = Depends(proj_cap("proj
 
 
 # ------------------------------------------------------------------ déploiement
-LAUNCHED_ACTIONS = ("down", "stop", "start", "restart", "ps")
+LAUNCHED_ACTIONS = ("down", "stop", "start", "restart", "ps", "rm")
 
 
 class ComposeBody(BaseModel):
