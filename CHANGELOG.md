@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.15.0...v1.16.0) (2026-11-23)
+
+
+### Nouveautés
+
+* **docker:** sélection multiple (Maj+clic), actions groupées, boutons par conteneur, tri sur toutes les colonnes ([10528ef](https://github.com/Dr-J-Watson/Armadok/commit/10528efb715bfe2fb81cdc6284c99d524503c54b))
+
 ## [1.15.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.14.0...v1.15.0) (2026-11-23)
 
 
