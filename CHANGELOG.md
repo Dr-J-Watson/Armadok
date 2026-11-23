@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.16.0...v1.17.0) (2026-11-23)
+
+
+### Nouveautés
+
+* **projets:** explorateur de fichiers (sélection multiple, import, téléchargement), make interactif, droit « sans limite » ([41a7c0d](https://github.com/Dr-J-Watson/Armadok/commit/41a7c0de139f45cfb5fc6da8215ab7748516f33d))
+
 ## [1.16.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.15.0...v1.16.0) (2026-11-23)
 
 
