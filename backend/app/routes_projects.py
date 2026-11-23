@@ -345,7 +345,7 @@ def detail(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     s["compose"] = {"candidates": e.get("composeFiles", []), "default": e.get("defaultFiles", []), "choice": choice, "last": last,
                     "effective": choice or e.get("defaultFiles", []), "running": any(c["state"] == "running" for c in cs)}
     s["access"] = docker_link.access_for(ctx, [l for sv in s["services"] for l in sv["links"]], getattr(links, "ctxs", {}))
-    s["perms"] = {"import": ctx.can("projects.import"), "deploy": ctx.can("projects.deploy"), "files": ctx.can("projects.files"), "edit": ctx.can("projects.edit"), "env": ctx.can("projects.env"),
+    s["perms"] = {"import": ctx.can("projects.import"), "deploy": ctx.can("projects.deploy"), "files": ctx.can("projects.files"), "edit": ctx.can("projects.edit"), "env": ctx.can("projects.env"), "nolimit": ctx.can("projects.nolimit"),
                   "git": ctx.can("projects.git"), "delete": ctx.can("projects.delete"), "logs": ctx.can("docker.logs"), "control": ctx.can("docker.control"), "exec": ctx.can("docker.exec")}
     return s
 
@@ -371,10 +371,10 @@ def tree(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
 
 
 @router.get("/{pid}/file")
-def read_file(pid: int, rel: str, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
+def read_file(pid: int, rel: str, force: bool = False, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     _need_file(ctx, rel, False)
     d, _ = _dir(ctx, pid)
-    return run(ctx, "p_read", {"dir": d, "rel": rel})
+    return run(ctx, "p_read", {"dir": d, "rel": rel, "force": force})
 
 
 class FileBody(BaseModel):
@@ -433,8 +433,52 @@ def move_path(pid: int, body: MoveBody, ctx: NodeCtx = Depends(proj_cap("project
 @router.delete("/{pid}/dir")
 def delete_dir(pid: int, rel: str, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
     d, row = _dir(ctx, pid)
-    r = run(ctx, "p_delete_dir", {"dir": d, "rel": rel, "canEnv": ctx.can("projects.env")})
+    r = run(ctx, "p_delete_dir", {"dir": d, "rel": rel, "canEnv": ctx.can("projects.env"), "unlimited": ctx.can("projects.nolimit")})
     ctx.audit("project.dir.delete", f"{row['name']} : {rel} ({r.get('files', 0)} fichier(s))")
+    return r
+
+
+class PackBody(BaseModel):
+    rels: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/{pid}/pack")
+def pack(pid: int, body: PackBody, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
+    """Prépare le téléchargement de fichiers / dossiers du projet : un fichier tel quel, sinon une archive zip. Les .env demandent le droit sur les secrets."""
+    d, row = _dir(ctx, pid)
+    r = run(ctx, "p_pack", {"dir": d, "rels": body.rels, "canEnv": ctx.can("projects.env"), "unlimited": ctx.can("projects.nolimit")})
+    ctx.audit("project.file.download", f"{row['name']} : {body.rels[0]}{f' (+{len(body.rels) - 1})' if len(body.rels) > 1 else ''}")
+    return r
+
+
+class PackReadBody(BaseModel):
+    token: str = Field(max_length=100)
+    offset: int = Field(default=0, ge=0)
+
+
+@router.post("/{pid}/pack/read")
+def pack_read(pid: int, body: PackReadBody, ctx: NodeCtx = Depends(proj_cap("projects.files"))):
+    return run(ctx, "p_pack_read", {"token": body.token, "offset": body.offset})
+
+
+class UploadBody(BaseModel):
+    rel: str = Field(max_length=300)
+    b64: str = Field(default="", max_length=3_000_000)   # un morceau de 2 Mo (≈ 2,8 Mo en base64) : l'API refuse les corps de plus de 4 Mo
+    offset: int = Field(default=0, ge=0)
+    last: bool = False
+    overwrite: bool = False
+    abort: bool = False
+
+
+@router.post("/{pid}/upload")
+def upload(pid: int, body: UploadBody, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    """Importe un fichier du poste de l'utilisateur dans le projet, morceau par morceau (voir project_ops.p_upload). Un « .env » demande le droit sur les secrets."""
+    if project_ops.is_env(body.rel):
+        ctx.need("projects.env")
+    d, row = _dir(ctx, pid)
+    r = run(ctx, "p_upload", {"dir": d, "rel": body.rel, "b64": body.b64, "offset": body.offset, "last": body.last, "overwrite": body.overwrite, "abort": body.abort, "unlimited": ctx.can("projects.nolimit")})
+    if body.last and not body.abort:
+        ctx.audit("project.file.upload", f"{row['name']} : {body.rel}{' (remplacé)' if body.overwrite else ''}")
     return r
 
 

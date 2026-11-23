@@ -102,6 +102,7 @@ _group("projects", "Projets Compose", [
     ("projects.deploy", "Déployer (up, down, redémarrer, pull, build)", "Lance docker compose sur le projet.", ("projects.view", "docker.control")),
     ("projects.files", "Voir les fichiers du projet", "docker-compose.yml, Dockerfiles et fichiers du dossier (le .env demande son propre droit).", ("projects.view",)),
     ("projects.edit", "Modifier les fichiers du projet", "Peut tout changer dans le déploiement : à réserver aux administrateurs.", ("projects.files",)),
+    ("projects.nolimit", "Transferts et suppressions sans limite de taille", "Sans ce droit : 500 fichiers par import, 100 Mo par fichier ou par téléchargement, suppression d'un dossier jusqu'à 300 fichiers ou 5 Mo. Pour un gestionnaire du nœud.", ("projects.files",)),
     ("projects.env", "Voir et modifier le .env du projet", "Le .env contient souvent des mots de passe et des clés.", ("projects.files",)),
     ("projects.git", "Gérer Git et le suivi des images", "Lier un dépôt, récupérer les changements, surveiller les nouvelles versions d'images.", ("projects.view",)),
     ("projects.delete", "Supprimer un projet et ses fichiers", "Efface le dossier du projet sur le disque : irréversible.", ("projects.deploy", "projects.files")),

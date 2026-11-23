@@ -71,21 +71,28 @@ async def _open_stream(exec_id: str):
     return reader, writer
 
 
-async def _serve_remote(ws: WebSocket, ctx, c: dict, cols: int, rows: int, exp: float) -> None:
-    """Terminal d'un worker : le hub ouvre la session, lit en boucle (attente courte côté worker) et écrit chaque saisie."""
+EXEC_OPS = ("d_exec_open", "d_exec_read", "d_exec_write", "d_exec_resize", "d_exec_close")
+MAKE_OPS = ("p_exec_term_open", "p_exec_term_read", "p_exec_term_write", "p_exec_term_resize", "p_exec_term_close")
+
+
+async def _serve_remote(ws: WebSocket, ctx, c: dict, cols: int, rows: int, exp: float, ops: tuple = EXEC_OPS, open_args: dict | None = None) -> None:
+    """Terminal tenu par la machine du nœud (un worker, ou le hub lui-même pour une cible make) : le hub ouvre la session, lit en boucle (attente courte) et écrit chaque saisie."""
     from .routes_docker import run
-    opened = await asyncio.to_thread(run, ctx, "d_exec_open", {"id": c["fullId"], "cols": cols, "rows": rows})
+    o_open, o_read, o_write, o_resize, o_close = ops
+    opened = await asyncio.to_thread(run, ctx, o_open, open_args or {"id": c["fullId"], "cols": cols, "rows": rows})
     sid = opened["sid"]
     await ws.send_text('{"t":"ready"}')
     last = [time.time()]
 
     async def down() -> None:
         while True:
-            res = await asyncio.to_thread(run, ctx, "d_exec_read", {"sid": sid, "wait": POLL})
+            res = await asyncio.to_thread(run, ctx, o_read, {"sid": sid, "wait": POLL})
             data = base64.b64decode(res.get("data") or "")
             if data:
                 await ws.send_bytes(data)
             if res.get("eof"):
+                if "code" in res:   # une commande (cible make) : on dit comment elle s'est terminée
+                    await ws.send_text(json.dumps({"t": "exit", "code": res["code"]}))
                 return
 
     async def up() -> None:
@@ -93,9 +100,9 @@ async def _serve_remote(ws: WebSocket, ctx, c: dict, cols: int, rows: int, exp: 
             msg = json.loads(await ws.receive_text())
             last[0] = time.time()
             if isinstance(msg.get("i"), str) and len(msg["i"]) <= MAX_INPUT:
-                await asyncio.to_thread(run, ctx, "d_exec_write", {"sid": sid, "data": base64.b64encode(msg["i"].encode()).decode()})
+                await asyncio.to_thread(run, ctx, o_write, {"sid": sid, "data": base64.b64encode(msg["i"].encode()).decode()})
             elif isinstance(msg.get("r"), list) and len(msg["r"]) == 2:
-                await asyncio.to_thread(run, ctx, "d_exec_resize", {"sid": sid, "cols": int(msg["r"][0]), "rows": int(msg["r"][1])})
+                await asyncio.to_thread(run, ctx, o_resize, {"sid": sid, "cols": int(msg["r"][0]), "rows": int(msg["r"][1])})
 
     async def watch() -> None:
         while True:
@@ -113,7 +120,7 @@ async def _serve_remote(ws: WebSocket, ctx, c: dict, cols: int, rows: int, exp: 
             t.exception()
     finally:
         try:
-            await asyncio.to_thread(run, ctx, "d_exec_close", {"sid": sid})
+            await asyncio.to_thread(run, ctx, o_close, {"sid": sid})
         except Exception:  # noqa: BLE001 - le worker referme de lui-même une session inactive
             pass
 
@@ -190,6 +197,66 @@ async def exec_ws(ws: WebSocket):
             await asyncio.to_thread(ctx.audit, "docker.exec.end", f"terminal fermé dans {c['name']}")
         except Exception:  # noqa: BLE001
             pass
+        try:
+            await ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _prepare_make(token: str, node_id: str, pid: int):
+    """(Synchrone, dans un thread) identité + droits + projet pour lancer une cible make dans un terminal. Mêmes droits que POST /projects/{id}/make."""
+    from .events import _identity
+    from .nodes import _ctx_by_id, _guard_suspended
+    from .routes_projects import _row
+    p, exp = _identity(token)
+    ctx = _ctx_by_id(p, node_id)
+    _guard_suspended(ctx)
+    if "docker" not in (ctx.node.get("modules") or []):
+        raise HTTPException(409, "Ce nœud ne gère pas Docker")
+    ctx.need("projects.deploy")
+    ctx.need("docker.exec")
+    if ctx.node["kind"] == "remote" and not worker_link.feature(ctx.id, "exec"):
+        raise HTTPException(501, "L'exécution de commandes est désactivée sur ce worker (WORKER_ALLOW_EXEC=true dans son compose) ou le worker est hors ligne")
+    row = dict(_row(ctx, pid))
+    return ctx, row, exp
+
+
+@router.websocket("/api/projects/make/term")
+async def make_term_ws(ws: WebSocket):
+    """Une cible du Makefile d'un projet, dans un terminal : la saisie du navigateur va à la commande (questions, mots de passe…), sa sortie revient.
+    Premier message : {"token", "node", "project", "target", "vars", "cols", "rows"}. Fin de commande : {"t":"exit","code":N}."""
+    await ws.accept()
+    try:
+        first = json.loads(await asyncio.wait_for(ws.receive_text(), 8))
+        ctx, row, exp = await asyncio.to_thread(_prepare_make, str(first.get("token") or ""), str(first.get("node") or ""), int(first.get("project") or 0))
+        target = str(first.get("target") or "")[:100]
+        vars_ = {str(k)[:100]: str(v)[:1000] for k, v in (first.get("vars") or {}).items()} if isinstance(first.get("vars"), dict) else {}
+    except HTTPException as e:
+        await ws.close(CLOSE_UNAVAILABLE if e.status_code in (501, 409) else CLOSE_DENIED if e.status_code in (403, 404) else CLOSE_AUTH, reason=str(e.detail)[:100])
+        return
+    except Exception:  # noqa: BLE001 - jeton absent, invalide, délai dépassé : on ne détaille pas
+        await ws.close(CLOSE_AUTH)
+        return
+    uid = ctx.p.id
+    with _lock:
+        if _sessions.get(uid, 0) >= MAX_PER_USER or sum(_sessions.values()) >= MAX_TOTAL:
+            await ws.close(CLOSE_BUSY, reason="Trop de terminaux ouverts")
+            return
+        _sessions[uid] = _sessions.get(uid, 0) + 1
+    try:
+        cols, rows = int(first.get("cols") or 80), int(first.get("rows") or 24)
+        await asyncio.to_thread(ctx.audit, "project.make", f"{row['name']} : make {target} (terminal interactif" + (f"; {', '.join(sorted(k for k, v in vars_.items() if v))}" if vars_ else "") + ")")
+        await _serve_remote(ws, ctx, {}, cols, rows, exp, MAKE_OPS, {"dir": row["path"], "target": target, "vars": vars_, "cols": cols, "rows": rows})
+    except HTTPException as e:
+        try:
+            await ws.close(CLOSE_UNAVAILABLE, reason=str(e.detail)[:100])
+        except Exception:  # noqa: BLE001
+            pass
+    except (WebSocketDisconnect, RuntimeError, OSError, ConnectionError, ValueError):
+        pass
+    finally:
+        with _lock:
+            _sessions[uid] = max(0, _sessions.get(uid, 1) - 1)
         try:
             await ws.close()
         except Exception:  # noqa: BLE001

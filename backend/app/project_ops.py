@@ -287,7 +287,8 @@ def p_info(_a: dict) -> dict:
 
 
 # ------------------------------------------------------------------ fichiers du projet
-MAX_FILE = 1_000_000
+MAX_FILE = 2 * 1024 * 1024   # un fichier s'ouvre et s'enregistre dans l'éditeur jusque-là
+MAX_FORCE = 6 * 1024 * 1024  # au-delà de MAX_FILE : lecture seule, sur demande (« charger quand même »)
 MAX_TREE = 800
 KEEP_VERSIONS = 30
 TREE_DEPTH = 5
@@ -351,12 +352,13 @@ def p_tree(a: dict) -> dict:
 def p_read(a: dict) -> dict:
     d = safe_dir(a.get("dir"))
     f = safe_file(d, a.get("rel"))
-    if f.stat().st_size > MAX_FILE:
-        raise StoreError("Fichier trop gros pour l'éditeur (1 Mo maximum)", 413)
+    size = f.stat().st_size
+    if size > (MAX_FORCE if a.get("force") else MAX_FILE):
+        raise StoreError(f"Fichier trop gros pour s'afficher ({MAX_FORCE // 1048576} Mo maximum) : téléchargez-le" if a.get("force") else "Fichier trop volumineux : demandez à le charger quand même", 413)
     raw = f.read_bytes()
     if b"\x00" in raw[:8192]:
         raise StoreError("Fichier binaire : il ne s'affiche pas dans l'éditeur", 415)
-    return {"content": raw.decode("utf-8", "replace"), "hash": _hash(raw), "mtime": f.stat().st_mtime, "env": is_env(a.get("rel"))}
+    return {"content": raw.decode("utf-8", "replace"), "hash": _hash(raw), "mtime": f.stat().st_mtime, "env": is_env(a.get("rel")), "large": size > MAX_FILE}
 
 
 def _hist_dir(d: Path, rel: str) -> Path:
@@ -376,7 +378,7 @@ def p_write(a: dict) -> dict:
     rel = safe_rel(a.get("rel"))
     content = a.get("content")
     if not isinstance(content, str) or len(content.encode()) > MAX_FILE:
-        raise StoreError("Contenu invalide ou trop gros (1 Mo maximum)", 413)
+        raise StoreError(f"Contenu invalide ou trop gros ({MAX_FILE // 1048576} Mo maximum)", 413)
     f = safe_file(d, rel, must_exist=False)
     if f.exists():
         if not f.is_file():
@@ -414,8 +416,13 @@ def p_delete_file(a: dict) -> dict:
     return {"ok": True}
 
 
+# Limites des gestes d'édition. Le droit « projects.nolimit » (gestionnaires du nœud) les lève : la route passe alors `unlimited`.
+# Quelle que soit la personne, la suppression d'un dossier ne garde dans l'historique qu'un budget raisonnable de fichiers texte.
 MAX_DIR_DELETE_FILES = 300
 MAX_DIR_DELETE_BYTES = 5_000_000
+HISTORY_FILES = MAX_DIR_DELETE_FILES
+HISTORY_BYTES = MAX_DIR_DELETE_BYTES
+NEED_NOLIMIT = " : il faut le droit « Transferts et suppressions sans limite de taille » (à demander au gestionnaire du nœud)"
 
 
 def safe_path(d: Path, rel: str, must_exist: bool = True) -> Path:
@@ -473,8 +480,8 @@ def p_move(a: dict) -> dict:
 
 
 def p_delete_dir(a: dict) -> dict:
-    """Supprime un dossier du projet et son contenu. Les fichiers texte sont gardés dans l'historique ; au-delà de quelques centaines de fichiers
-    ou de 5 Mo, on refuse (à faire à la main : ce n'est plus un geste d'édition)."""
+    """Supprime un dossier du projet et son contenu. Les fichiers texte sont gardés dans l'historique ; au-delà de 300 fichiers ou 5 Mo, on refuse
+    — sauf avec le droit « sans limite » (`unlimited`) : le dossier part alors en entier et seul un budget de fichiers texte va à l'historique (node_modules, caches…)."""
     d = safe_dir(a.get("dir"))
     f = safe_path(d, a.get("rel"))
     if not f.is_dir():
@@ -491,21 +498,179 @@ def p_delete_dir(a: dict) -> dict:
                 continue
             files.append((p, size))
             total += size
-        if len(files) > MAX_DIR_DELETE_FILES or total > MAX_DIR_DELETE_BYTES:
-            raise StoreError(f"Ce dossier est trop gros pour être supprimé d'ici (plus de {MAX_DIR_DELETE_FILES} fichiers ou 5 Mo) : supprimez-le sur la machine", 413)
+        if not a.get("unlimited") and (len(files) > MAX_DIR_DELETE_FILES or total > MAX_DIR_DELETE_BYTES):
+            raise StoreError(f"Ce dossier est trop gros pour être supprimé d'ici (plus de {MAX_DIR_DELETE_FILES} fichiers ou {MAX_DIR_DELETE_BYTES // 1_000_000} Mo)" + NEED_NOLIMIT, 413)
     if any(is_env(p.name) for p, _ in files) and not a.get("canEnv"):
         raise StoreError("Ce dossier contient un fichier .env : il faut le droit de gérer les secrets", 403)
+    kept, budget = 0, HISTORY_BYTES
     for p, size in files:
+        if kept >= HISTORY_FILES or size > budget:
+            continue
         if p.is_symlink() or size > MAX_FILE:
             continue
         raw = p.read_bytes()
         if b"\x00" not in raw[:8192]:
             _save_version(d, str(p.relative_to(d)), raw)
+            kept += 1
+            budget -= size
     try:
         shutil.rmtree(f)
     except PermissionError:
         raise StoreError(f"Droits insuffisants pour supprimer ce dossier : l'interface tourne avec l'utilisateur {os.getuid()}:{os.getgid()}", 403)
-    return {"ok": True, "files": len(files)}
+    return {"ok": True, "files": len(files), "history": kept}
+
+
+# ------------------------------------------------------------------ télécharger / importer des fichiers (par morceaux)
+# Le hub et les workers échangent des messages JSON de 8 Mo au plus, et l'API refuse les corps de plus de 4 Mo : un fichier voyage donc en morceaux
+# de 2 Mo encodés en base64, dans les deux sens. Rien n'est jamais lu ou écrit hors du projet (mêmes contrôles que le reste de l'explorateur).
+CHUNK = 2 * 1024 * 1024
+MAX_UPLOAD = 100 * 1024 * 1024    # un fichier importé
+MAX_PACK = 100 * 1024 * 1024      # ce qu'on accepte de télécharger d'un coup (avant compression)
+MAX_PACK_FILES = 5000
+PACK_TTL = 600
+_packs: dict[str, dict] = {}
+_packs_lock = threading.Lock()
+
+
+def _drop_pack(p: dict) -> None:
+    if p.get("temp"):
+        Path(p["path"]).unlink(missing_ok=True)
+
+
+def _sweep_packs() -> None:
+    now = time.time()
+    with _packs_lock:
+        for k in [k for k, p in _packs.items() if now - p["at"] > PACK_TTL]:
+            _drop_pack(_packs.pop(k))
+
+
+def p_pack(a: dict) -> dict:
+    """Prépare le téléchargement d'un fichier (tel quel) ou de plusieurs éléments (archive zip, arborescence conservée). Renvoie un jeton à lire par morceaux."""
+    import tempfile
+    import zipfile
+    d = safe_dir(a.get("dir"))
+    rels = a.get("rels")
+    if not isinstance(rels, list) or not 1 <= len(rels) <= 500 or not all(isinstance(r, str) for r in rels):
+        raise StoreError("Sélection invalide", 422)
+    can_env = bool(a.get("canEnv"))
+    members: list[tuple[Path, str]] = []
+    total = 0
+    for rel in rels:
+        f = safe_path(d, rel)
+        if f.is_file():
+            todo = [(f, str(f.relative_to(d)))]
+        else:
+            todo = []
+            for dp, dirs, names in os.walk(f, followlinks=False):
+                dirs[:] = [x for x in dirs if x != ".git" and not (Path(dp) / x).is_symlink()]
+                todo += [(Path(dp) / n, str((Path(dp) / n).relative_to(d))) for n in names if not (Path(dp) / n).is_symlink()]
+                if len(todo) > MAX_PACK_FILES and not a.get("unlimited"):
+                    raise StoreError(f"Trop de fichiers dans la sélection (plus de {MAX_PACK_FILES})" + NEED_NOLIMIT, 413)
+        for p, arc in todo:
+            if is_env(p.name) and not can_env:
+                if f.is_file():
+                    raise StoreError("Ce fichier contient des secrets : il faut le droit de gérer les secrets", 403)
+                continue
+            members.append((p, arc))
+            total += p.stat().st_size
+            if not a.get("unlimited") and (total > MAX_PACK or len(members) > MAX_PACK_FILES):
+                raise StoreError(f"Sélection trop grosse pour un téléchargement (plus de {MAX_PACK // 1048576} Mo ou {MAX_PACK_FILES} fichiers)" + NEED_NOLIMIT, 413)
+    if not members:
+        raise StoreError("Rien à télécharger dans cette sélection", 404)
+    _sweep_packs()
+    first = safe_path(d, rels[0])
+    if len(rels) == 1 and first.is_file():
+        path, name, temp = first, first.name, False
+    else:
+        name = (first.name if len(rels) == 1 else d.name + "-selection") + ".zip"
+        tmp_dir = settings.data_dir / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        fd, tmp = tempfile.mkstemp(suffix=".zip", dir=tmp_dir)
+        os.close(fd)
+        try:
+            with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
+                for p, arc in members:
+                    z.write(p, arc)
+        except OSError as e:
+            Path(tmp).unlink(missing_ok=True)
+            raise StoreError(f"Impossible de préparer l'archive : {e}", 500)
+        path, temp = Path(tmp), True
+    token = secrets.token_urlsafe(16)
+    with _packs_lock:
+        _packs[token] = {"path": str(path), "temp": temp, "at": time.time()}
+    return {"token": token, "name": name, "size": path.stat().st_size, "files": len(members)}
+
+
+def p_pack_read(a: dict) -> dict:
+    import base64
+    token = str(a.get("token") or "")
+    with _packs_lock:
+        p = _packs.get(token)
+    if not p:
+        raise StoreError("Ce téléchargement a expiré : relancez-le", 410)
+    try:
+        offset = max(0, int(a.get("offset") or 0))
+        with open(p["path"], "rb") as fh:
+            fh.seek(offset)
+            raw = fh.read(CHUNK)
+    except (OSError, ValueError):
+        raise StoreError("Lecture impossible", 500)
+    done = len(raw) < CHUNK or offset + len(raw) >= Path(p["path"]).stat().st_size
+    if done:
+        with _packs_lock:
+            _packs.pop(token, None)
+        _drop_pack(p)
+    else:
+        p["at"] = time.time()
+    return {"b64": base64.b64encode(raw).decode(), "done": done}
+
+
+def p_upload(a: dict) -> dict:
+    """Reçoit un fichier par morceaux : écrit dans « <nom>.armadok-part » puis renommé d'un coup à la fin (jamais de fichier à moitié écrit sous son vrai nom)."""
+    import base64
+    d = safe_dir(a.get("dir"))
+    rel = safe_rel(a.get("rel"))
+    f = safe_file(d, rel, must_exist=False)
+    part = f.with_name(f.name + ".armadok-part")
+    if a.get("abort"):
+        part.unlink(missing_ok=True)
+        return {"ok": True}
+    try:
+        raw = base64.b64decode(str(a.get("b64") or ""), validate=True)
+    except ValueError:
+        raise StoreError("Morceau de fichier illisible", 422)
+    if len(raw) > CHUNK:
+        raise StoreError("Morceau trop gros", 413)
+    offset = int(a.get("offset") or 0)
+    try:
+        if offset == 0:
+            if f.exists() and (f.is_dir() or not a.get("overwrite")):
+                raise StoreError("Un dossier porte ce nom" if f.is_dir() else "Ce fichier existe déjà", 409)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if is_env(rel) else 0o644)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(raw)
+        else:
+            if not part.is_file() or part.stat().st_size != offset:
+                raise StoreError("Envoi interrompu : recommencez", 409)
+            if offset + len(raw) > MAX_UPLOAD and not a.get("unlimited"):
+                part.unlink(missing_ok=True)
+                raise StoreError(f"Fichier trop gros (plus de {MAX_UPLOAD // 1048576} Mo)" + NEED_NOLIMIT, 413)
+            with open(part, "ab") as fh:
+                fh.write(raw)
+        if a.get("last"):
+            if f.is_file():
+                try:
+                    if f.stat().st_size <= MAX_FILE:
+                        old = f.read_bytes()
+                        if b"\x00" not in old[:8192]:
+                            _save_version(d, rel, old)
+                except OSError:
+                    pass
+            os.replace(part, f)
+    except PermissionError:
+        raise StoreError(f"Droits insuffisants pour écrire {rel} : l'interface tourne avec l'utilisateur {os.getuid()}:{os.getgid()}", 403)
+    return {"path": rel, "done": bool(a.get("last"))}
 
 
 def p_history(a: dict) -> dict:
@@ -1048,6 +1213,165 @@ def p_exec_make_run(a: dict) -> dict:
     return _spawn(safe_dir(a.get("dir")), argv, label, "make")
 
 
+# ------------------------------------------------------------------ cible make en terminal interactif
+# Une cible qui pose des questions (confirmation, saisie d'un mot de passe…) ne peut pas tourner en « tâche de fond » : personne ne peut lui répondre.
+# Ici elle tourne dans un vrai pseudo-terminal (pty) tenu par la machine ; le hub l'interroge par des opérations nommées (ouvrir, lire, écrire,
+# redimensionner, fermer), comme pour le terminal d'un conteneur. Le nom « p_exec_ » les range avec les opérations qu'un worker refuse sans WORKER_ALLOW_EXEC.
+# Rien de libre : la commande est TOUJOURS « make <cible> » du Makefile du projet (mêmes contrôles que p_exec_make_run).
+MAX_TERMS = 5
+TERM_READ = 64 * 1024
+TERM_IDLE = 15 * 60
+_terms: dict[str, dict] = {}
+_terms_lock = threading.Lock()
+
+
+def _term_kill(t: dict) -> None:
+    import signal
+    try:
+        os.killpg(t["proc"].pid, signal.SIGHUP)
+    except (OSError, ProcessLookupError):
+        pass
+
+    def later() -> None:
+        try:
+            t["proc"].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(t["proc"].pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+    threading.Thread(target=later, daemon=True).start()
+
+
+def _term_drop(sid: str) -> dict | None:
+    with _terms_lock:
+        t = _terms.pop(sid, None)
+    if t:
+        try:
+            os.close(t["fd"])
+        except OSError:
+            pass
+        if t["proc"].poll() is None:
+            _term_kill(t)
+    return t
+
+
+def _term_size(fd: int, cols: int, rows: int) -> None:
+    import fcntl
+    import struct
+    import termios
+    try:
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", max(1, min(rows, 500)), max(1, min(cols, 500)), 0, 0))
+    except OSError:
+        pass
+
+
+def _term_get(a: dict) -> dict:
+    t = _terms.get(str(a.get("sid") or ""))
+    if not t:
+        raise StoreError("Terminal fermé ou inconnu", 404)
+    t["at"] = time.time()
+    return t
+
+
+def p_exec_term_open(a: dict) -> dict:
+    import fcntl
+    import pty
+    import termios
+    d = safe_dir(a.get("dir"))
+    argv, label = _make_cmd(a)
+    now = time.time()
+    with _terms_lock:
+        for k in [k for k, t in _terms.items() if now - t["at"] > TERM_IDLE]:
+            t = _terms.pop(k)
+            try:
+                os.close(t["fd"])
+            except OSError:
+                pass
+            if t["proc"].poll() is None:
+                _term_kill(t)
+        if len(_terms) >= MAX_TERMS:
+            raise StoreError("Trop de terminaux ouverts sur ce nœud", 429)
+        if any(t["dir"] == str(d) and t["proc"].poll() is None for t in _terms.values()):
+            raise StoreError("Une commande est déjà en cours sur ce projet : attendez qu'elle se termine", 409)
+        with _jobs_lock:
+            if any(j["dir"] == str(d) and not j["done"] for j in _jobs.values()):
+                raise StoreError("Une commande est déjà en cours sur ce projet : attendez qu'elle se termine", 409)
+        env = _env()
+        for k in ("COMPOSE_PROGRESS", "COMPOSE_ANSI", "NO_COLOR"):   # un vrai terminal : couleurs et barres de progression
+            env.pop(k, None)
+        env["TERM"] = "xterm-256color"
+        master, slave = pty.openpty()
+        try:
+            _term_size(master, int(a.get("cols") or 80), int(a.get("rows") or 24))
+            proc = subprocess.Popen(argv, cwd=d, stdin=slave, stdout=slave, stderr=slave, env=env, close_fds=True, start_new_session=True,
+                                    preexec_fn=lambda: fcntl.ioctl(0, termios.TIOCSCTTY, 0))   # le terminal devient celui de la commande : Ctrl-C l'interrompt
+        except OSError as e:
+            os.close(master)
+            raise StoreError(f"Impossible de lancer la commande : {e}", 500)
+        finally:
+            os.close(slave)
+        sid = secrets.token_urlsafe(12)
+        _terms[sid] = {"proc": proc, "fd": master, "dir": str(d), "label": label, "at": now, "pending": bytearray(), "eof": False, "lock": threading.Lock()}
+    return {"sid": sid, "label": label}
+
+
+def p_exec_term_read(a: dict) -> dict:
+    import base64
+    import select
+    t = _term_get(a)
+    wait = max(0.0, min(float(a.get("wait") or 0), 2.0))
+    with t["lock"]:
+        if not t["pending"] and not t["eof"]:
+            try:
+                if select.select([t["fd"]], [], [], wait)[0]:
+                    chunk = os.read(t["fd"], TERM_READ)
+                    if chunk:
+                        t["pending"] += chunk
+                    else:
+                        t["eof"] = True
+            except (OSError, ValueError):   # EIO : la commande a fermé son terminal (elle est finie)
+                t["eof"] = True
+        data, t["pending"] = bytes(t["pending"][:TERM_READ]), t["pending"][TERM_READ:]
+    out = {"data": base64.b64encode(data).decode(), "eof": t["eof"] and not t["pending"]}
+    if out["eof"]:
+        try:
+            out["code"] = t["proc"].wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            out["code"] = None
+        _term_drop(str(a.get("sid")))
+    return out
+
+
+def p_exec_term_write(a: dict) -> dict:
+    import base64
+    import binascii
+    t = _term_get(a)
+    try:
+        data = base64.b64decode(str(a.get("data") or ""), validate=True)
+    except (binascii.Error, ValueError):
+        raise StoreError("Saisie invalide", 422)
+    if len(data) > 64 * 1024:
+        raise StoreError("Saisie trop longue", 413)
+    try:
+        while data:
+            data = data[os.write(t["fd"], data):]
+    except OSError:
+        raise StoreError("Terminal fermé", 410)
+    return {"ok": True}
+
+
+def p_exec_term_resize(a: dict) -> dict:
+    t = _term_get(a)
+    _term_size(t["fd"], int(a.get("cols") or 80), int(a.get("rows") or 24))
+    return {"ok": True}
+
+
+def p_exec_term_close(a: dict) -> dict:
+    _term_drop(str(a.get("sid") or ""))
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ Git
 GIT_URL = re.compile(r"^(https?://[^\s/@]+(:\d+)?/[^\s]+|ssh://[^\s@]+@[^\s/]+(:\d+)?/[^\s]+|[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+)$")
 GIT_REF = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._/-]{0,100}$")
@@ -1260,7 +1584,8 @@ def p_create(a: dict) -> dict:
 
 OPS = {"p_make_targets": p_make_targets, "p_exec_make_run": p_exec_make_run, "p_chain": p_chain, "p_exec_steps": p_exec_steps, "p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
        "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy,
-       "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
+       "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_pack": p_pack, "p_pack_read": p_pack_read, "p_upload": p_upload,
+       "p_exec_term_open": p_exec_term_open, "p_exec_term_read": p_exec_term_read, "p_exec_term_write": p_exec_term_write, "p_exec_term_resize": p_exec_term_resize, "p_exec_term_close": p_exec_term_close, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
 
 
 def handle(op: str, a: dict):

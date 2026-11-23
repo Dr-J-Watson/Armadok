@@ -67,10 +67,14 @@ def test_delete_a_folder_keeps_text_files_in_the_history(pj):
 def test_folder_deletion_guards(pj):
     h, pid, root = pj["h"], pid_of(pj, "site"), pj["base"] / "site"
     (root / "gros").mkdir()
-    for i in range(project_ops.MAX_DIR_DELETE_FILES + 1):
+    for i in range(project_ops.MAX_DIR_DELETE_FILES + 50):
         (root / "gros" / f"f{i}").write_text("x")
-    assert client.delete(url(pid, "dir") + "?rel=gros", headers=h).status_code == 413                                # trop de fichiers : à faire à la main
-    assert (root / "gros" / "f0").exists()
+    with pytest.raises(StoreError) as e:                                                                            # sans le droit « sans limite » : refusé, et le message dit lequel
+        project_ops.p_delete_dir({"dir": str(root), "rel": "gros", "canEnv": True})
+    assert e.value.status == 413 and "sans limite" in str(e.value) and (root / "gros" / "f0").exists()
+    r = client.delete(url(pid, "dir") + "?rel=gros", headers=h)                                                      # le propriétaire a le droit : aucune limite
+    assert r.status_code == 200 and not (root / "gros").exists()
+    assert r.json()["files"] == project_ops.MAX_DIR_DELETE_FILES + 50 and r.json()["history"] == project_ops.HISTORY_FILES   # l'historique, lui, a un budget
     for bad in ("..", "../x", "/etc", ".git"):
         assert client.delete(url(pid, "dir") + f"?rel={bad}", headers=h).status_code in (404, 422), bad
     (root / "secrets").mkdir()

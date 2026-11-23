@@ -4,22 +4,24 @@ import { Btn, useUi } from './ui.jsx'
 
 // Sélection multiple d'un tableau : `rows` = lignes affichées, `keyOf` = clé d'une ligne, `can(row)` = la ligne peut-elle être cochée.
 // Les clés cochées qui ne sont plus affichées (autre filtre, ligne disparue) sont simplement ignorées.
-export function useSelect(rows, keyOf, can = () => true, why = () => 'Utilisé donc pas sélectionnable') {
+// `kids(row)` (facultatif) : lignes qui suivent celle-ci — cocher ou décocher un dossier fait de même pour tout ce qu'il contient, même replié.
+export function useSelect(rows, keyOf, can = () => true, why = () => 'Utilisé donc pas sélectionnable', kids = () => []) {
   const [keys, setKeys] = useState(() => new Set()); const last = useRef(null)   // last : dernière case cliquée, point de départ d'une plage Maj+clic
   const ok = rows.filter(can)
   const picked = ok.filter((r) => keys.has(keyOf(r)))
   return {
-    picked, has: (r) => keys.has(keyOf(r)), can, why,
+    picked, has: (r) => keys.has(keyOf(r)), can, why, kids,
     // Clic : coche / décoche. Maj+clic : toute la plage entre la dernière case cliquée et celle-ci prend l'état de celle-ci (dans l'ordre affiché).
     toggle: (r, range = false) => {
       const n = new Set(keys); const k = keyOf(r); const on = !keys.has(k)
       const a = ok.findIndex((x) => keyOf(x) === last.current); const b = ok.findIndex((x) => keyOf(x) === k)
-      if (range && a >= 0 && b >= 0) ok.slice(Math.min(a, b), Math.max(a, b) + 1).forEach((x) => (on ? n.add(keyOf(x)) : n.delete(keyOf(x))))
-      else if (on) n.add(k); else n.delete(k)
+      const put = (x) => { for (const y of [x, ...kids(x)]) { if (on) n.add(keyOf(y)); else n.delete(keyOf(y)) } }
+      if (range && a >= 0 && b >= 0) ok.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(put)
+      else put(r)
       last.current = k; setKeys(n)
     },
     all: picked.length > 0 && picked.length === ok.length, some: picked.length > 0, total: ok.length,
-    setAll: (on) => setKeys(on ? new Set(ok.map(keyOf)) : new Set()), clear: () => setKeys(new Set()),
+    setAll: (on) => setKeys(on ? new Set(ok.flatMap((x) => [x, ...kids(x)]).map(keyOf)) : new Set()), clear: () => setKeys(new Set()),
   }
 }
 
@@ -35,8 +37,11 @@ export function SelectBox({ s, row }) {
   // et une case désactivée ne reçoit aucun événement souris (pointer-events: none la laisse passer à l'enveloppe).
   // onClick (et non onChange) : seul le clic sait si Maj était enfoncée ; mousedown évite le texte surligné par Maj+clic.
   const ok = s.can(row)
+  const mixed = s.has(row) && s.kids(row).some((k) => !s.has(k))   // dossier coché dont une partie du contenu est décochée
+  const ref = useRef(null)
+  useEffect(() => { if (ref.current) ref.current.indeterminate = mixed }, [mixed])
   return <span className={'selbox ' + (ok ? '' : 'off')} data-tip={ok ? 'Maj+clic : sélectionner une plage' : s.why(row)}>
-    <input type="checkbox" aria-label={ok ? 'Sélectionner' : s.why(row)} checked={s.has(row)} disabled={!ok}
+    <input ref={ref} type="checkbox" aria-label={ok ? 'Sélectionner' : s.why(row)} checked={s.has(row)} disabled={!ok}
       onChange={() => {}} onMouseDown={(e) => e.shiftKey && e.preventDefault()} onClick={(e) => { e.stopPropagation(); s.toggle(row, e.shiftKey) }} /></span>
 }
 

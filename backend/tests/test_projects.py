@@ -237,7 +237,7 @@ def test_file_paths_are_confined_to_the_project(pj):
     (base / "secret.txt").write_text("hors du projet")
     (base / "site" / "lien").symlink_to(base / "secret.txt")
     (base / "site" / "bin.dat").write_bytes(b"\x00\x01\x02" * 100)
-    (base / "site" / "gros.txt").write_text("x" * 1_100_000)
+    (base / "site" / "gros.txt").write_text("x" * 2_200_000)
     for rel in ("../secret.txt", "/etc/passwd", ".git/config", "a/../../secret.txt", "a\\b", "", "a//b", "./x"):
         for call in (lambda r: client.get(f"/api/projects/{pid}/file", params={"rel": r}, headers=h),
                      lambda r: client.put(f"/api/projects/{pid}/file", headers=h, json={"rel": r, "content": "x", "create": True}),
@@ -248,7 +248,7 @@ def test_file_paths_are_confined_to_the_project(pj):
     assert (base / "secret.txt").read_text() == "hors du projet"
     assert client.get(f"/api/projects/{pid}/file", params={"rel": "bin.dat"}, headers=h).status_code == 415
     assert client.get(f"/api/projects/{pid}/file", params={"rel": "gros.txt"}, headers=h).status_code == 413
-    assert client.put(f"/api/projects/{pid}/file", headers=h, json={"rel": "x.txt", "content": "y" * 1_100_000, "create": True}).status_code == 413
+    assert client.put(f"/api/projects/{pid}/file", headers=h, json={"rel": "x.txt", "content": "y" * 2_200_000, "create": True}).status_code == 413
     for n in ("lien", "bin.dat", "gros.txt"):
         (base / "site" / n).unlink()
 
