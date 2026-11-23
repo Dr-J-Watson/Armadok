@@ -5,7 +5,7 @@ import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { useGo } from '../lib/nav.js'
 import { ImageModal } from './DockerDetail.jsx'
-import { Badge, Btn, Empty, Field, Loading, Modal, Switch, useUi } from './ui.jsx'
+import { Badge, Btn, Empty, Loading, Modal, Switch, useUi } from './ui.jsx'
 import { JobOutput } from './ComposeBar.jsx'
 import { ago } from '../lib/features.js'
 

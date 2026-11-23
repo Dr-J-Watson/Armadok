@@ -114,11 +114,9 @@ ALL = frozenset(CATALOG)
 OWNER_ONLY = frozenset({"node.transfer", "node.delete"})   # jamais délégués
 NOT_BY_DEFAULT = frozenset({"docker.exec", "projects.delete"})   # pas même pour un administrateur : seul le propriétaire les a d'office, un autre doit se les voir accorder
 
-_TRAEFIK_VIEW = {"sites.view", "certs.view"}
 _SITES = {k for k in ALL if k.startswith("sites.")}
 _DNS_ALL = {k for k in ALL if k.startswith("dns.")}
 _DNS_READ = {"dns.view", "dns.export", "dns.history.view", "dns.dnssec.view"}
-_NODE_ADMIN = {k for k in ALL if k.startswith("node.") and k not in OWNER_ONLY}
 
 # Modèles de rôle : exactement les droits qu'avaient les rôles avant les droits fins (rien ne change à la mise à jour).
 PRESETS: dict[str, frozenset] = {

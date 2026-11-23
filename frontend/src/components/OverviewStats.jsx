@@ -4,7 +4,7 @@ import { Globe, MapPin } from 'lucide-react'
 import { api, qs } from '../api.js'
 import { Badge, Empty, Info, Loading, Seg } from './ui.jsx'
 import { Bars, BarList, StackBar } from './Charts.jsx'
-import { ago, fmtBytes, fmtMs, fmtNum } from '../lib/features.js'
+import { fmtMs, fmtNum } from '../lib/features.js'
 import { countryColor } from './WorldMap.jsx'
 import { useGo } from '../lib/nav.js'
 

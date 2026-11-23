@@ -269,9 +269,5 @@ def build_plan(items: list[dict], dirs: list[str], errors: dict[str, str], scope
             "stats": {"blocks": len(items), "sitesInFolders": in_dirs, "moved": sum(len(s["ids"]) for s in steps)}}
 
 
-def joinpath(d: str, sub: str | None) -> str:
-    return f"{d}/{sub}" if sub else d
-
-
 def _safe(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", name).strip(".-") or "element"

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Pencil, Plus, Trash2, UserCog } from 'lucide-react'
+import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Field, Info, Loading, Modal, Switch, useUi } from '../components/ui.jsx'
 import { fmtDate } from '../lib/util.js'

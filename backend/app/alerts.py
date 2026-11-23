@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
+from .httpsafe import NoRedirect
 from .crypto import reveal
 from . import accesslog, db, observability as obs
 from .audit import audit
@@ -217,17 +218,12 @@ def history(node_id: str, limit: int = 100) -> list[dict]:
 
 
 # ------------------------------------------------------------------ prévenir
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
-
-
 def send_webhook(url: str, payload: dict) -> str | None:
     """POST JSON ; renvoie un message d'erreur ou None. Ne suit jamais de redirection ; ne cite jamais l'adresse (elle peut contenir un jeton)."""
     try:
         req = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST",
                                      headers={"Content-Type": "application/json", "User-Agent": "armadok"})
-        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=6) as r:
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=6) as r:
             r.read(1000)
         return None
     except urllib.error.HTTPError as e:

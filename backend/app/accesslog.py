@@ -12,8 +12,7 @@ import os
 import re
 import threading
 import time
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 
 from . import attacks as atk, db, trusted
 from .config import env, settings

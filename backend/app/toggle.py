@@ -5,11 +5,10 @@ Un bloc désactivé est mis en commentaire dans son fichier (« #~ »), un fichi
  - un middleware / une option TLS désactivé disparaît des listes qui y font référence, le contenu d'origine de la liste étant gardé
    dans une note « #% ref » pour être rétabli à la réactivation. Les notes ne concernent que ce que l'interface a retiré.
 """
-import posixpath
 
 from .traefik_lint import _refs
 from .traefik_store import KINDS, OFF, StoreError, _lock, parse_items, Store
-from .yamltext import (Unsupported, add_pause_tag, block_end, comment_range, drop_pause_tag, key_of, read_refs, set_value, uncomment,
+from .yamltext import (Unsupported, add_pause_tag, block_end, comment_range, drop_pause_tag, read_refs, set_value, uncomment,
                        uncomment_range, write_refs, sync_sections, drop_empty_sections)
 
 # où un routeur / middleware mentionne un autre bloc : chemin -> (type visé)

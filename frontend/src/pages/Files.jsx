@@ -5,6 +5,7 @@ import { api, qs } from '../api.js'
 import { byDay, timeLabel } from '../lib/activity.js'
 import { baseName, buildTree, countFiles, dirOf, joinPath, MAX_DEPTH, SUGGESTED_DIRS, sorted, withExt } from '../lib/tree.js'
 import { fmtSize, relTime } from '../lib/util.js'
+import { downloadBlob } from '../lib/csv.js'
 import { useNode } from '../node.jsx'
 import { onLive } from '../lib/live.js'
 import { Badge, Btn, Field, Modal, useUi } from '../components/ui.jsx'
@@ -138,10 +139,7 @@ export default function Files() {
     if (done.length) { refresh(); toast(`${done.length} fichier${done.length > 1 ? 's' : ''} importé${done.length > 1 ? 's' : ''}`); if (!dirty) load(done[0]) }
   }
 
-  const download = () => {
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/yaml;charset=utf-8' }))
-    const a = document.createElement('a'); a.href = url; a.download = baseName(path).replace(/\.off$/, ''); a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
-  }
+  const download = () => downloadBlob(baseName(path).replace(/\.off$/, ''), text, 'text/yaml;charset=utf-8')
 
   const drop = (e, dir) => {
     e.preventDefault(); e.stopPropagation(); setDropOn(null)

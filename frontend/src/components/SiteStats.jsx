@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft, ExternalLink, Pencil } from 'lucide-react'
+import { ArrowLeft, Pencil } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { api, qs } from '../api.js'
 import { Badge, Info, Loading } from './ui.jsx'

@@ -8,11 +8,7 @@ export function extractHosts(rule = '') {
 }
 export const toYaml = (obj) => (obj && Object.keys(obj).length ? YAML.stringify(obj, { indent: 2, lineWidth: 0 }) : '')
 export const fromYaml = (txt) => YAML.parse(txt || '') ?? {}
-export const itemKey = (i) => `${i.proto}/${i.kind}/${i.name}`
-export const matchZone = (host, zones) => zones.filter((z) => host === z || host.endsWith('.' + z)).sort((a, b) => b.length - a.length)[0]
-export const subOf = (host, zone) => (host === zone ? '' : host.slice(0, -(zone.length + 1)))
 export const fmtDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—')
-export const errMsg = (e) => e?.message || String(e)
 
 // Retire récursivement valeurs vides pour produire un YAML propre
 export function clean(v) {

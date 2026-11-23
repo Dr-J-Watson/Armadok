@@ -9,7 +9,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from .config import settings
+from .httpsafe import NoRedirect
 
 
 class PromError(Exception):
@@ -18,15 +18,10 @@ class PromError(Exception):
         self.status = status
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
-
-
 def _get(base: str, path: str, params: dict | None = None, timeout: float = 10):
     url = base.rstrip("/") + path + ("?" + urllib.parse.urlencode(params) if params else "")
     try:
-        with urllib.request.build_opener(_NoRedirect()).open(urllib.request.Request(url, headers={"User-Agent": "armadok", "Accept": "application/json"}), timeout=timeout) as r:
+        with urllib.request.build_opener(NoRedirect()).open(urllib.request.Request(url, headers={"User-Agent": "armadok", "Accept": "application/json"}), timeout=timeout) as r:
             raw = r.read(8_000_000)
     except urllib.error.HTTPError as e:
         detail = ""

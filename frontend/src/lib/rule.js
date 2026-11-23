@@ -40,7 +40,6 @@ export function parseRule(rule) {
   return n
 }
 
-const fnStr = (c) => `${c.neg ? '!' : ''}${c.fn}(${c.args.map((a) => '`' + a + '`').join(', ')})`
 
 // ------------------------------------------------------------------ règle <-> lignes
 // L'éditeur montre une LISTE de lignes, indentées comme du code : une ligne indentée FAIT PARTIE de la ligne du dessus.

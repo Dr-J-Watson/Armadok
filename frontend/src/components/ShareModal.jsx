@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Plus, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { api } from '../api.js'
 import { Btn, Field, Modal, useUi } from './ui.jsx'
 

@@ -17,6 +17,7 @@ import urllib.parse
 import urllib.request
 import zlib
 
+from .httpsafe import NoRedirect
 from .config import settings
 from .ovh_client import OvhError
 
@@ -107,11 +108,6 @@ def clean_server_url(raw: str, provider: str = "adguard") -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, path, "", ""))
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):   # on ne suit jamais une redirection : les identifiants ne partent pas ailleurs
-        return None
-
-
 def _rid(domain: str, answer: str) -> int:
     return zlib.crc32(f"{domain}|{answer}".encode())
 
@@ -158,7 +154,7 @@ class _LocalServer:
         if body is not None:
             data = json.dumps(body).encode()
             h["Content-Type"] = "application/json"
-        handlers: list = [_NoRedirect()]
+        handlers: list = [NoRedirect()]
         if base.startswith("https") and self._opts.get("insecureTls"):
             ctx = ssl.create_default_context()
             ctx.check_hostname = False

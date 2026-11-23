@@ -168,4 +168,3 @@ def d_exec_close(a: dict) -> dict:
 
 
 OPS = {"d_exec_open": d_exec_open, "d_exec_read": d_exec_read, "d_exec_write": d_exec_write, "d_exec_resize": d_exec_resize, "d_exec_close": d_exec_close}
-EXEC_OPS = tuple(OPS)

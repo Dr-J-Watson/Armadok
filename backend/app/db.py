@@ -228,6 +228,7 @@ CREATE TABLE IF NOT EXISTS automod_log (
   action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS automod_log_at ON automod_log(node_id, at);
+CREATE INDEX IF NOT EXISTS automod_log_check ON automod_log(node_id, rule_id, ip, action, at);
 CREATE TABLE IF NOT EXISTS revoked_tokens (
   jti TEXT PRIMARY KEY, exp REAL NOT NULL
 );

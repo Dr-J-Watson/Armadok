@@ -5,7 +5,6 @@
  - Redemander le certificat d'un site qui n'en a pas : un changement de configuration sans effet (un middleware inutilisé) fait ré-évaluer à
    Traefik les noms qui n'ont pas de certificat. Aucun redémarrage."""
 
-import json
 import threading
 import time
 from pathlib import Path

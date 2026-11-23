@@ -4,7 +4,7 @@ import { AlertTriangle, CheckCircle2, Hourglass, Lock, RefreshCw, RotateCw, Shie
 import { api } from '../api.js'
 import { fmtDate, relTime } from '../lib/util.js'
 import { useSearchParams } from 'react-router-dom'
-import { Badge, Btn, CopyBtn, Copyable, Empty, Info, Loading, SearchBox, useSort, useUi } from '../components/ui.jsx'
+import { Badge, Btn, CopyBtn, Empty, Info, Loading, SearchBox, useSort, useUi } from '../components/ui.jsx'
 import { useGo } from '../lib/nav.js'
 
 export const certKind = (days) => (days < 0 ? 'err' : days <= 14 ? 'warn' : 'ok')

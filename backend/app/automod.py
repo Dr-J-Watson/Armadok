@@ -11,7 +11,7 @@ import re
 import threading
 import time
 
-from . import accesslog, bans, db, geo, trusted
+from . import accesslog, bans, db, geo
 from .events import publish
 
 MAX_RULES = 30

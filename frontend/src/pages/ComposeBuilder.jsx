@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { AlertTriangle, Download, Info as InfoIcon, RefreshCw } from 'lucide-react'
 import { Btn, CopyBtn, Field, Info, Tabs, useUi } from '../components/ui.jsx'
 import { DEFAULTS, DNS_PROVIDERS, allFiles, problems, randomHex, steps } from '../lib/composeBuilder.js'
+import { downloadBlob } from '../lib/csv.js'
 
 const KEY = 'compose-builder'
 const load = () => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || '{}') } } catch { return { ...DEFAULTS } } }
@@ -32,7 +33,7 @@ export default function ComposeBuilder({ embedded = false }) {
   const probs = useMemo(() => problems(c), [c])
   const names = Object.keys(text)
   const cur = names.includes(tab) ? tab : 'steps'
-  const download = (name) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text[name]], { type: 'text/plain' })); a.download = name === 'steps' ? 'installation.sh' : name.split('/').pop(); a.click() }
+  const download = (name) => { downloadBlob(name === 'steps' ? 'installation.sh' : name.split('/').pop(), text[name]) }
   const copyAll = () => { navigator.clipboard?.writeText(names.filter((n) => n !== 'steps').map((n) => `# ===== ${n} =====\n${text[n]}`).join('\n\n')); toast('Tous les fichiers sont copiés') }
   const short = (n) => (n === 'steps' ? 'Étapes' : n.replace('traefik/traefik-dynamic/', '…/').replace('traefik/', 'traefik/'))
   const hasErr = probs.some((p) => p[0] === 'err')

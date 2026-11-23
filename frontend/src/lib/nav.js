@@ -9,7 +9,6 @@ export function useGo() {
 }
 
 // État à passer à un <NavLink state=…> / <Link state=…>
-export const backState = (loc) => ({ back: loc.pathname + loc.search })
 
 const NAMES = { '/': 'à l\'accueil', '/sites': 'aux sites', '/dns': 'aux domaines', '/monitoring': 'à la surveillance', '/docker': 'à Docker', '/projects': 'aux projets', '/traefik': 'à Traefik avancé', '/node': 'à ce nœud', '/nodes': 'aux nœuds', '/middlewares': 'aux middlewares', '/rights': 'aux droits', '/accounts': 'aux comptes DNS' }
 export const backLabel = (path) => NAMES[(path || '').split('?')[0]] || 'à la page précédente'

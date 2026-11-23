@@ -6,11 +6,10 @@ import { api } from '../api.js'
 import { Badge, Btn, Loading, Modal, useUi } from './ui.jsx'
 import CodeEditor, { Diff } from './CodeEditor.jsx'
 import LabelsModal from './LabelsModal.jsx'
-import { baseName, isCompose, kindOf, keyRank, langOf } from '../lib/files.js'
-import { fmtSize } from '../lib/docker.js'
+import { isCompose, kindOf, keyRank, langOf } from '../lib/files.js'
+import { enc, fmtSize } from '../lib/docker.js'
 import { fmtDate } from '../lib/util.js'
 
-const enc = encodeURIComponent
 const parentOf = (p) => p.split('/').slice(0, -1).join('/')
 const validRel = (r) => !!r && !r.startsWith('/') && !r.endsWith('/') && !r.includes('\\') && !r.split('/').some((x) => ['', '.', '..', '.git'].includes(x)) && r.length <= 300 && r.split('/').length <= 8
 

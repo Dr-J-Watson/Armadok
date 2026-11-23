@@ -5,7 +5,6 @@ masqué et bouton « générer » pour les secrets) ; le compose y renvoie déj�
 du projet (pour un container_name, un label…). Les modèles enregistrés sont chiffrés en base (un .env peut contenir des secrets) ; quelques modèles
 intégrés sont fournis. Fonctions pures, sans accès à la base."""
 import re
-import secrets
 
 MAX_FILES = 60
 MAX_FILE = 256 * 1024
@@ -120,7 +119,3 @@ def render(files: dict[str, str], name: str, values: dict[str, str]) -> dict[str
             txt = fill_env(txt, {k: v for k, v in values.items() if isinstance(v, str)})
         out[rel] = txt
     return out
-
-
-def generate_secret() -> str:
-    return secrets.token_urlsafe(18)

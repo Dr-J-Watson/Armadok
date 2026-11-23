@@ -107,9 +107,20 @@ export function SearchBox({ value, onChange, placeholder = 'Rechercher…' }) {
   return <div className="search"><Search size={15} /><input className="input" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} /></div>
 }
 
-export function CopyBtn({ text }) {
+// Copie dans le presse-papiers ; sans lui (page non sécurisée, refus du navigateur), on ne casse rien.
+export function copyText(text) {
+  try { navigator.clipboard?.writeText(String(text))?.catch?.(() => {}) } catch { /* presse-papiers indisponible */ }
+}
+
+// [copié, copier] : « copié » reste vrai 1,2 s après la copie (pour changer l'icône du bouton).
+function useCopied() {
   const [ok, setOk] = useState(false)
-  return <Btn kind="ghost" small icon onClick={(e) => { e.stopPropagation(); navigator.clipboard?.writeText(text); setOk(true); setTimeout(() => setOk(false), 1200) }}>{ok ? <Check size={14} /> : <Copy size={14} />}</Btn>
+  return [ok, (text) => { copyText(text); setOk(true); setTimeout(() => setOk(false), 1200) }]
+}
+
+export function CopyBtn({ text }) {
+  const [ok, copy] = useCopied()
+  return <Btn kind="ghost" small icon onClick={(e) => { e.stopPropagation(); copy(text) }}>{ok ? <Check size={14} /> : <Copy size={14} />}</Btn>
 }
 
 export const Empty = ({ children }) => <div className="empty">{children}</div>
@@ -118,8 +129,8 @@ export const Badge = ({ kind = '', children, ...p }) => <span className={'badge 
 
 // Valeur + petit bouton « copier » (adresse IP, nom d'hôte, empreinte, commande…)
 export function Copyable({ text, children, className = '', title = 'Copier' }) {
-  const [ok, setOk] = useState(false)
-  const go = (e) => { e.stopPropagation(); e.preventDefault(); try { navigator.clipboard?.writeText(String(text)) } catch { /* presse-papiers indisponible */ } setOk(true); setTimeout(() => setOk(false), 1200) }
+  const [ok, copy] = useCopied()
+  const go = (e) => { e.stopPropagation(); e.preventDefault(); copy(text) }
   return <span className={'copyable ' + className}>{children ?? text}<button type="button" className="copy-mini" title={ok ? 'Copié' : title} aria-label={title} onClick={go}>{ok ? <Check size={12} /> : <Copy size={12} />}</button></span>
 }
 

@@ -10,6 +10,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .httpsafe import NoRedirect
+
 ACCEPT = ", ".join(("application/vnd.oci.image.index.v1+json", "application/vnd.docker.distribution.manifest.list.v2+json",
                     "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"))
 HUB = {"docker.io", "index.docker.io", "registry-1.docker.io", "registry.hub.docker.com"}
@@ -46,16 +48,11 @@ def public_host(host: str) -> bool:
     return bool(infos) and all(ipaddress.ip_address(i[4][0]).is_global for i in infos)
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):
-        return None
-
-
 def _http(method: str, url: str, headers: dict | None = None) -> tuple[int, dict, bytes]:
     """Un appel HTTPS court. Ne suit pas les redirections. Renvoie (statut, en-têtes en minuscules, corps)."""
     req = urllib.request.Request(url, method=method, headers={"User-Agent": "armadok", **(headers or {})})
     try:
-        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=TIMEOUT) as r:
+        with urllib.request.build_opener(NoRedirect()).open(req, timeout=TIMEOUT) as r:
             return r.status, {k.lower(): v for k, v in r.headers.items()}, r.read(200_000)
     except urllib.error.HTTPError as e:
         return e.code, {k.lower(): v for k, v in e.headers.items()}, e.read(20_000)

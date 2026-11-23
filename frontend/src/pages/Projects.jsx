@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { Download, EyeOff, FolderInput, FolderPlus, Plus, FolderGit2, GitFork, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
+import { Download, EyeOff, FolderInput, FolderPlus, Plus, FolderGit2, FolderOpen, Globe, LayoutGrid, List, Undo2, TriangleAlert } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Loading, Modal, SearchBox, Seg, Tabs, useUi } from '../components/ui.jsx'
 import { JobOutput } from '../components/ComposeBar.jsx'

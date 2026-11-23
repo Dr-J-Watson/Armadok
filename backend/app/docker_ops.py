@@ -4,6 +4,7 @@ Le hub les exécute directement pour son propre nœud ; un worker les reçoit pa
 jamais de commande libre). Les résultats sont du JSON déjà « nettoyé » : les valeurs de variables d'environnement n'en sortent jamais (noms seulement)."""
 import re
 import socket
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -149,6 +150,9 @@ def d_logs(a: dict) -> dict:
 
 
 _stat_cache: dict = {"at": 0.0, "key": None, "val": None}
+_stat_lock = threading.Lock()   # deux appels simultanés (deux onglets, deux pages) partagent une seule mesure au lieu d'en lancer chacun une
+STAT_STALE = 30    # au-delà, la dernière mesure est trop vieille pour être servie telle quelle
+STAT_WORKERS = 40               # Docker met ~1 s à mesurer le CPU d'un conteneur : on les mesure tous en même temps (ça n'est que de l'attente)
 
 
 def _stat(cid: str) -> tuple[str, dict | None]:
@@ -171,13 +175,28 @@ def _stat(cid: str) -> tuple[str, dict | None]:
 def d_stats(a: dict) -> dict:
     ids = [str(i) for i in (a.get("ids") or [c["id"] for c in _list(False)])][:80]
     key = tuple(sorted(ids))
-    if _stat_cache["key"] == key and time.time() - _stat_cache["at"] < 4:
+    age = time.time() - _stat_cache["at"] if _stat_cache["key"] == key else None
+    if age is not None and age < 4:
         return _stat_cache["val"]
-    with ThreadPoolExecutor(max_workers=10) as pool:
-        res = {cid: st for cid, st in pool.map(lambda i: _stat(ident(i)), ids) if st}
-    out = {"stats": res}
-    _stat_cache.update(at=time.time(), key=key, val=out)
-    return out
+    if age is not None and age < STAT_STALE:   # la page redemande toutes les 20 s : on répond tout de suite avec la dernière mesure et on la rafraîchit à côté
+        threading.Thread(target=_measure, args=(ids, key, False), daemon=True).start()
+        return _stat_cache["val"]
+    return _measure(ids, key, True)
+
+
+def _measure(ids: list[str], key: tuple, wait: bool) -> dict:
+    if not _stat_lock.acquire(blocking=wait):   # une mesure est déjà en cours : inutile d'en lancer une deuxième
+        return _stat_cache["val"]
+    try:
+        if wait and _stat_cache["key"] == key and time.time() - _stat_cache["at"] < 4:   # un autre appel vient de la faire pendant qu'on attendait
+            return _stat_cache["val"]
+        with ThreadPoolExecutor(max_workers=max(1, min(len(ids), STAT_WORKERS))) as pool:
+            res = {cid: st for cid, st in pool.map(lambda i: _stat(ident(i)), ids) if st}
+        out = {"stats": res}
+        _stat_cache.update(at=time.time(), key=key, val=out)
+        return out
+    finally:
+        _stat_lock.release()
 
 
 # ------------------------------------------------------------------ images, réseaux, volumes

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronRight, CornerLeftUp, Folder, FolderPlus, Home, Pencil, Trash2 } from 'lucide-react'
+import { ChevronRight, CornerLeftUp, Folder, Home, Pencil, Trash2 } from 'lucide-react'
 import { Badge, Btn, Field, Modal } from './ui.jsx'
 
 // Dossiers d'organisation des projets : purement logiques (rien ne bouge sur le disque).

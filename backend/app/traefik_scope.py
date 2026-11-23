@@ -1,5 +1,5 @@
 """Visibilité et droits d'édition des éléments Traefik selon l'utilisateur."""
-from .perms import LEVELS, Principal, accessible_domains, hosts_min_level
+from .perms import LEVELS, Principal, hosts_min_level
 from .rules import host_constraint, parse
 from .traefik_lint import used_by
 

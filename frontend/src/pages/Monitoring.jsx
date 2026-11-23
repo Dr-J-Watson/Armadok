@@ -5,7 +5,7 @@ import { Activity, Pencil, Bot, Ban, BellRing, EyeOff, Siren, Gauge, Download, G
 import { api, qs } from '../api.js'
 import { Badge, Btn, Empty, Field, Info, Loading, Modal, SearchBox, Seg, Switch, Tabs, Copyable, useSort, useUi } from '../components/ui.jsx'
 import { Bars, LineChart } from '../components/Charts.jsx'
-import RangePicker, { RANGES } from '../components/RangePicker.jsx'
+import RangePicker from '../components/RangePicker.jsx'
 import Explorer from '../components/Explorer.jsx'
 import Automod from '../components/Automod.jsx'
 import SiteStats from '../components/SiteStats.jsx'

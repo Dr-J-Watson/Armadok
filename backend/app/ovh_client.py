@@ -1,6 +1,5 @@
 """Client OVH (zone DNS) avec cache court et mode mock pour les tests."""
 import re
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 

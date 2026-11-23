@@ -36,10 +36,6 @@ def key_of(line: str) -> str | None:
     return next(g for g in m.groups()[1:] if g is not None).strip()
 
 
-def is_blank(line: str) -> bool:
-    return not line.strip()
-
-
 def block_end(lines: list[str], start: int, indentless: bool = False) -> int:
     """Fin (exclue) du bloc qui commence à `start` : tout ce qui est plus indenté, commentaires compris, sans les blancs finaux."""
     base, end, i = indent(lines[start]), start + 1, start + 1

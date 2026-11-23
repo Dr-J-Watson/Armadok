@@ -7,6 +7,7 @@ import { LineChart } from './Charts.jsx'
 import RangePicker from './RangePicker.jsx'
 import { fmtBytes, fmtMs, fmtNum } from '../lib/features.js'
 import { usePersist } from '../lib/persist.js'
+import { downloadBlob } from '../lib/csv.js'
 import { useGo } from '../lib/nav.js'
 import Fresh from './Fresh.jsx'
 
@@ -158,7 +159,7 @@ export default function Explorer() {
   }, [data])
   const series = (data?.series || []).map((s, i) => ({ name: names[i], labels: s.labels, color: COLORS[i % COLORS.length], points: s.points, idx: i }))
   const shown = series.filter((s) => !hidden.has(s.idx))
-  const download = () => { const blob = new Blob([csv(series, names)], { type: 'text/csv' }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'metriques.csv'; a.click(); URL.revokeObjectURL(a.href) }
+  const download = () => { downloadBlob('metriques.csv', csv(series, names), 'text/csv') }
   return (
     <div className="col gap-lg">
       <div className="muted">Regardez ce que Prometheus a mesuré : une question toute prête, un constructeur pas à pas, ou une requête PromQL libre. Tout est en lecture seule.</div>

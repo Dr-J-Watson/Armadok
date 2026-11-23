@@ -298,7 +298,8 @@ def list_ips(days: int = 7, sort: str = "hits", only: str = "", search: str = ""
         q = search.strip().lower()
         res["rows"] = [r for r in res["rows"] if q in (r["last_host"] or "").lower() or q in (r["last_path"] or "").lower()]
     res["rows"] = _present(ctx, res["rows"])
-    res["status"] = {k: accesslog.status(ctx.id)[k] for k in ("running", "lastLine", "error")}
+    st = accesslog.status(ctx.id)
+    res["status"] = {k: st[k] for k in ("running", "lastLine", "error")}
     res["geo"] = geo.status()
     return res
 
