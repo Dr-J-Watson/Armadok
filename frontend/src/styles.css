@@ -635,3 +635,8 @@ tr.off td:not(.sw):not(.actions), .site.off > :not(.site-actions) { opacity: .55
 .np-card { display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer; font: inherit; color: var(--text); }
 .np-card:hover:not(:disabled) { border-color: var(--accent); }
 .np-card:disabled { opacity: .5; cursor: default; }
+
+/* case de sélection d'un tableau : l'enveloppe porte l'infobulle ; désactivée, elle est nettement grisée */
+.selbox { display: inline-flex; align-items: center; justify-content: center; }
+.selbox.off { cursor: not-allowed; }
+.selbox.off input { opacity: .22; pointer-events: none; }
