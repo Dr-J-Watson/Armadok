@@ -300,7 +300,7 @@ function MoveMany({ count, dirs, onClose, onSubmit }) {
     </div></Modal>
 }
 
-function PathModal({ title, label, initial, dirs, hint, confirmLabel, busy, same, onClose, onSubmit }) {
+export function PathModal({ title, label, initial, dirs, hint, confirmLabel, busy, same, onClose, onSubmit }) {
   const [rel, setRel] = useState(initial); const r = rel.trim(); const ok = validRel(r) && r !== same
   return <Modal small title={title} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!ok} onClick={() => onSubmit(r)}>{confirmLabel}</Btn></>}>
     <form className="col" onSubmit={(e) => { e.preventDefault(); if (ok) onSubmit(r) }}>

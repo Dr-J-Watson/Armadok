@@ -932,7 +932,8 @@ def _tpl_visible(r, ctx: NodeCtx) -> bool:
 
 
 def _tpl_row_out(r) -> dict:
-    return {"id": str(r["id"]), "name": r["name"], "description": r["description"], "builtin": False, "createdBy": r["created_by"], "files": _tpl_files(r), "shared": bool(r["shared"])}
+    return {"id": str(r["id"]), "name": r["name"], "description": r["description"], "builtin": False, "createdBy": r["created_by"], "files": _tpl_files(r), "shared": bool(r["shared"]),
+            "folderId": r["folder_id"], "createdAt": r["created_at"], "updatedAt": r["updated_at"]}
 
 
 def _tpl_all(ctx: NodeCtx) -> list[dict]:
@@ -946,7 +947,7 @@ def _tpl_all(ctx: NodeCtx) -> list[dict]:
 def _tpl_files(row) -> dict:
     try:
         return json.loads(crypto.dec(row["data"]))
-    except (ValueError, TypeError):
+    except Exception:   # clé de chiffrement changée, donnée abîmée… : ce modèle apparaît vide, il n'empêche pas d'afficher les autres
         return {}
 
 
@@ -963,7 +964,8 @@ def _tpl_get(tid: str, ctx: NodeCtx) -> dict:
 def _tpl_out(t: dict, ctx: NodeCtx, full: bool = False) -> dict:
     files = t["files"]
     out = {"id": t["id"], "name": t["name"], "description": t["description"], "builtin": t["builtin"], "createdBy": t["createdBy"], "files": sorted(files),
-           "shared": t["shared"], "mine": (not t["builtin"]) and (t["createdBy"] == ctx.p.username or ctx.p.is_admin), "vars": project_templates.variables(files)}
+           "shared": t["shared"], "mine": (not t["builtin"]) and (t["createdBy"] == ctx.p.username or ctx.p.is_admin), "vars": project_templates.variables(files),
+           "folderId": t.get("folderId"), "createdAt": t.get("createdAt"), "updatedAt": t.get("updatedAt"), "size": sum(len(v.encode()) for v in files.values())}
     if full:
         out["preview"] = {k: v[:12000] for k, v in files.items() if k != ".env" and len(v) <= 200000}
     return out
@@ -971,7 +973,10 @@ def _tpl_out(t: dict, ctx: NodeCtx, full: bool = False) -> dict:
 
 @router.get("/templates/list")
 def templates_list(ctx: NodeCtx = Depends(proj_cap("projects.import"))):
-    return {"templates": [_tpl_out(t, ctx) for t in _tpl_all(ctx)], "canCreate": ctx.can("projects.import") and ctx.can("projects.edit")}
+    from .nodes import local_node_id
+    sc = local_node_id()
+    return {"templates": [_tpl_out(t, ctx) for t in _tpl_all(ctx)], "canCreate": ctx.can("projects.import") and ctx.can("projects.edit"),
+            "folders": org_folders.listing(sc, "templates") if sc else [], "canEnv": ctx.can("projects.env")}
 
 
 @router.get("/templates/{tid}")

@@ -7,7 +7,7 @@ export const MAX_UPLOAD = 100 * 1024 * 1024
 const toBytes = (b64) => { const s = atob(b64); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u }
 const readB64 = (blob) => new Promise((ok, ko) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1] || ''); r.onerror = () => ko(r.error); r.readAsDataURL(blob) })
 
-function save(name, blob) {
+export function saveBlob(name, blob) {
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name
   document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000)
 }
@@ -22,7 +22,7 @@ export async function downloadPaths(id, rels, onProgress) {
     onProgress?.(m.size ? Math.min(1, off / m.size) : 1)
     if (r.done) break
   }
-  save(m.name, new Blob(parts))
+  saveBlob(m.name, new Blob(parts))
   return m
 }
 

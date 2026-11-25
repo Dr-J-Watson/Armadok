@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ChevronRight, CornerLeftUp, Folder, Home, Pencil, Trash2 } from 'lucide-react'
+import { ChevronRight, CornerLeftUp, Download, FileCode2, Folder, Home, Pencil, Trash2 } from 'lucide-react'
 import { Badge, Btn, Field, Modal } from './ui.jsx'
 
 // Dossiers d'organisation des projets : purement logiques (rien ne bouge sur le disque).
@@ -31,14 +31,16 @@ export function folderStats(folders, projects, id) {
   return { total: ps.length, running: ps.filter((p) => p.status === 'running').length, partial: ps.filter((p) => p.status === 'partial').length, stopped: ps.filter((p) => p.status === 'stopped').length, missing: ps.filter((p) => p.missing).length, sub: ids.size - 1 }
 }
 
-export function FolderTile({ f, st, canManage, dnd, onOpen, onEdit, onDelete, noun = 'projet' }) {
+export function FolderTile({ f, st, canManage, dnd, onOpen, onEdit, onDelete, onExport, noun = 'projet' }) {
   const c = FOLDER_COLORS[f.color]
   return (
     <div className={'card folder-card' + (dnd.over ? ' drop-on' : '')} style={c ? { borderLeft: `4px solid ${c}` } : undefined} onClick={onOpen} {...dnd.props}>
       <div className="row"><Folder size={18} style={{ color: c || 'var(--muted)', flex: 'none' }} /><b className="grow ellipsis" title={f.name}>{f.name}</b>
-        {canManage && <span className="row" style={{ gap: 2 }}>
+        {(canManage || onExport) && <span className="row" style={{ gap: 2 }}>
+          {onExport && <Btn small kind="ghost" icon title="Exporter ce dossier (zip de tous ses modèles)" aria-label="Exporter le dossier" onClick={(e) => { e.stopPropagation(); onExport() }}><Download size={13} /></Btn>}
+          {canManage && <>
           <Btn small kind="ghost" icon title="Modifier le dossier" aria-label="Modifier le dossier" onClick={(e) => { e.stopPropagation(); onEdit() }}><Pencil size={13} /></Btn>
-          <Btn small kind="ghost" icon title="Supprimer le dossier (son contenu remonte d'un niveau)" aria-label="Supprimer le dossier" onClick={(e) => { e.stopPropagation(); onDelete() }}><Trash2 size={13} /></Btn></span>}</div>
+          <Btn small kind="ghost" icon title="Supprimer le dossier (son contenu remonte d'un niveau)" aria-label="Supprimer le dossier" onClick={(e) => { e.stopPropagation(); onDelete() }}><Trash2 size={13} /></Btn></>}</span>}</div>
       {f.description && <div className="muted small folder-desc">{f.description}</div>}
       <div className="row wrap" style={{ gap: 5, marginTop: 'auto' }}>
         <Badge>{st.total} {noun}{st.total > 1 ? 's' : ''}</Badge>
@@ -66,14 +68,31 @@ export function Breadcrumb({ path, onOpen, dropFor }) {
   return <div className="row wrap crumbs" style={{ gap: 2 }}>{seg(null, 'Projets', <Home size={13} />)}{path.map((f) => <span key={f.id} className="row" style={{ gap: 2 }}><ChevronRight size={13} className="muted" />{seg(f.id, f.name)}</span>)}</div>
 }
 
-export function FolderModal({ folder, folders, parentId, busy, onSave, onClose }) {
+// Les deux sections de la page Projets, toujours dans le même ordre : [Projets] [Modèles]. La section ouverte est la RACINE du fil d'Ariane (on peut y déposer un élément pour le sortir
+// de ses dossiers) ; l'autre est un simple bouton qui y mène. Le chemin du dossier courant suit.
+export function SectionCrumbs({ section, onSection, path = [], onOpen, dropFor }) {
+  const root = (id, label, icon) => {
+    if (id !== section) return <span key={id} className="crumb"><button type="button" className="crumb-b" onClick={() => onSection(id)}>{icon}{label}</button></span>
+    const d = dropFor(null)
+    return <span key={id} className={'crumb' + (d.over ? ' drop-on' : '')} {...d.props}><button type="button" className="crumb-b on" aria-current="page" onClick={() => onOpen(null)}>{icon}{label}</button></span>
+  }
+  const seg = (f) => { const d = dropFor(f.id); return <span key={f.id} className={'crumb' + (d.over ? ' drop-on' : '')} {...d.props}><button type="button" className="crumb-b" onClick={() => onOpen(f.id)}>{f.name}</button></span> }
+  return (
+    <div className="row wrap crumbs" style={{ gap: 2 }}>
+      {root('projects', 'Projets', <Home size={13} />)}{root('templates', 'Modèles', <FileCode2 size={13} />)}
+      {path.map((f) => <span key={f.id} className="row" style={{ gap: 2 }}><ChevronRight size={13} className="muted" />{seg(f)}</span>)}
+    </div>
+  )
+}
+
+export function FolderModal({ folder, folders, parentId, busy, onSave, onClose, what = 'projets' }) {
   const [name, setName] = useState(folder?.name || ''); const [desc, setDesc] = useState(folder?.description || ''); const [color, setColor] = useState(folder?.color || '')
   const [parent, setParent] = useState(folder ? folder.parentId : parentId ?? null)
   const blocked = folder ? new Set([folder.id, ...descendants(folders, folder.id)]) : new Set()
   return (
     <Modal small title={folder ? 'Modifier le dossier' : 'Nouveau dossier'} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!name.trim()} onClick={() => onSave({ name: name.trim(), description: desc, color, parentId: parent })}>{folder ? 'Enregistrer' : 'Créer'}</Btn></>}>
       <div className="col">
-        <div className="muted small">Un dossier range la liste des projets ; rien n'est déplacé sur le disque et les conteneurs ne sont pas touchés.</div>
+        <div className="muted small">Un dossier range la liste des {what} ; rien n'est déplacé sur le disque et les conteneurs ne sont pas touchés.</div>
         <Field label="Nom"><input className="input" autoFocus maxLength={60} value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onSave({ name: name.trim(), description: desc, color, parentId: parent }) }} placeholder="Production, Tests, Famille…" /></Field>
         <Field label="Description (facultatif)"><textarea className="input" rows={3} maxLength={500} value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="À quoi sert ce dossier ?" /></Field>
         <Field label="Couleur">

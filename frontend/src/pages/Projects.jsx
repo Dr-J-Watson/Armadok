@@ -15,7 +15,8 @@ import { useNode, useNodeList } from '../node.jsx'
 import { NodeChip } from '../components/NodeSwitcher.jsx'
 import TraefikSetup, { TraefikOffer, useTraefikOffer } from '../components/TraefikSetup.jsx'
 import NewProject from '../components/NewProject.jsx'
-import { Breadcrumb, FolderModal, FolderTile, MoveModal, UpTile, folderStats, useFolderNav } from '../components/ProjectFolders.jsx'
+import TemplatesView from '../components/TemplatesView.jsx'
+import { FolderModal, FolderTile, MoveModal, SectionCrumbs, UpTile, folderStats, useFolderNav } from '../components/ProjectFolders.jsx'
 
 export const STATUS = { running: ['En marche', 'ok'], partial: ['Partiel', 'warn'], stopped: ['Arrêté', ''], absent: ['Non démarré', ''] }
 export const SVC_DOT = { running: 'var(--ok)', partial: 'var(--warn)', stopped: 'var(--muted)', absent: 'var(--border)' }
@@ -26,13 +27,30 @@ export function useProjectStats() {
   return (ids) => { const m = st.data?.stats || {}; const rows = (ids || []).map((i) => m[i]).filter(Boolean); return rows.length ? { cpu: rows.reduce((s, r) => s + r.cpu, 0), mem: rows.reduce((s, r) => s + r.mem, 0), limit: rows.reduce((s, r) => s + (r.memLimit || 0), 0) } : null }
 }
 
+// Deux vues : les projets (ce nœud) et les modèles de projet (communs à tous les nœuds). La section est dans l'adresse (?s=templates) ; chacune gère SES données, sa recherche et ses dossiers.
 export default function Projects() {
-  const go = useGo(); const [params, setParams] = useSearchParams()
-  const [q, setQ] = useState(''); const [view, setView] = usePersist('projects-view', 'cards'); const [sel, setSel] = useState([]); const [ask, setAsk] = useState(null); const [clone, setClone] = useState(false)
-  const { fullView, node, setNode } = useNode()
+  const [params, setParams] = useSearchParams()
   const raw = useNodeList('projects', '/projects', (x) => [x], { eligible: (n) => (n.modules || []).includes('docker') && (n.caps || []).includes('projects.view'), refetchInterval: 20000 })
   // Affichage complet : les projets gérés de TOUS les nœuds (l'import, la découverte et la création restent propres à un nœud)
   const list = raw.full ? { ...raw, data: raw.isLoading ? undefined : { managed: raw.rows.flatMap((r) => r.managed.map((p) => ({ ...p, _node: r._node }))), discovered: [], ignored: [], roots: ['*'], canImport: false, canGit: false, truncated: false } } : raw
+  // « Projets » et « Modèles » sont deux sections de l'onglet Gérés : la barre d'onglets, la recherche et le fil d'Ariane restent à la même place, seul le contenu change.
+  // La section est dans l'adresse (?s=templates). Les dossiers (?g=) ne se partagent pas d'une section à l'autre ; chaque section garde SA recherche et SES données.
+  const section = params.get('s') === 'templates' ? 'templates' : 'projects'
+  const setSection = (s) => setParams((p) => { const n = new URLSearchParams(p); n.delete('g'); n.delete('tab'); if (s === 'templates') n.set('s', 'templates'); else n.delete('s'); return n })
+  const tabs = (tab, onChange) => <ProjectTabs tab={tab} d={list.data} onChange={onChange} />
+  if (list.isLoading) return <Loading />
+  if (list.error) return <div className="banner err">{list.error.message}</div>
+  return section === 'templates' ? <TemplatesView onSection={setSection} tabs={tabs('managed', (t) => setParams({ tab: t }))} /> : <ProjectsView raw={raw} list={list} onSection={setSection} />
+}
+
+function ProjectTabs({ tab, d, onChange }) {
+  return <Tabs value={tab} onChange={onChange} tabs={[{ id: 'managed', label: 'Gérés', count: d.managed.length }, { id: 'discovered', label: 'Découverts', count: d.discovered.length }, { id: 'ignored', label: 'Ignorés', count: d.ignored.length }]} />
+}
+
+function ProjectsView({ raw, list, onSection }) {
+  const go = useGo(); const [params, setParams] = useSearchParams()
+  const [q, setQ] = useState(''); const [view, setView] = usePersist('projects-view', 'cards'); const [sel, setSel] = useState([]); const [ask, setAsk] = useState(null); const [clone, setClone] = useState(false)
+  const { node, setNode } = useNode()
   const goP = (to, p) => { if (p?._node && p._node.id !== node.id) setNode(p._node.id); go(to) }
   const stat = useProjectStats(); const offer = useTraefikOffer(); const [tsetup, setTsetup] = useState(false); const [newp, setNewp] = useState(false)
   const { toast, confirm } = useUi(); const qc = useQueryClient()
@@ -48,8 +66,6 @@ export default function Projects() {
   const folders = raw.full ? [] : list.data?.folders || []
   const canMove = !raw.full && list.data?.canImport && tab === 'managed'
   const nav = useFolderNav({ folders, enabled: canMove, onDrop: (x, target) => regroup.mutate({ projects: x.kind === 'project' ? [x.id] : [], folders: x.kind === 'folder' ? [x.id] : [], folderId: target }) })
-  if (list.isLoading) return <Loading />
-  if (list.error) return <div className="banner err">{list.error.message}</div>
   const d = list.data; const needle = q.trim().toLowerCase()
   const hit = (p) => !needle || [p.name, p.path, ...(p.tags || []), ...(p.hosts || []), ...p.services.map((s) => s.name), ...p.services.map((s) => s.image)].some((x) => String(x || '').toLowerCase().includes(needle))
   const { byId, cur, crumbs, openFolder, dragOf, dropFor } = nav
@@ -69,7 +85,7 @@ export default function Projects() {
         {d.canImport && <Btn kind="primary" title="Créer un projet : vide, modèle de base, depuis un conteneur lancé à la main, depuis un dépôt Git…" onClick={() => setNewp(true)}><Plus size={14} /> Nouveau projet</Btn>}
       </div>
       <div className="row wrap" style={{ gap: 10, marginBottom: 14 }}>
-        <Tabs value={tab} onChange={(t) => { setParams({ tab: t }); setSel([]) }} tabs={[{ id: 'managed', label: 'Gérés', count: d.managed.length }, { id: 'discovered', label: 'Découverts', count: d.discovered.length }, { id: 'ignored', label: 'Ignorés', count: d.ignored.length }]} />
+        <ProjectTabs tab={tab} d={d} onChange={(t) => { setParams({ tab: t }); setSel([]) }} />
         <SearchBox value={q} onChange={setQ} placeholder="Rechercher un projet, un service, un site, une étiquette…" />
         {tab === 'managed' && <span className="right"><Seg options={[{ id: 'cards', label: <LayoutGrid size={14} />, hint: 'Cartes' }, { id: 'list', label: <List size={14} />, hint: 'Liste compacte' }]} value={view} onChange={setView} /></span>}
         {tab === 'discovered' && d.canImport && <span className="right row" style={{ gap: 6 }}><Btn title="Ajouter les projets cochés à la liste : l'interface pourra les démarrer, les arrêter et éditer leurs fichiers" small kind="primary" disabled={!sel.length} onClick={() => setAsk(sel)}><Download size={13} /> Importer ({sel.length})</Btn><Btn title="Ne plus proposer les projets cochés (ils restent sur le disque, intacts)" small kind="ghost" disabled={!sel.length} onClick={() => ignore.mutate(sel)}><EyeOff size={13} /> Ignorer</Btn></span>}
@@ -77,7 +93,7 @@ export default function Projects() {
       {offer.show && <TraefikOffer onOpen={() => setTsetup(true)} onDismiss={() => { offer.dismiss(); toast('D\'accord. Plus tard : Aide → « Installer Traefik avec Armadok », ou le bouton « Créer un projet Traefik » de cette page.') }} />}
       {d.roots.length === 0 && <div className="banner warn"><FolderOpen size={16} /> Aucun dossier de projets n'est configuré sur ce nœud. Indiquez-les avec la variable <code>PROJECT_ROOTS</code> (chemins absolus, montés à l'identique dans le conteneur).</div>}
       {d.truncated && <div className="banner warn">Beaucoup de projets : la liste est tronquée.</div>}
-      {tab === 'managed' && !raw.full && !needle && (cur != null || folders.length > 0) && <Breadcrumb path={crumbs} onOpen={openFolder} dropFor={dropFor} />}
+      {tab === 'managed' && <SectionCrumbs section="projects" onSection={onSection} path={!raw.full && !needle ? crumbs : []} onOpen={openFolder} dropFor={dropFor} />}
       {tab === 'managed' && (subFolders.length > 0 || showUp) && <div className="project-grid folders">
         {showUp && <UpTile parent={byId[byId[cur]?.parentId]} dnd={dropFor(byId[cur]?.parentId ?? null)} onOpen={() => openFolder(byId[cur]?.parentId ?? null)} />}
         {subFolders.map((f) => <FolderTile key={f.id} f={f} st={folderStats(folders, d.managed, f.id)} canManage={canMove} dnd={{ ...dropFor(f.id), props: { ...dragOf('folder', f.id), ...dropFor(f.id).props } }} onOpen={() => openFolder(f.id)} onEdit={() => setFmodal({ folder: f })} onDelete={() => askDelete(f)} />)}

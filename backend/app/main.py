@@ -24,6 +24,7 @@ from .events import router as events_router, start_watchers
 from .routes_obs import router as obs_router
 from .routes_docker import router as docker_router
 from .routes_projects import hooks_router, router as projects_router
+from .routes_templates import router as templates_router
 from .routes_terminal import router as terminal_router
 from . import imagecheck as imagewatch
 from . import accesslog, alerts as alerts_engine, automod as automod_engine, bans as bans_engine
@@ -70,7 +71,7 @@ from . import project_ops as _po  # noqa: E402
 _po.sweep_later()
 automod_engine.start()
 app = FastAPI(title="Armadok", docs_url=None, redoc_url=None, openapi_url=None)
-for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, hooks_router, terminal_router):
+for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, templates_router, hooks_router, terminal_router):
     app.include_router(r)
 
 

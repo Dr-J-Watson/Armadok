@@ -58,10 +58,10 @@ export function PickContainer({ onPick, onClose }) {
 
 
 // « À partir d'un modèle » : choisir (modèles intégrés et enregistrés), remplir le nom et les variables du .env, créer. Rien n'est démarré.
-function FromTemplate({ onBack, onClose }) {
+export function FromTemplate({ onBack, onClose, initial = null }) {
   const { toast, confirm } = useUi(); const go = useGo(); const qc = useQueryClient()
   const list = useQuery({ queryKey: ['templates'], queryFn: () => api.get('/projects/templates/list') })
-  const [pick, setPick] = useState(null); const [name, setName] = useState(''); const [vals, setVals] = useState({}); const [root, setRoot] = useState('')
+  const [pick, setPick] = useState(initial); const [name, setName] = useState(''); const [vals, setVals] = useState({}); const [root, setRoot] = useState('')
   const det = useQuery({ queryKey: ['template', pick], queryFn: () => api.get(`/projects/templates/${encodeURIComponent(pick)}`), enabled: !!pick })
   const vis = useMutation({ mutationFn: ({ id, shared }) => api.put(`/projects/templates/${id}`, { shared }), onSuccess: (_, v) => { qc.invalidateQueries({ queryKey: ['templates'] }); toast(v.shared ? 'Modèle partagé (valeurs des secrets vidées)' : 'Modèle privé') }, onError: (e) => toast(e.message, 'err') })
   const del = useMutation({ mutationFn: (id) => api.del(`/projects/templates/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['templates'] }); toast('Modèle supprimé') }, onError: (e) => toast(e.message, 'err') })
@@ -72,7 +72,7 @@ function FromTemplate({ onBack, onClose }) {
   })
   const d = det.data
   if (pick) return (
-    <Modal wide title={d ? `Nouveau projet · ${d.name}` : 'Modèle'} onClose={onClose} footer={<><Btn onClick={() => { setPick(null); setVals({}) }}>Retour</Btn><Btn kind="primary" disabled={!d || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,60}$/.test(name)} busy={create.isPending} onClick={() => create.mutate()}>Créer le projet</Btn></>}>
+    <Modal wide title={d ? `Nouveau projet · ${d.name}` : 'Modèle'} onClose={onClose} footer={<><Btn onClick={() => { if (initial) { onClose(); return } setPick(null); setVals({}) }}>{initial ? 'Annuler' : 'Retour'}</Btn><Btn kind="primary" disabled={!d || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,60}$/.test(name)} busy={create.isPending} onClick={() => create.mutate()}>Créer le projet</Btn></>}>
       {det.isLoading ? <Loading /> : det.error ? <div className="banner err">{det.error.message}</div> : (
         <div className="col gap-lg">
           {d.description && <div className="muted">{d.description}</div>}
