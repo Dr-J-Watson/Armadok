@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.18.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.17.0...v1.18.0) (2026-11-25)
+
+
+### Nouveautés
+
+* **make:** menu interactif, sauvegardes et restauration guidées ([2d3f9fe](https://github.com/Dr-J-Watson/Armadok/commit/2d3f9fee632e03fcae0d6073945acd98c3ca43b0))
+* **projets:** section Modèles (dossiers, édition, import et export zip) ([6d89f6a](https://github.com/Dr-J-Watson/Armadok/commit/6d89f6a75d0e23090444bee95de4b19854f5b3c3))
+* **sauvegardes:** sauvegarde complète du hub et sauvegardes par nœud ([c132c9e](https://github.com/Dr-J-Watson/Armadok/commit/c132c9eba9c93cc50e70bc06bd017cf281e55eeb))
+
 ## [1.17.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.16.0...v1.17.0) (2026-11-23)
 
 
