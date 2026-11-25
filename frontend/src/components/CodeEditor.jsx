@@ -57,5 +57,5 @@ export default function CodeEditor({ value, onChange, language = 'yaml', height 
 
 export function Diff({ original, modified, height = '60vh', language = 'yaml' }) {
   const theme = useTheme()
-  return <DiffEditor height={height} language={language} theme={theme} original={original} modified={modified} options={{ ...OPTS, readOnly: true, renderSideBySide: true }} />
+  return <DiffEditor height={height} language={language} theme={theme} original={original} modified={modified} keepCurrentOriginalModel keepCurrentModifiedModel options={{ ...OPTS, readOnly: true, renderSideBySide: true }} />
 }

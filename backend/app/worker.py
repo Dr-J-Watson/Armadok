@@ -85,6 +85,9 @@ def handle(store: Store, op: str, a: dict, api_url: str = "", modules=None):
     allowed = proto.ops_for(modules if modules is not None else ("traefik",))
     if op not in allowed or not isinstance(a, dict):
         raise StoreError("Opération non autorisée", 400)
+    if op.startswith("nb_"):   # sauvegarde du nœud : les éléments dépendent des modules de CE worker
+        from . import node_backup_ops
+        return node_backup_ops.handle(op, a, modules if modules is not None else ("traefik",))
     if op in proto.OPS_BY_MODULE["docker"]:
         if op.startswith(("d_exec_", "p_exec_")) and not exec_allowed():
             raise StoreError("Le terminal est désactivé sur ce worker (WORKER_ALLOW_EXEC=true pour l'autoriser)", 403)

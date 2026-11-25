@@ -1,17 +1,59 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Boxes, DoorOpen, ShieldAlert, ShieldCheck, Zap } from 'lucide-react'
 import { api } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { useNode } from '../node.jsx'
-import { Badge, Btn, Empty, Field, Info, Loading, Modal, useUi } from '../components/ui.jsx'
+import { Badge, Btn, Empty, Field, Info, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
+import Backups from '../components/Backups.jsx'
+import NodeBackups from '../components/NodeBackups.jsx'
 import { CONN, NodeAvatar } from '../components/NodeSwitcher.jsx'
 import { Countdown } from '../components/Countdown.jsx'
 import { fmtDate } from '../lib/util.js'
 
-// Vue de la plateforme : tous les nœuds, accès d'urgence et actions rapides.
+// Vue de la plateforme : deux onglets — les nœuds (accès d'urgence, actions rapides) et les sauvegardes complètes du hub.
 export default function Nodes() {
+  const [params, setParams] = useSearchParams()
+  const tab = params.get('tab') === 'backups' ? 'backups' : 'nodes'
+  return (
+    <>
+      <div className="page-head"><div><h1>Tous les nœuds</h1><p>{tab === 'backups' ? 'Sauvegardes : le hub en entier, ou les fichiers d\'un nœud au choix (selon votre accès).' : 'Vue de la plateforme. Entrer chez un utilisateur exige un motif et une double authentification, et son propriétaire en est toujours informé.'}</p></div></div>
+      <div className="row" style={{ marginBottom: 14 }}><Tabs value={tab} onChange={(t) => setParams(t === 'nodes' ? {} : { tab: t })} tabs={[{ id: 'nodes', label: 'Nœuds' }, { id: 'backups', label: 'Backup et sauvegardes' }]} /></div>
+      {tab === 'backups' ? <BackupsTab /> : <NodesList />}
+    </>
+  )
+}
+
+// Choix de la cible : le hub en entier, ou un nœud. Seuls les nœuds où la personne a le droit « Sauvegarder le nœud » sont proposés ; les autres sont grisés
+// (pour un nœud distant qui n'est pas le sien, il reste l'accès d'urgence de l'onglet « Nœuds »).
+function BackupsTab() {
+  const { nodes: mine } = useNode()
+  const q = useQuery({ queryKey: ['admin-nodes'], queryFn: () => api.get('/admin/nodes') })
+  const [params, setParams] = useSearchParams(); const target = params.get('node') || 'hub'
+  const set = (id) => setParams(id === 'hub' ? { tab: 'backups' } : { tab: 'backups', node: id }, { replace: true })
+  if (q.isLoading) return <Loading />
+  const list = (q.data || []).filter((n) => !n.deletedAt)
+  const access = (n) => mine.find((m) => m.id === n.id && (m.caps || []).includes('node.backup'))
+  const cur = target === 'hub' ? null : list.find((n) => n.id === target && access(n))
+  return (
+    <>
+      <div className="row wrap" style={{ gap: 8, marginBottom: 14, alignItems: 'center' }}>
+        <span className="muted small">Sauvegarder :</span>
+        <Btn small kind={!cur ? 'primary' : undefined} onClick={() => set('hub')}><Boxes size={13} /> Le hub (complet)</Btn>
+        {list.map((n) => {
+          const a = access(n)
+          return <Btn key={n.id} small kind={cur?.id === n.id ? 'primary' : undefined} disabled={!a}
+            title={a ? `Fichiers de la machine du nœud ${n.name}` : n.kind === 'remote' ? 'Vous n\'avez pas le droit « Sauvegarder le nœud » ici : entrez d\'abord par l\'accès d\'urgence (onglet Nœuds).' : 'Droit « Sauvegarder le nœud » manquant'}
+            onClick={() => set(n.id)}><NodeAvatar node={n} size={16} /> {n.name}</Btn>
+        })}
+      </div>
+      {cur ? <NodeBackups key={cur.id} node={cur} /> : <Backups />}
+    </>
+  )
+}
+
+function NodesList() {
   const { user } = useAuth(); const { nodes: mine, setNode, reload } = useNode(); const nav = useNavigate(); const qc = useQueryClient(); const { toast } = useUi()
   const q = useQuery({ queryKey: ['admin-nodes'], queryFn: () => api.get('/admin/nodes') })
   const [em, setEm] = useState(null); const [act, setAct] = useState(null)
@@ -21,7 +63,6 @@ export default function Nodes() {
   if (q.isLoading) return <Loading />
   return (
     <>
-      <div className="page-head"><div><h1>Tous les nœuds</h1><p>Vue de la plateforme. Entrer chez un utilisateur exige un motif et une double authentification, et son propriétaire en est toujours informé.</p></div></div>
       {!user.twoFactor && <div className="banner"><ShieldAlert size={18} /><span className="grow">Pour accéder au nœud d'un autre utilisateur ou agir dessus, <b>activez d'abord la double authentification</b> de votre compte.</span>
         <Btn small kind="primary" onClick={() => window.dispatchEvent(new Event('open-profile'))}><ShieldCheck size={13} /> Activer</Btn></div>}
       <div className="card flush"><table className="t"><thead><tr><th>Nœud</th><th>Propriétaire</th><th>État<Info>En ligne : le worker est connecté. Hors ligne : il ne répond plus. Suspendu : bloqué par un super-admin (les membres voient un message).</Info></th><th>Membres</th><th>Domaines</th><th /></tr></thead>

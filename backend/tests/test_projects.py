@@ -138,8 +138,8 @@ def test_module_and_right_guards(pj):
 
 
 def test_project_ops_are_exposed_to_workers_and_confined(pj):
-    from app import docker_ops, host_ops
-    assert set(proto.OPS_BY_MODULE["docker"]) == set(docker_ops.OPS) | set(project_ops.OPS) == set(host_ops.names())
+    from app import docker_ops, host_ops, node_backup_ops
+    assert set(proto.OPS_BY_MODULE["docker"]) == set(docker_ops.OPS) | set(project_ops.OPS) | set(node_backup_ops.OPS) == set(host_ops.names())   # + la sauvegarde de nœud, commune aux deux modules
     store = Store()
     assert worker.handle(store, "p_discover", {}, "", ("docker",))["projects"]
     with pytest.raises(Exception) as e:

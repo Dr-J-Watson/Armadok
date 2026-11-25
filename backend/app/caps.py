@@ -85,6 +85,8 @@ _group("node", "Administration du nœud", [
     ("node.audit", "Voir l'activité du nœud", "Journal des actions faites sur ce nœud.", ()),
     ("node.domains.view", "Voir les domaines du nœud", "", ()),
     ("node.domains.link", "Rattacher / détacher des domaines", "", ("node.domains.view",)),
+    ("node.backup", "Sauvegarder le nœud", "Créer, télécharger et téléverser des sauvegardes des fichiers du nœud (configuration Traefik, historiques).", ()),
+    ("node.restore", "Restaurer une sauvegarde du nœud", "Remplace des fichiers du nœud par ceux d'une sauvegarde : à réserver au propriétaire.", ("node.backup",)),
     ("node.transfer", "Transférer le nœud", "Réservé au propriétaire.", ()),
     ("node.delete", "Supprimer le nœud", "Réservé au propriétaire.", ()),
 ])
@@ -113,7 +115,7 @@ CATALOG: dict[str, dict] = {c[0]: {"label": c[1], "hint": c[2], "requires": list
                             for gid, _l, caps in _G for c in caps}
 ALL = frozenset(CATALOG)
 OWNER_ONLY = frozenset({"node.transfer", "node.delete"})   # jamais délégués
-NOT_BY_DEFAULT = frozenset({"docker.exec", "projects.delete"})   # pas même pour un administrateur : seul le propriétaire les a d'office, un autre doit se les voir accorder
+NOT_BY_DEFAULT = frozenset({"docker.exec", "projects.delete", "node.restore"})   # pas même pour un administrateur : seul le propriétaire les a d'office, un autre doit se les voir accorder
 
 _SITES = {k for k in ALL if k.startswith("sites.")}
 _DNS_ALL = {k for k in ALL if k.startswith("dns.")}
@@ -136,7 +138,7 @@ MFA_SENSITIVE = frozenset({
     "security.ban", "security.automod",                                          # bloquer des adresses, règles automatiques
     "files.edit", "files.create", "files.delete", "files.move", "files.reorganize",   # fichiers YAML bruts : tout Traefik
     "node.settings", "node.connection", "node.members.add", "node.members.edit", "node.members.remove",
-    "node.domains.link", "node.transfer", "node.delete",
+    "node.domains.link", "node.transfer", "node.delete", "node.backup", "node.restore",
     "dns.provider", "dns.dnssec.edit", "dns.share", "dns.import",
     "alerts.manage",
     "docker.control", "docker.remove", "docker.exec",                           # couper des services, supprimer, terminal

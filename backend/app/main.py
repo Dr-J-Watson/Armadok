@@ -25,6 +25,9 @@ from .routes_obs import router as obs_router
 from .routes_docker import router as docker_router
 from .routes_projects import hooks_router, router as projects_router
 from .routes_templates import router as templates_router
+from .routes_backup import router as backup_router
+from .routes_node_backup import router as node_backup_router
+from . import backup as backup_mod
 from .routes_terminal import router as terminal_router
 from . import imagecheck as imagewatch
 from . import accesslog, alerts as alerts_engine, automod as automod_engine, bans as bans_engine
@@ -46,6 +49,7 @@ for path in settings.harden_data_dir()[:3]:
 if not env("ENCRYPTION_KEY"):
     print("AVERTISSEMENT : ENCRYPTION_KEY n'est pas définie, les clés chiffrées dépendent de JWT_SECRET. "
           "Générez-en une : openssl rand -hex 32 (les données existantes sont migrées au démarrage).", file=sys.stderr)
+_restored = backup_mod.apply_pending()   # une restauration préparée avant le redémarrage se met en place AVANT d'ouvrir la base
 db.init()
 if (n := migrate_legacy()):
     print(f"{n} valeur(s) chiffrée(s) migrée(s) vers ENCRYPTION_KEY.", file=sys.stderr)
@@ -57,6 +61,9 @@ init_auth()
 seed_local_node()
 rbac.seed_roles()
 purge_expired()
+if _restored:
+    from .audit import audit as _audit
+    _audit("système", "admin.backup.restore.applied", _restored)
 try:
     sync_primary(force=True)
 except Exception:  # OVH injoignable au démarrage : repris à la prochaine ouverture
@@ -71,7 +78,7 @@ from . import project_ops as _po  # noqa: E402
 _po.sweep_later()
 automod_engine.start()
 app = FastAPI(title="Armadok", docs_url=None, redoc_url=None, openapi_url=None)
-for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, templates_router, hooks_router, terminal_router):
+for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, templates_router, backup_router, node_backup_router, hooks_router, terminal_router):
     app.include_router(r)
 
 

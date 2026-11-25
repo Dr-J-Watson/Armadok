@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Activity, Crown, Download, Globe, Info as InfoIcon, Pencil, Plug, RefreshCw, Settings2, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
+import { Activity, Archive, Crown, Download, Globe, Info as InfoIcon, Pencil, Plug, RefreshCw, Settings2, ShieldAlert, ShieldCheck, Trash2, UserPlus, Users } from 'lucide-react'
 import { NavLink, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { ROLES, useNode } from '../node.jsx'
+import NodeBackups from '../components/NodeBackups.jsx'
 import { Badge, Btn, CopyBtn, Empty, Field, Info, Loading, Modal, Seg, Tabs, useUi } from '../components/ui.jsx'
 import { Chips } from '../components/SchemaForm.jsx'
 import { CONN, NodeAvatar } from '../components/NodeSwitcher.jsx'
@@ -24,6 +25,7 @@ export default function Node() {
     ...(can('node.domains.view') ? [{ id: 'domains', label: 'Domaines', icon: <Globe size={15} />, count: node.domains }] : []),
     ...(can('node.audit') ? [{ id: 'activity', label: 'Activité', icon: <Activity size={15} /> }] : []),
     ...(can('node.settings') ? [{ id: 'security', label: 'Sécurité', icon: <ShieldCheck size={15} /> }] : []),
+    ...(can('node.backup') ? [{ id: 'backups', label: 'Sauvegardes', icon: <Archive size={15} /> }] : []),
     ...(node.kind === 'remote' && can('node.connection') ? [{ id: 'connection', label: 'Connexion', icon: <Plug size={15} /> }] : []),
   ]
   const [params, setParams] = useSearchParams(); const tab0 = params.get('tab'); const setTab = (t) => setParams({ tab: t }, { replace: true })
@@ -45,6 +47,7 @@ export default function Node() {
       {tab === 'domains' && <Domains node={node} user={user} onChange={reload} />}
       {tab === 'activity' && <ActivityTab node={node} platformAdmin={user.role === 'admin'} />}
       {tab === 'security' && <MfaPolicy node={node} role={role} user={user} onSaved={reload} />}
+      {tab === 'backups' && <NodeBackups key={node.id} node={node} />}
       {tab === 'connection' && <Connection node={node} role={role} reload={reload} />}
     </>
   )

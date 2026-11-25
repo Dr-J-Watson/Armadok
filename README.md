@@ -831,6 +831,33 @@ http:
       middlewares: [chain-public-api]   # sans filtre IP
 ```
 
+### 💾 Sauvegardes complètes du hub
+
+**Tous les nœuds → Backup et sauvegardes** (super-administrateurs) : créer, **télécharger**, **téléverser** et **restaurer** une sauvegarde complète.
+
+| | |
+|---|---|
+| **Contenu (au choix)** | la base (utilisateurs, droits, secrets chiffrés, modèles…) **et le journal d'audit** · les historiques de fichiers · la configuration Docker / Git du hub · les fichiers dynamiques de Traefik. Jamais la base de géolocalisation. |
+| **Cohérence** | copie de la base pendant que le hub tourne (API de sauvegarde de SQLite) : rien n'est arrêté |
+| **Protection** | mot de passe facultatif : chiffrement AES-GCM par morceaux, clé dérivée par scrypt ; une archive tronquée ou altérée est refusée |
+| **La clé `ENCRYPTION_KEY`** | **jamais dans l'archive** sauf demande explicite (archive protégée + code 2FA). Sans elle, les secrets de la base restent illisibles : sauvegardez aussi votre `.env` |
+| **Téléchargement** | code 2FA, lien à usage unique valable 60 secondes, fichier envoyé en flux (pas chargé en mémoire) |
+| **Téléversement** | par morceaux de 2 Mo, validé (manifeste) avant d'apparaître dans la liste |
+| **Restauration** | aperçu sans rien toucher, choix des éléments, **code 2FA + nom retapé**, sauvegarde « avant-restauration » automatique, mise en place au redémarrage (le conteneur doit avoir `restart: unless-stopped`), état d'avant gardé dans `data/avant-restauration`. Archive piégée (chemins `..`) ou base abîmée : refusée sans rien modifier. Une clé de chiffrement différente est signalée. |
+| **Où** | `data/sauvegardes/` (à ne pas confondre avec `data/backups/` : les versions précédentes de vos fichiers Traefik, pour restaurer UN fichier) |
+
+#### 💾 Sauvegarde d'un nœud (pour ses responsables)
+
+Onglet **Ce nœud → Sauvegardes** : les fichiers de la **machine** du nœud (configuration Traefik, versions précédentes, historiques des projets), sans le droit de super-administrateur.
+
+| | |
+|---|---|
+| **Droits** | `node.backup` (créer, télécharger, téléverser, supprimer, comparer : administrateurs) · `node.restore` (restaurer : **propriétaire**, accordable). Le propriétaire peut exiger la 2FA pour ces droits (onglet Sécurité) |
+| **Où** | créée par le worker (ou le hub pour le nœud local), rangée sur le hub dans `data/sauvegardes-noeuds/<nœud>/` (20 au plus), **hors** de la sauvegarde complète du hub |
+| **Jamais dedans** | l'identité du worker, la configuration Docker/Git, les mots de passe et clés, les fichiers des projets, les volumes |
+| **Restauration** | **comparaison fichier par fichier** (modifié / absent maintenant / absent de la sauvegarde), différences visibles, on coche ce qu'on remet, nom retapé, sauvegarde « avant-restauration » d'abord, YAML invalide refusé |
+| **Worker hors ligne** | création et comparaison impossibles (message clair) ; les sauvegardes existantes restent téléchargeables |
+
 ### 🚨 Accès d'urgence (administrateurs de la plateforme)
 
 La page **Tous les nœuds** liste tous les nœuds ; pour intervenir sur l'un d'eux :
@@ -1041,9 +1068,12 @@ Le conteneur doit tourner avec un utilisateur autorisé à **écrire** dans le d
 | `make status` | état, et connexion d'un worker |
 | `make restart` · `make version` | redémarre le service · affiche sa version |
 | `make up` | applique un changement du `.env` |
-| `make update` | mise à jour |
+| `make update` | **mise à jour guidée** : version au choix (stable `latest`, développement `dev`, un numéro, ou inchangée), **sauvegarde proposée avant**, attente que le hub réponde, version affichée. `ARMADOK_IMAGE` du `.env` garde le choix (retour arrière : remettre l'ancienne valeur) |
 | `make logs` | journaux du conteneur |
-| `make backup` | sauvegarde |
+| `make backup` | **sauvegarde guidée** du hub : contenu au choix (base et journal d'audit, historiques, configuration Docker/Git, fichiers Traefik), nom, mot de passe (chiffrement AES), clé de chiffrement en option, **copie vérifiée vers une clé USB ou un partage**, rappel de sauvegarder le `.env`. Se fait sans arrêter le hub. Sur un **worker** : archive de `data/` (identité) et du dossier Traefik, chiffrable (`openssl`) |
+| `make backups` · `make backup-delete` | liste des sauvegardes · suppression de l'une d'elles |
+| `make restore` | **restauration guidée** : choix dans la liste (ou **un fichier ailleurs** : clé USB, téléchargement), mot de passe, aperçu (date, version, clé de chiffrement même / différente), éléments à remplacer un par un, nom retapé ; le hub est arrêté, l'état actuel sauvegardé d'abord (`avant-restauration`), puis relancé et vérifié. **Marche même si le hub ne démarre plus** (conteneur ponctuel) |
+| `make` (seul) | **menu interactif** dans un terminal : service, sauvegardes, diagnostic, outils, installation, aide. Hors terminal (script, CI) : la liste des commandes |
 | `make down` | arrêt |
 | `make consumer-key` | génère la *consumer key* OVH |
 | `make help` | liste complète |
