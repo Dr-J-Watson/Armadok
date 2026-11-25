@@ -3,6 +3,8 @@
 #   mkdir armadok && cd armadok
 #   curl -fsSLO https://raw.githubusercontent.com/Dr-J-Watson/armadok/main/Makefile
 #   make install        # demande : le hub (interface complète) ou un worker (relié à un hub existant)
+#   make                # (ensuite) un menu interactif : service, sauvegardes, diagnostic, outils
+#   make backup / restore / backups   # sauvegardes guidées, même si le hub est arrêté
 #
 # Ce fichier est autonome : il crée docker-compose.yml, .env, data/ et (pour le hub) le routage Traefik.
 # Chaque question accepte une valeur préremplie : « make worker HUB_URL=https://… ENROLL_TOKEN=enr_… » ne pose que le reste.
@@ -11,7 +13,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 .SILENT:
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := menu
 
 IMAGE_REPO ?= ghcr.io/dr-j-watson/armadok
 IMAGE ?= $(IMAGE_REPO):latest
@@ -1510,9 +1512,338 @@ install_worker() {
   fi
 }
 only_hub() { grep -qE '^  armadok:' docker-compose.yml 2>/dev/null || die "Cette commande ne s'applique qu'au hub."; }
+# ── Menu général, sauvegardes et restauration (voir « make », « make backup », « make restore »).
+#    Même vocabulaire que le reste : ask / asks / yes / confirm ; chaque question accepte une variable préremplie (COMPONENTS, LABEL, BACKUP_PASSWORD, COPY_TO, FILE, CONFIRM…).
+MK="$(MAKE) --no-print-directory"; HUB="$(HUB_SVC)"
+comp_label() { case "$$1" in database) echo "Base de données et journal d'audit";; history) echo "Historiques des fichiers (projets et Traefik)";; home) echo "Configuration Docker et Git du hub";; traefik) echo "Fichiers de configuration Traefik";; *) echo "$$1";; esac; }
+human() { awk -v n="$${1:-0}" 'BEGIN{split("o Ko Mo Go To",u," ");i=1;while(n>=1024&&i<5){n/=1024;i++} if(i==1) printf "%d %s",n,u[i]; else printf "%.1f %s",n,u[i]}'; }
+kind_of() {
+  if [ -f docker-compose.yml ] && grep -qE "^  $$HUB:" docker-compose.yml; then echo hub
+  elif [ -f docker-compose.yml ] && grep -qE '^  worker:' docker-compose.yml; then echo worker
+  elif [ -f /etc/systemd/system/armadok-worker.service ]; then echo native
+  else echo none; fi; }
+hub_running() { docker compose ps --status running --services 2>/dev/null | grep -qx "$$HUB"; }
+env_val() { [ -f .env ] || return 0; grep -E "^$$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | sed -e "s/^'//" -e "s/'$$//" -e 's/^"//' -e 's/"$$//' || true; }
+set_env() { # CLÉ VALEUR : remplace ou ajoute dans .env (droits 600 conservés)
+  local t; [ -f .env ] || die ".env introuvable ici : lancez « make install »."
+  t="$$(mktemp .env.XXXXXX)"; chmod 600 "$$t"
+  awk -v k="$$1" -v v="$$2" 'BEGIN{FS=OFS="="} $$1==k{print k "=" v; f=1; next} {print} END{if(!f) print k "=" v}' .env > "$$t" && mv "$$t" .env; }
+cli() { # l'outil de sauvegarde de l'image : dans le conteneur qui tourne, sinon dans un conteneur ponctuel (le hub peut être arrêté, voire ne plus démarrer)
+  if hub_running; then docker compose exec -T -e BACKUP_PASSWORD "$$HUB" python -m app.tools.backup "$$@" </dev/null
+  else docker compose run --rm -T -e BACKUP_PASSWORD "$$HUB" python -m app.tools.backup "$$@" </dev/null; fi; }
+wait_hub() { local i; for i in $$(seq 1 45); do
+    if docker compose exec -T "$$HUB" python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=3)" </dev/null >/dev/null 2>&1; then return 0; fi; sleep 2; done; return 1; }
+pause() { [ -t 0 ] || return 0; printf '\n'; read -r -p "      $${D}Entrée pour revenir au menu…$${Z} " _ || true; }
+ask_password() { # affiche l'invite, redemande tant que court ou différent ; imprime le mot de passe
+  local a b n=0
+  while :; do
+    n=$$((n+1)); [ "$$n" -le 5 ] || die "Mot de passe non saisi correctement : abandon (rien n'a été créé)."
+    a="$$(asks "Mot de passe de la sauvegarde" "" "8 caractères au moins. Sans lui, la sauvegarde est INUTILISABLE (même par vous) : notez-le ailleurs.")"
+    [ "$${#a}" -ge 8 ] || { warnl "Trop court (8 caractères au moins)." >&2; continue; }
+    b="$$(asks "Confirmez le mot de passe")"
+    [ "$$a" = "$$b" ] && break
+    warnl "Les deux saisies diffèrent." >&2
+  done; printf '%s' "$$a"; }
+
+# ── liste des sauvegardes (tableau lisible)
+show_backups() { # imprime les lignes numérotées ; remplit BK_NAMES
+  local n=0 name when size enc label comps app key
+  BK_NAMES=()
+  while IFS=$$'\t' read -r name when size enc label comps app key; do
+    [ -n "$$name" ] || continue
+    n=$$((n+1)); BK_NAMES+=("$$name")
+    printf '  %s%2d)%s %s%s%s\n' "$$C" "$$n" "$$Z" "$$B" "$${label:-$$name}" "$$Z"
+    printf '      %s%s · %s · %s%s%s%s\n' "$$D" "$$when" "$$(human "$$size")" "$$([ "$$enc" = 1 ] && echo 'protégée par mot de passe' || echo 'en clair')" "$$([ "$$key" = 1 ] && echo ' · clé incluse')" "$$([ -n "$$app" ] && echo " · v$$app")" "$$Z"
+    [ -z "$$label" ] || printf '      %s%s%s\n' "$$D" "$$name" "$$Z"
+  done < <(cli list --tsv 2>/dev/null)
+  [ "$$n" -gt 0 ]; }
+
+backups_cmd() {
+  need_docker; only_hub
+  banner "Sauvegardes du hub"
+  if show_backups; then printf '\n'; hint "  $${#BK_NAMES[@]} sauvegarde(s) dans data/sauvegardes/ · « make restore » pour en restaurer une."; else say "Aucune sauvegarde pour l'instant. « make backup » en crée une."; fi; }
+
+# ── créer une sauvegarde du hub
+backup_hub() {
+  need_docker; only_hub
+  banner "Sauvegarde du hub"
+  say "Une sauvegarde COMPLÈTE : la base (utilisateurs, droits, secrets chiffrés, modèles…) et le journal d'audit,"
+  say "les historiques de fichiers, la configuration Docker/Git du hub et les fichiers de Traefik, au choix."
+  hint "Elle se fait SANS arrêter le hub ; le fichier est rangé dans data/sauvegardes/ (et se restaure aussi depuis l'interface)."
+  local comps=() id sel
+  if [ -n "$${COMPONENTS:-}" ]; then
+    for id in $${COMPONENTS//,/ }; do comps+=("$$id"); done
+  else
+    for id in database history home traefik; do
+      if [ "$$id" = database ]; then confirm "Inclure : $$(comp_label "$$id") ?" "Le cœur : sans lui, ce n'est plus une sauvegarde du hub." && comps+=("$$id")
+      else confirm "Inclure : $$(comp_label "$$id") ?" && comps+=("$$id"); fi
+    done
+  fi
+  [ "$${#comps[@]}" -gt 0 ] || die "Rien à sauvegarder : cochez au moins un élément."
+  local label pw="$${BACKUP_PASSWORD:-}" keyopt=""
+  label="$$(ask "Nom de cette sauvegarde (facultatif)" "" LABEL "Ex. : avant la mise à jour de décembre")"
+  if [ -z "$$pw" ]; then
+    if confirm "Protéger la sauvegarde par un mot de passe ?" "Chiffrement AES. Conseillé dès que vous la copiez ailleurs : elle contient tous vos secrets." "Vous devrez le ressaisir pour restaurer, y compris depuis l'interface."; then pw="$$(ask_password)"; fi
+  fi
+  if [ -n "$$pw" ] && [ -n "$$(env_val ENCRYPTION_KEY)" ] && [ "$${KEEP_KEY:-}" != 0 ]; then
+    if [ "$${KEEP_KEY:-}" = 1 ] || yes "Inclure aussi la clé de chiffrement (ENCRYPTION_KEY) dans la sauvegarde ?" "Sans cette clé, les secrets de la base sont illisibles sur une autre installation." "Elle ne sera dans l'archive que parce qu'elle est protégée par mot de passe."; then keyopt="--include-key"; fi
+  fi
+  printf '\n'; say "Création en cours (la base peut faire plusieurs dizaines de Mo)…"
+  local out name size
+  export BACKUP_PASSWORD="$$pw"
+  out="$$(cli create --label "$$label" --components "$$(IFS=,; echo "$${comps[*]}")" $$keyopt)" || die "La sauvegarde a échoué (voir le message ci-dessus)."
+  name="$$(printf '%s' "$$out" | awk -F'\t' '$$1=="OK"{print $$2}' | tail -1)"; size="$$(printf '%s' "$$out" | awk -F'\t' '$$1=="OK"{print $$3}' | tail -1)"
+  [ -n "$$name" ] || die "Réponse inattendue de l'outil de sauvegarde : $$out"
+  good "Sauvegarde créée : data/sauvegardes/$$name ($$(human "$$size"))"
+  [ -n "$$pw" ] && good "Protégée par mot de passe : gardez-le, il n'est écrit nulle part." || warnl "En clair : quiconque obtient ce fichier peut lire la base. Gardez-le en lieu sûr."
+  if [ -z "$$keyopt" ]; then
+    warnl "Elle ne contient PAS votre clé de chiffrement : gardez aussi une copie de .env (ENCRYPTION_KEY). Sans elle, les secrets de la base sont illisibles."
+  fi
+  local dest
+  dest="$$(ask "Copier aussi la sauvegarde ailleurs ? Dossier (clé USB, partage réseau…), vide pour passer" "" COPY_TO "Le dossier est créé s'il n'existe pas ; la copie est vérifiée.")"
+  if [ -n "$$dest" ]; then
+    mkdir -p "$$dest" && cp "data/sauvegardes/$$name" "$$dest/" || die "Copie impossible vers $$dest"
+    if [ "$$(sha256sum "data/sauvegardes/$$name" | cut -d' ' -f1)" = "$$(sha256sum "$$dest/$$name" | cut -d' ' -f1)" ]; then good "Copie vérifiée : $$dest/$$name"; else die "La copie diffère de l'original : ne la gardez pas."; fi
+    if [ -f .env ] && confirm "Copier aussi .env (la clé de chiffrement) à côté ?" "Fichier secret : droits 600, à garder à part de la sauvegarde si elle n'est pas protégée."; then
+      ( umask 077; cp .env "$$dest/armadok-env-$$(date +%Y%m%d-%H%M%S).env" ) && good "Copie de .env faite (droits 600)."
+    fi
+  fi
+  printf '\n'; hint "Restaurer : make restore · Liste : make backups · Interface : Tous les nœuds → Backup et sauvegardes."; }
+
+# ── choisir une sauvegarde (liste numérotée, ou un fichier ailleurs) ; imprime son nom
+pick_backup() {
+  local ans f base
+  if [ -n "$${FILE:-}" ]; then ans="$$FILE"
+  else
+    printf '\n' >&2
+    if show_backups >&2; then :; else say "Aucune sauvegarde dans data/sauvegardes/." >&2; fi
+    printf '\n  %sA)%s Un fichier de sauvegarde ailleurs sur cette machine (clé USB, téléchargement…)\n' "$$C" "$$Z" >&2
+    ans="$$(ask "Quelle sauvegarde restaurer ?" "1" "" "Un numéro de la liste, ou A pour un fichier ailleurs.")"
+  fi
+  case "$$ans" in
+    [0-9]*) if [ "$$ans" -ge 1 ] 2>/dev/null && [ "$$ans" -le "$${#BK_NAMES[@]}" ]; then printf '%s' "$${BK_NAMES[$$((ans-1))]}"; return 0; fi; die "Numéro invalide.";;
+    a|A) f="$$(ask "Chemin du fichier .zip ou .armbak" "" "" "Ex. : /media/usb/armadok-20261125-101500.armbak")";;
+    *) f="$$ans";;
+  esac
+  if [ -f "data/sauvegardes/$$f" ]; then printf '%s' "$$f"; return 0; fi
+  [ -f "$$f" ] || die "Fichier introuvable : $$f"
+  base="$$(basename "$$f")"
+  case "$$base" in *.zip|*.armbak) ;; *) die "Le fichier doit se terminer par .zip ou .armbak.";; esac
+  mkdir -p data/sauvegardes
+  [ -e "data/sauvegardes/$$base" ] && base="import-$$(date +%H%M%S)-$$base"
+  ( umask 077; cp "$$f" "data/sauvegardes/$$base" ) || die "Copie impossible dans data/sauvegardes/"
+  good "Fichier ajouté à la liste : $$base" >&2
+  printf '%s' "$$base"; }
+
+# ── restaurer une sauvegarde du hub (le hub est arrêté pendant l'opération : ça marche même s'il ne démarre plus)
+restore_hub() {
+  need_docker; only_hub
+  banner "Restauration du hub"
+  hint "Restaurer REMPLACE des données par celles de la sauvegarde. Une sauvegarde « avant-restauration » de l'état actuel est faite d'abord."
+  local name pw="$${BACKUP_PASSWORD:-}" info k=0
+  name="$$(pick_backup)"
+  if [ "$${name##*.}" = armbak ] && [ -z "$$pw" ]; then
+    while [ "$$k" -lt 3 ]; do
+      pw="$$(asks "Mot de passe de la sauvegarde" "" "Celui choisi à sa création.")"; export BACKUP_PASSWORD="$$pw"
+      if info="$$(cli inspect "$$name" --kv 2>&1)"; then break; fi
+      warnl "$$(printf '%s' "$$info" | sed 's/^ERREUR\t//' | tail -1)"; pw=""; k=$$((k+1))
+    done
+    [ -n "$$pw" ] || die "Mot de passe refusé : restauration annulée, rien n'a été modifié."
+  else
+    export BACKUP_PASSWORD="$$pw"; info="$$(cli inspect "$$name" --kv 2>&1)" || die "$$(printf '%s' "$$info" | sed 's/^ERREUR\t//' | tail -1)"
+  fi
+  local created by app cur label keystatus inckey
+  created="$$(printf '%s\n' "$$info" | sed -n 's/^created=//p')"; by="$$(printf '%s\n' "$$info" | sed -n 's/^by=//p')"; app="$$(printf '%s\n' "$$info" | sed -n 's/^app=//p')"; cur="$$(printf '%s\n' "$$info" | sed -n 's/^current=//p')"
+  label="$$(printf '%s\n' "$$info" | sed -n 's/^label=//p')"; keystatus="$$(printf '%s\n' "$$info" | sed -n 's/^keystatus=//p')"; inckey="$$(printf '%s\n' "$$info" | sed -n 's/^includeskey=//p')"
+  printf '\n'; sub "$${label:-$$name}"
+  say "Créée le $$created$${by:+ par $$by} · version $${app:-?} (installée ici : $$cur)"
+  case "$$keystatus" in
+    same) good "Même clé de chiffrement que cette installation : les secrets resteront lisibles.";;
+    different) warnl "La clé de chiffrement de cette sauvegarde est DIFFÉRENTE de celle de ce .env. $$([ "$$inckey" = 1 ] && echo "Elle est incluse : elle vous sera montrée à la fin." || echo "Sans la clé d'origine, les secrets de la base resteront illisibles.")";;
+    *) hint "  Clé d'origine inconnue (sauvegarde ancienne ou d'un autre hub).";;
+  esac
+  local comps=() id files bytes lab
+  if [ -n "$${COMPONENTS:-}" ]; then for id in $${COMPONENTS//,/ }; do comps+=("$$id"); done
+  else
+    printf '\n'; sub "Que remplacer ?"
+    while IFS=$$'\t' read -r -u 3 id lab files bytes; do   # la liste arrive sur le descripteur 3 : « confirm » lit, lui, le clavier
+      [ -n "$$id" ] || continue
+      if confirm "Remplacer : $$lab ($$files fichier(s), $$(human "$$bytes")) ?"; then comps+=("$$id"); fi
+    done 3< <(printf '%s\n' "$$info" | sed -n 's/^component=//p')
+  fi
+  [ "$${#comps[@]}" -gt 0 ] || die "Rien à restaurer : annulé."
+  printf '\n'; warnl "Le hub va être ARRÊTÉ quelques instants. Tout ce qui a changé depuis cette sauvegarde (utilisateurs, réglages…) sera perdu."
+  local typed
+  typed="$$(ask "Pour confirmer, retapez le nom de la sauvegarde" "" CONFIRM "$$name")"
+  [ "$$typed" = "$$name" ] || die "Nom différent : restauration annulée, rien n'a été modifié."
+  printf '\n'; say "Arrêt du hub…"; docker compose stop "$$HUB" >/dev/null 2>&1 || true
+  say "Restauration en cours…"
+  local out rc=0 key="" msg=""
+  export BACKUP_PASSWORD="$$pw"
+  out="$$(cli restore "$$name" --components "$$(IFS=,; echo "$${comps[*]}")" 2>&1)" || rc=$$?
+  printf '%s\n' "$$out" | sed -n 's/^SAFETY\t/  ✓ sauvegarde de l'"'"'état d'"'"'avant : data\/sauvegardes\//p'
+  if [ "$$rc" -ne 0 ]; then
+    fail "$$(printf '%s\n' "$$out" | sed -n 's/^ERREUR\t//p' | tail -1)"
+    warnl "La restauration a été REFUSÉE avant toute modification : vos données sont intactes. Le hub est arrêté : « make up » pour le relancer."
+    exit 1
+  fi
+  key="$$(printf '%s\n' "$$out" | sed -n 's/^KEY\t//p' | tail -1)"; msg="$$(printf '%s\n' "$$out" | awk -F'\t' '$$1=="OK"{print $$3}' | tail -1)"
+  good "$${msg:-Restauration appliquée.}"
+  if [ -n "$$key" ]; then
+    printf '\n'; warnl "Clé de chiffrement de la sauvegarde (différente de votre .env) :"; cmd "$$key"
+    if confirm "L'écrire dans .env (ENCRYPTION_KEY) maintenant ?" "L'ancienne valeur est remplacée : gardez-la si vous voulez pouvoir revenir en arrière."; then set_env ENCRYPTION_KEY "$$key"; good ".env mis à jour."; fi
+  fi
+  if confirm "Redémarrer le hub maintenant ?"; then
+    docker compose up -d "$$HUB" >/dev/null 2>&1 || die "Démarrage impossible : docker compose logs"
+    say "Attente du hub…"
+    if wait_hub; then good "Le hub répond. Restauration terminée."; else warnl "Le hub ne répond pas encore : « make logs » pour voir pourquoi (l'état d'avant est dans data/avant-restauration)."; fi
+  else hint "  Hub arrêté : « make up » pour le relancer."; fi
+  printf '\n'; hint "L'état d'avant est conservé dans data/avant-restauration/ et dans la sauvegarde « avant-restauration » de la liste."; }
+
+# ── supprimer une sauvegarde
+backup_delete() {
+  need_docker; only_hub
+  banner "Supprimer une sauvegarde"
+  local name
+  name="$$(pick_backup_any)"
+  confirm "Supprimer « $$name » définitivement ?" "Le fichier est effacé de data/sauvegardes/." || { say "Annulé."; return 0; }
+  cli delete "$$name" >/dev/null && good "Supprimée : $$name"; }
+pick_backup_any() { local ans; show_backups >&2 || die "Aucune sauvegarde."
+  ans="$$(ask "Laquelle ?" "" FILE "Le numéro de la liste.")"
+  [ "$$ans" -ge 1 ] 2>/dev/null && [ "$$ans" -le "$${#BK_NAMES[@]}" ] || die "Numéro invalide."
+  printf '%s' "$${BK_NAMES[$$((ans-1))]}"; }
+
+# ── workers (Docker Compose) : pas de base à sauvegarder, mais une identité et des fichiers Traefik
+backup_worker() {
+  need_docker
+  banner "Sauvegarde du worker"
+  say "Le worker garde SA CLÉ D'IDENTITÉ (data/identity.json), ses versions de fichiers et, si besoin, le dossier de configuration Traefik de cette machine."
+  hint "Sans la clé, il faudrait réenrôler le nœud avec un nouveau jeton. Le hub, lui, a déjà tout le reste."
+  local f="armadok-worker-$$(date +%Y%m%d-%H%M%S).tar.gz" dyn items=("data") pw="$${BACKUP_PASSWORD:-}"
+  dyn="$$(env_val TRAEFIK_DYNAMIC_PATH)"
+  case "$$dyn" in /*|./*|../*) if [ -d "$$dyn" ] && confirm "Inclure le dossier de configuration Traefik ($$dyn) ?" "Ce sont vos sites : c'est le contenu le plus précieux de ce nœud."; then items+=("$$dyn"); fi;; esac
+  if [ -z "$$pw" ] && command -v openssl >/dev/null && confirm "Protéger l'archive par un mot de passe ?" "Elle contient la clé d'identité du worker : quiconque l'obtient peut se faire passer pour lui."; then pw="$$(ask_password)"; fi
+  ( umask 077; tar czf "$$f" --exclude='data/tmp' --exclude='data/geoip' "$${items[@]}" ) || die "tar a échoué."
+  if [ -n "$$pw" ]; then
+    ( umask 077; BK_PW="$$pw" openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BK_PW -in "$$f" -out "$$f.enc" ) && rm -f "$$f" && f="$$f.enc"
+    good "Archive chiffrée (openssl, AES-256) : $$f"
+  else good "Archive : $$f"; warnl "En clair : elle contient la clé d'identité du worker."; fi
+  chmod 600 "$$f"; hint "  Pour restaurer : make restore (ou, à la main, tar xzf sur ce dossier)."; }
+
+restore_worker() {
+  need_docker
+  banner "Restauration du worker"
+  local f="$${FILE:-}" tmp="" n
+  if [ -z "$$f" ]; then
+    local files=() x
+    for x in armadok-worker-*.tar.gz armadok-worker-*.tar.gz.enc; do [ -f "$$x" ] && files+=("$$x"); done
+    [ "$${#files[@]}" -gt 0 ] || die "Aucune archive armadok-worker-*.tar.gz dans ce dossier (ou indiquez FILE=chemin)."
+    n=0; for x in "$${files[@]}"; do n=$$((n+1)); printf '  %s%2d)%s %s %s(%s)%s\n' "$$C" "$$n" "$$Z" "$$x" "$$D" "$$(human "$$(stat -c %s "$$x")")" "$$Z"; done
+    f="$$(ask "Quelle archive ?" "1" "" "Le numéro de la liste.")"
+    case "$$f" in [0-9]*) [ "$$f" -ge 1 ] 2>/dev/null && [ "$$f" -le "$${#files[@]}" ] || die "Numéro invalide."; f="$${files[$$((f-1))]}";; esac
+  fi
+  [ -f "$$f" ] || die "Fichier introuvable : $$f"
+  case "$$f" in *.enc) tmp="$$(mktemp)"; BK_PW="$${BACKUP_PASSWORD:-$$(asks "Mot de passe de l'archive")}" openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BK_PW -in "$$f" -out "$$tmp" 2>/dev/null || { rm -f "$$tmp"; die "Mot de passe incorrect ou archive abîmée."; }; f="$$tmp";; esac
+  tar tzf "$$f" >/dev/null 2>&1 || { [ -z "$$tmp" ] || rm -f "$$tmp"; die "Archive illisible."; }
+  warnl "Le worker sera arrêté et son dossier data/ REMPLACÉ par celui de l'archive (l'ancien est gardé dans data.avant-restauration)."
+  confirm "Restaurer maintenant ?" || { [ -z "$$tmp" ] || rm -f "$$tmp"; say "Annulé."; return 0; }
+  docker compose stop >/dev/null 2>&1 || true
+  rm -rf data.avant-restauration; [ -d data ] && mv data data.avant-restauration
+  tar xzf "$$f" --no-same-owner data 2>/dev/null || { [ -z "$$tmp" ] || rm -f "$$tmp"; [ -d data.avant-restauration ] && mv data.avant-restauration data; die "Extraction impossible : l'ancien data/ est remis en place."; }
+  good "data/ restauré."
+  local dyn dynm; dyn="$$(env_val TRAEFIK_DYNAMIC_PATH)"; dynm="$${dyn#/}"
+  case "$$dyn" in /*|./*|../*) if tar tzf "$$f" 2>/dev/null | grep -q "^$$dynm/\|^$$dyn/"; then
+      if confirm "L'archive contient aussi le dossier Traefik ($$dyn). Le restaurer ?" "Les fichiers de l'archive remplacent ceux du même nom ; les autres fichiers ne sont pas touchés."; then
+        case "$$dyn" in /*) tar xzf "$$f" -C / "$$dynm" 2>/dev/null;; *) tar xzf "$$f" "$$dyn" 2>/dev/null;; esac && good "Dossier Traefik restauré : $$dyn" || warnl "Restauration du dossier Traefik impossible (droits ?) : tar xzf $$f -C / $$dynm"
+      fi
+    fi;; esac
+  [ -z "$$tmp" ] || rm -f "$$tmp"
+  confirm "Redémarrer le worker ?" && { docker compose up -d >/dev/null 2>&1 && good "Worker relancé : « make status » vérifie sa connexion au hub."; }; }
+
+backup_cmd() { case "$$(kind_of)" in hub) backup_hub;; worker) backup_worker;; native) exec $(MAKE) --no-print-directory native-backup;; *) die "Aucune installation trouvée ici : lancez « make install » (ou placez-vous dans le bon dossier).";; esac; }
+restore_cmd() { case "$$(kind_of)" in hub) restore_hub;; worker) restore_worker;; native) die "Worker natif : l'archive de « make native-backup » se restaure à la main (tar xzf dans son dossier d'installation).";; *) die "Aucune installation trouvée ici : lancez « make install ».";; esac; }
+
+# ── mise à jour interactive : canal, sauvegarde avant, attente de santé
+update_cmd() {
+  need_docker
+  local kind cur chan cand
+  kind="$$(kind_of)"; [ "$$kind" = hub ] || [ "$$kind" = worker ] || die "Aucune installation Docker Compose ici."
+  banner "Mise à jour"
+  cur="$$(env_val ARMADOK_IMAGE)"; say "Image actuelle : $${cur:-$(IMAGE) (par défaut)}"
+  say "Quelle version voulez-vous ?"
+  printf '\n  %s1)%s Stable (latest) : la dernière version publiée\n  %s2)%s Développement (dev) : la version en cours de test, pour essayer en avance\n  %s3)%s Une version précise (ex. 1.17.0)\n  %s4)%s Garder l'"'"'image actuelle et seulement la rafraîchir\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+  chan="$$(ask "Votre choix" "4" CHANNEL "1 = latest · 2 = dev · 3 = numéro · 4 = inchangé")"
+  case "$$chan" in
+    1|latest|stable) cand="$(IMAGE_REPO):latest";;
+    2|dev) cand="$(IMAGE_REPO):dev"; warnl "« dev » est une version de test : faites une sauvegarde avant. Revenir à latest est possible tant que les mises à jour de la base restent compatibles.";;
+    3) cand="$(IMAGE_REPO):$$(ask "Numéro de version" "" VERSION "Ex. : 1.17.0")";;
+    *) cand="";;
+  esac
+  if [ "$$kind" = hub ] && [ "$${NO_BACKUP:-}" != 1 ] && confirm "Faire une sauvegarde avant de mettre à jour ?" "Fortement conseillé : c'est votre retour arrière si quelque chose se passe mal."; then
+    backup_hub || die "Sauvegarde échouée : mise à jour annulée."
+  fi
+  if [ -n "$$cand" ] && [ "$$cand" != "$$cur" ]; then set_env ARMADOK_IMAGE "$$cand"; good "Image choisie : $$cand (ancienne : $${cur:-défaut})"; fi
+  say "Téléchargement…"; docker compose pull || die "Téléchargement impossible."
+  docker compose up -d || die "Démarrage impossible."
+  if [ "$$kind" = hub ]; then
+    say "Attente du hub…"
+    if wait_hub; then good "Le hub répond — version : $$(docker compose exec -T "$$HUB" python -c "import os; print(os.environ.get('APP_VERSION','dev'))" </dev/null 2>/dev/null || echo '?')"; else warnl "Le hub ne répond pas encore : « make logs ». Retour arrière : remettez ARMADOK_IMAGE=$${cur:-$(IMAGE)} dans .env puis « make up »."; fi
+  else good "Worker mis à jour : « make status » vérifie sa connexion au hub."; fi; }
+
+# ── menus
+status_line() {
+  local kind v; kind="$$(kind_of)"
+  case "$$kind" in
+    hub) if hub_running; then v="$$(docker compose exec -T "$$HUB" python -c "import os; print(os.environ.get('APP_VERSION','dev'))" </dev/null 2>/dev/null || echo '?')"; printf '  %sHub%s · %sen marche%s · version %s\n' "$$B" "$$Z" "$$G" "$$Z" "$$v"; else printf '  %sHub%s · %sarrêté%s\n' "$$B" "$$Z" "$$Y" "$$Z"; fi;;
+    worker) printf '  %sWorker%s (Docker Compose) · %s\n' "$$B" "$$Z" "$$(docker compose ps --status running --services 2>/dev/null | grep -q . && echo 'en marche' || echo 'arrêté')";;
+    native) printf '  %sWorker natif%s (systemd)\n' "$$B" "$$Z";;
+    *) printf '  %sRien d'"'"'installé dans ce dossier%s\n' "$$Y" "$$Z";;
+  esac; }
+menu_choice() { local c; read -r -p "      $${C}➜$${Z} Votre choix : " c || c=0; printf '%s' "$$c"; }
+sub_menu_service() { local c
+  while :; do banner "Service"; status_line
+    printf '\n  %s1)%s Démarrer (ou appliquer un changement du .env)\n  %s2)%s Arrêter\n  %s3)%s Redémarrer\n  %s4)%s Mettre à jour (version au choix, sauvegarde avant)\n  %s5)%s Journaux en direct (Ctrl+C pour quitter)\n  %s6)%s État\n  %s0)%s Retour\n\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+    c="$$(menu_choice)"
+    case "$$c" in 1) $$MK up; pause;; 2) confirm "Arrêter le service ?" && { $$MK down; pause; };; 3) $$MK restart; pause;; 4) update_cmd; pause;; 5) $$MK logs || true;; 6) $$MK status; pause;; 0|"") return 0;; *) warnl "Choix inconnu.";; esac
+  done; }
+sub_menu_backup() { local c
+  while :; do banner "Sauvegardes"; status_line
+    printf '\n  %s1)%s Créer une sauvegarde\n  %s2)%s Restaurer une sauvegarde\n  %s3)%s Voir les sauvegardes\n  %s4)%s Supprimer une sauvegarde\n  %s0)%s Retour\n\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+    c="$$(menu_choice)"
+    case "$$c" in 1) (backup_cmd) || true; pause;; 2) (restore_cmd) || true; pause;; 3) (backups_cmd) || true; pause;; 4) (backup_delete) || true; pause;; 0|"") return 0;; *) warnl "Choix inconnu.";; esac
+  done; }
+sub_menu_tools() { local c
+  while :; do banner "Outils"; status_line
+    printf '\n  %s1)%s Générer un hash de mot de passe (ADMIN_PASSWORD_HASH)\n  %s2)%s Désactiver la 2FA d'"'"'un utilisateur (secours)\n  %s3)%s Générer une consumer key OVH\n  %s4)%s Afficher la configuration finale (docker compose config)\n  %s0)%s Retour\n\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+    c="$$(menu_choice)"
+    case "$$c" in
+      1) (only_hub; docker compose run --rm "$$HUB" python -m app.tools.hash_password) || true; pause;;
+      2) local u; u="$$(ask "Nom de l'utilisateur" "" NAME "Celui dont la 2FA doit être désactivée.")"; [ -z "$$u" ] || { (only_hub; docker compose run --rm "$$HUB" python -m app.tools.reset_2fa "$$u") || true; }; pause;;
+      3) (only_hub; docker compose run --rm "$$HUB" python -m app.tools.ovh_consumer_key) || true; pause;;
+      4) docker compose config | head -80; pause;;
+      0|"") return 0;; *) warnl "Choix inconnu.";; esac
+  done; }
+main_menu() { local c kind
+  while :; do kind="$$(kind_of)"; banner "Armadok"; status_line; printf '\n'
+    if [ "$$kind" = none ]; then
+      printf '  %s1)%s Installer (le hub, un worker, un worker natif)\n  %s2)%s Aide : toutes les commandes\n  %s0)%s Quitter\n\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+      c="$$(menu_choice)"; case "$$c" in 1) $$MK install; pause;; 2) $$MK help; pause;; 0|"") return 0;; *) warnl "Choix inconnu.";; esac
+    else
+      printf '  %s1)%s Service : démarrer, arrêter, mettre à jour, journaux\n  %s2)%s Sauvegardes : créer, restaurer, voir, supprimer\n  %s3)%s Diagnostic : vérifier l'"'"'installation (doctor)\n  %s4)%s Outils : mot de passe, 2FA, clé OVH, configuration\n  %s5)%s Installer / réinstaller\n  %s6)%s Aide : toutes les commandes\n  %s0)%s Quitter\n\n' "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z" "$$C" "$$Z"
+      c="$$(menu_choice)"
+      case "$$c" in 1) sub_menu_service;; 2) sub_menu_backup;; 3) $$MK doctor || true; pause;; 4) sub_menu_tools;; 5) $$MK install; pause;; 6) $$MK help; pause;; 0|"") return 0;; *) warnl "Choix inconnu.";; esac
+    fi
+  done; }
 endef
 export SH_FUNCS
 
+##@ Menu
+menu: ## Menu interactif : ce que lance « make » tout seul dans un terminal (hors terminal : l'aide)
+	eval "$$SH_FUNCS"
+	if [ -z "$${MENU:-}" ] && ! { [ -t 0 ] && [ -t 1 ]; }; then exec $(MAKE) --no-print-directory help; fi
+	main_menu
+
+##@ Aide
 help: ## Affiche cette aide
 	@grep -E '^(##@ |[a-zA-Z0-9_-]+:.*## )' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*## "} /^##@ /{sub(/^##@ /,""); printf "\n%s\n",$$0; next} {printf "  make %-17s %s\n",$$1,$$2}'
 	@echo
@@ -1608,15 +1939,30 @@ logs: ## Affiche les logs
 restart: ## Redémarre le service sans recréer le conteneur
 	docker compose restart
 
-update: ## Met à jour vers la dernière version
-	docker compose pull && docker compose up -d
-
-backup: ## Sauvegarde data/ dans une archive datée (base du hub, ou identité du worker)
-	f="armadok-data-$$(date +%Y%m%d-%H%M%S).tar.gz"; tar czf "$$f" data && chmod 600 "$$f" && echo "Sauvegarde : $$f (contient la base : gardez-la en lieu sûr)"
+update: ## Met à jour : version au choix (latest, dev, numéro), sauvegarde avant, attente de santé
+	eval "$$SH_FUNCS"
+	update_cmd
 
 status: ## État du service (et, pour un worker, sa connexion au hub)
 	@docker compose ps
 	if grep -q '^  worker:' docker-compose.yml 2>/dev/null; then echo; docker compose logs --no-color --tail=5 worker 2>&1 | sed 's/^/  /'; fi
+
+##@ Sauvegardes
+backup: ## Crée une sauvegarde, de façon guidée (hub : base, audit, historiques, Traefik · worker : identité et fichiers)
+	eval "$$SH_FUNCS"
+	backup_cmd
+
+backups: ## Liste les sauvegardes du hub
+	eval "$$SH_FUNCS"
+	backups_cmd
+
+restore: ## Restaure une sauvegarde : choix, aperçu, confirmation ; marche même si le hub est arrêté ou ne démarre plus
+	eval "$$SH_FUNCS"
+	restore_cmd
+
+backup-delete: ## Supprime une sauvegarde de la liste
+	eval "$$SH_FUNCS"
+	backup_delete
 
 ##@ Diagnostic
 doctor: ## Vérifie l'installation : .env, secrets, dossiers, droits, réseau, conteneur
@@ -1719,4 +2065,4 @@ reset-2fa: ## Désactive la double authentification (hub) : make reset-2fa NAME=
 	@[ -n "$(NAME)" ] || { echo "Usage : make reset-2fa NAME=utilisateur"; exit 1; }
 	docker compose run --rm $(HUB_SVC) python -m app.tools.reset_2fa "$(NAME)"
 
-.PHONY: help install continue native-script hub worker worker-native native-check native-status native-logs native-restart native-stop native-start native-backup native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
+.PHONY: menu backups restore backup-delete help install continue native-script hub worker worker-native native-check native-status native-logs native-restart native-stop native-start native-backup native-update native-uninstall up down restart logs status update backup doctor config version password consumer-key reset-2fa
