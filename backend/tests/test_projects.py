@@ -698,3 +698,46 @@ def test_project_resources_group_volumes_and_networks():
     assert [n["name"] for n in r["networks"]] == ["app_default", "proxy"]
     assert len(r["networks"][0]["usedBy"]) == 2
     assert resources([]) == {"volumes": [], "networks": []}
+
+
+def test_rename_display_name_and_folder(pj):
+    h, base, fake = pj["h"], pj["base"], pj["fake"]
+    pid = pid_of(pj, "site")
+    # nom affiché : la base seulement, le dossier ne bouge pas
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"displayName": "  Mon   site "}).status_code == 200
+    p = client.get(f"/api/projects/{pid}", headers=h).json()
+    assert p["name"] == "Mon site" and p["folder"] == "site" and p["displayName"] == "Mon site" and (base / "site").is_dir()
+    # dossier : refusé tant que des conteneurs du projet existent
+    assert client.get(f"/api/projects/{pid}/rename?folder=shop2", headers=h).json()["containers"]
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "shop2"}).status_code == 409
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "../x"}).status_code == 422
+    for cid in [k for k, c in fake.containers.items() if (c.get("Labels") or {}).get("com.docker.compose.project") == "site" or "site" in str(c.get("Labels"))]:
+        del fake.containers[cid]
+    plan = client.get(f"/api/projects/{pid}/rename?folder=shop2", headers=h).json()
+    assert plan["containers"] == [] and plan["composeBefore"] == "site" and plan["composeAfter"] == "shop2" and plan["volumes"] == ["site_data"]
+    r = client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "shop2"})
+    assert r.status_code == 409 and "site_data" in r.json()["detail"]                     # les volumes de l'ancien nom : à confirmer
+    r = client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "shop2", "acceptVolumes": True})
+    assert r.status_code == 200, r.text
+    assert not (base / "site").exists() and (base / "shop2" / "docker-compose.yml").is_file() and (base / "shop2" / ".env").is_file()
+    p = client.get(f"/api/projects/{pid}", headers=h).json()
+    assert p["path"] == str(base / "shop2") and p["folder"] == "shop2" and p["name"] == "Mon site"
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"displayName": ""}).status_code == 200
+    assert client.get(f"/api/projects/{pid}", headers=h).json()["name"] == "shop2"
+    # nom déjà pris à côté
+    (base / "taken").mkdir()
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "taken"}).status_code == 409
+
+
+def test_rename_folder_with_fixed_compose_name(pj):
+    h, base = pj["h"], pj["base"]
+    (base / "fixed").mkdir()
+    (base / "fixed" / "compose.yaml").write_text("name: keep\nservices:\n  a:\n    image: x\n")
+    pid = pid_of(pj, "fixed")
+    plan = client.get(f"/api/projects/{pid}/rename?folder=fixed2", headers=h).json()
+    assert plan["composeBefore"] == plan["composeAfter"] == "keep" and plan["volumes"] == []
+    assert client.put(f"/api/projects/{pid}/rename", headers=h, json={"folder": "fixed2"}).status_code == 200
+    assert (base / "fixed2" / "compose.yaml").is_file()
+    with pytest.raises(Exception) as e:
+        project_ops.p_rename({"dir": str(base), "name": "autre"})
+    assert getattr(e.value, "status", 0) == 409                                         # jamais une racine
