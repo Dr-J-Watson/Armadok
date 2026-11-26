@@ -194,8 +194,10 @@ def login(body: Login, request: Request, response: Response):
         ok = bcrypt.checkpw(body.password.encode()[:72], (row["password_hash"] if row else "").encode() or _dummy)
     except ValueError:
         ok = False
-    if row and row["source"] == "guest" and not row["guest_direct"]:   # invité d'un hub lié sans mot de passe propre : il passe par son hub d'origine
-        ok = False
+    if row and row["source"] == "guest":   # invité d'un hub lié : connexion directe seulement avec le mot de passe qu'il a défini ICI, si ce hub l'accepte pour sa liaison
+        from . import link_guests
+        if not link_guests.direct_login_allowed(row):
+            ok = False
     if not (row and ok and not row["disabled"]):
         _fail(ip, name)
         _audit_failed(ip, body.username)
@@ -310,6 +312,8 @@ class Disable(BaseModel):
 
 @router.post("/2fa/disable")
 def disable_2fa(body: Disable, request: Request, response: Response, p=Depends(current_user)):
+    if p.source == "guest":   # la 2FA d'un invité est la condition de son mot de passe propre : elle ne se retire pas
+        raise HTTPException(403, "La double authentification d'un invité d'un hub lié ne peut pas être désactivée")
     key = f"2fa-off:{p.id}"
     _check_lock(key, p.username)
     row = db.one("SELECT password_hash FROM users WHERE id=?", (p.id,))

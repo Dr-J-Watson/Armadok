@@ -18,6 +18,7 @@ def _clean(monkeypatch):
         if code != "000000":
             raise StoreError("Code de double authentification invalide", 403)
     monkeypatch.setattr(routes_links, "need_second_factor", fake)
+    monkeypatch.setattr(link_guests, "MIN_INTERVAL", 0)   # le limiteur a son propre test
 
     def wipe():
         for g in db.rows("SELECT id FROM groups WHERE link_id<>''"):
@@ -27,6 +28,7 @@ def _clean(monkeypatch):
         db.run("DELETE FROM users WHERE username LIKE 'alice@%' AND source<>'env'")
         db.run("DELETE FROM hub_links")
         link_guests._sent.clear()
+        link_guests._last_in.clear()
     wipe()
     yield
     wipe()
@@ -72,8 +74,10 @@ def test_teams_become_external_groups_and_members_passwordless_guests(pj):
     for pw in ("!invité", "", "x" * 20):
         assert client.post("/api/auth/login", json={"username": "alice@hub-b", "password": pw or "vide-vide-vide"}).status_code == 401
     # ils ne sont ni dans la liste des comptes locaux, ni dans les annuaires, ni ajoutables comme membres
-    assert "alice@hub-b" not in json.dumps(client.get("/api/admin/users", headers=pj["h"]).json())
-    assert "alice@hub-b" not in json.dumps(client.get("/api/users-directory", headers=pj["h"]).json())
+    users = client.get("/api/users", headers=pj["h"])
+    assert users.status_code == 200 and users.json() and "alice@hub-b" not in json.dumps(users.json())
+    directory = client.get("/api/users-directory", headers=pj["h"])
+    assert directory.status_code == 200 and "alice@hub-b" not in json.dumps(directory.json())
     assert client.get("/api/users-lookup", params={"username": "alice@hub-b"}, headers=pj["h"]).status_code == 404
     nid = nodes.local_node_id()
     assert client.post(f"/api/nodes/{nid}/members", headers=pj["h"], json={"username": "alice@hub-b", "role": "viewer"}).status_code == 404
@@ -226,3 +230,12 @@ def test_host_admin_settings_need_2fa_and_guests_can_be_blocked(pj):
     assert listing[0]["username"] == "alice@hub-b" and listing[0]["teams"] == ["Ops · Hub B"]
     client.patch(f"{BASE}/{lid}", headers=pj["h"], json={"hostEnabled": False, "code": "000000"})
     assert guest("alice@hub-b") is None                                                             # accueil retiré : tout disparaît
+
+
+def test_a_peer_flooding_team_announcements_is_throttled(monkeypatch):
+    monkeypatch.setattr(link_guests, "MIN_INTERVAL", 5)
+    lid = usable_link()
+    assert link_guests.apply_in(lid, teams(("t1", "Ops", [("u1", "alice")])))["accepted"] is True
+    again = link_guests.apply_in(lid, teams(("t1", "Ops", [("u1", "alice"), ("u2", "bob")])))
+    assert again["accepted"] is False and again["reason"] == "trop rapproché"
+    assert guest("bob@hub-b") is None                                                                # la rafale n'a rien changé

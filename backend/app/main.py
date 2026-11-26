@@ -22,6 +22,8 @@ from .routes_access import router as access_router
 from .worker_link import router as worker_router
 from .hub_link import router as link_router
 from .routes_links import router as links_admin_router
+from .routes_relay import router as relay_router
+from .routes_guest import router as guest_router
 from . import hub_link
 from .events import router as events_router, start_watchers
 from .routes_obs import router as obs_router
@@ -82,7 +84,7 @@ _po.sweep_later()
 automod_engine.start()
 hub_link.start()
 app = FastAPI(title="Armadok", docs_url=None, redoc_url=None, openapi_url=None)
-for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, templates_router, backup_router, node_backup_router, link_router, links_admin_router, hooks_router, terminal_router):
+for r in (auth_router, nodes_router, admin_router, worker_router, events_router, rbac_router, access_router, dns_router, traefik_router, toggle_router, certs_router, obs_router, docker_router, projects_router, templates_router, backup_router, node_backup_router, link_router, links_admin_router, relay_router, guest_router, hooks_router, terminal_router):
     app.include_router(r)
 
 

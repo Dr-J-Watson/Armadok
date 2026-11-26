@@ -19,8 +19,9 @@ import hashlib
 
 PROTOCOL = 1            # le plus récent que ce hub parle
 MIN_PROTOCOL = 1        # le plus ancien qu'il accepte encore
-FEATURES = ("state", "guests")   # fonctions de ce hub : « state » (état de la liaison), « guests » (équipes partagées et comptes invités) ; « relay » viendra avec le relais
-MAX_MESSAGE = 1 * 1024 * 1024
+RELAY_FEATURE = "relay1"   # le numéro est le niveau de l'API relayée : il change quand les routes de travail changent de forme, et le relais est alors refusé entre niveaux différents
+FEATURES = ("state", "guests", RELAY_FEATURE)   # fonctions de ce hub : « state » (état de la liaison), « guests » (équipes partagées et comptes invités) ; « relay » viendra avec le relais
+MAX_MESSAGE = 8 * 1024 * 1024
 CODE_TTL = 15 * 60
 PING_EVERY = 20
 IDLE_LIMIT = 75

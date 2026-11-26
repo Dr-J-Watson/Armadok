@@ -54,13 +54,26 @@ export async function refreshSession() {
   return refreshing
 }
 
+// Nœud d'un hub LIÉ : identifiant « L:<liaison>:<nœud distant> ». Ses requêtes de travail passent par /api/linked/<liaison>/… (le hub d'origine les relaie, l'autre hub les rejoue
+// avec les droits de l'invité) ; les routes propres à CE hub n'envoient jamais l'identifiant d'un nœud lié.
+const LINKED = /^L:([0-9a-f]{32}):(.+)$/
+const RELAYED = /^\/(audit|docker|meta|obs|projects|traefik)(\/|\?|$)/
+export function route(path, xnode) {
+  const m = xnode && LINKED.exec(xnode)
+  if (m) return RELAYED.test(path) && !path.startsWith('/projects/templates') ? { path: `/linked/${m[1]}${path}`, node: m[2] } : { path, node: null }
+  const pm = /^\/nodes\/(L:[0-9a-f]{32}:[^/?]+)(.*)$/.exec(path)   // le détail d'un nœud lié
+  if (pm) { const mm = LINKED.exec(decodeURIComponent(pm[1])); if (mm) return { path: `/linked/${mm[1]}/nodes/${mm[2]}${pm[2]}`, node: null } }
+  return { path, node: xnode }
+}
+
 async function raw(method, path, body, retry = true, node = null) {
   let res
+  const target = route(path, node || (traefikRoute && TRAEFIK_PATH.test(path) ? traefikRoute.via : nodeId))
   try {
-    res = await fetch('/api' + path, {
+    res = await fetch('/api' + target.path, {
       method,
       credentials: 'same-origin',
-      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(node ? { 'X-Node': node } : traefikRoute && TRAEFIK_PATH.test(path) ? { 'X-Node': traefikRoute.via, ...(traefikRoute.scope && !path.startsWith('/meta') ? { 'X-Node-Scope': traefikRoute.scope } : {}) } : nodeId ? { 'X-Node': nodeId } : {}) },
+      headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...(accessToken ? { Authorization: 'Bearer ' + accessToken } : {}), ...(target.node ? { 'X-Node': target.node } : {}), ...(!node && traefikRoute && TRAEFIK_PATH.test(path) && traefikRoute.scope && !path.startsWith('/meta') && !LINKED.test(traefikRoute.via) ? { 'X-Node-Scope': traefikRoute.scope } : {}) },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
   } catch {

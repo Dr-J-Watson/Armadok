@@ -138,6 +138,7 @@ def public(r) -> dict:
     return {"id": r["id"], "label": r["label"], "peerName": r["peer_name"], "peerHubId": r["peer_hub_id"], "peerUrl": r["peer_url"], "weCall": bool(r["we_call"]),
             "status": r["status"], "state": state, "confirmedLocal": bool(r["confirmed_local"]), "confirmedPeer": bool(r["confirmed_peer"]),
             "fingerprint": proto.fingerprint(me.public, r["peer_key"]) if r["peer_key"] else "", "graceHours": r["grace_hours"],
+            "hostEnabled": bool(r["host_enabled"]), "directEnabled": bool(r["direct_enabled"]), "peerHosting": bool(r["peer_hosting"]), "peerDirect": bool(r["peer_direct"]), "peerUiUrl": r["peer_ui_url"],
             "peerVersion": r["peer_version"], "peerProtocol": r["peer_protocol"], "protocol": r["protocol"], "features": [f for f in r["features"].split(",") if f],
             "lastSeen": r["last_seen"], "lastError": r["last_error"], "codeExpires": r["code_expires"] if r["status"] == "invited" else None,
             "createdAt": r["created_at"], "createdBy": r["created_by"], "revokedAt": r["revoked_at"], "revokedBy": r["revoked_by"]}
@@ -304,6 +305,10 @@ def update(link_id: str, user: str, grace_hours: int | None = None, label: str |
     if direct is not None and bool(direct) != bool(r["direct_enabled"]):
         db.run("UPDATE hub_links SET direct_enabled=? WHERE id=?", (1 if direct else 0, link_id))
         audit(user, "admin.link.direct", f"{link_id} {'connexion directe autorisée' if direct else 'connexion directe retirée'}")
+        _push_state(link_id)
+        if not direct:   # plus de mot de passe propre : les invités repassent par leur hub d'origine
+            from . import link_guests
+            link_guests.clear_direct(link_id)
     if grace_hours is not None:
         if not 0 <= grace_hours <= proto.MAX_GRACE_HOURS:
             raise LinkError(f"Le délai de grâce va de 0 à {proto.MAX_GRACE_HOURS} heures")
@@ -349,6 +354,28 @@ class Channel:
     def __init__(self, link_id: str, loop: asyncio.AbstractEventLoop, send, close) -> None:
         self.link_id, self.loop, self._send, self._close = link_id, loop, send, close
         self.lock = asyncio.Lock()
+        self.pending: dict[str, asyncio.Future] = {}   # requêtes relayées en attente de réponse
+
+    async def request(self, msg: dict, timeout: float) -> dict:
+        """Envoie une requête relayée et attend la réponse portant le même identifiant (à appeler sur la boucle de ce canal)."""
+        rid = str(msg["id"])
+        fut = self.loop.create_future()
+        self.pending[rid] = fut
+        try:
+            await self.send(msg)
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            self.pending.pop(rid, None)
+
+    def resolve(self, msg: dict) -> None:
+        fut = self.pending.get(str(msg.get("id", ""))[:64])
+        if fut and not fut.done():
+            fut.set_result(msg)
+
+    def fail_all(self) -> None:
+        for fut in list(self.pending.values()):
+            if not fut.done():
+                fut.set_exception(ConnectionError("liaison coupée"))
 
     async def send(self, msg: dict) -> None:
         async with self.lock:
@@ -397,7 +424,7 @@ def set_public_url(url: str) -> str:
 def my_state(r) -> dict:
     me = identity()
     return {"type": "state", "confirmed": bool(r["confirmed_local"]), "name": me.name, "version": VERSION, "protocol": proto.PROTOCOL,
-            "minProtocol": proto.MIN_PROTOCOL, "features": list(proto.FEATURES), "hosting": bool(r["host_enabled"]), "publicUrl": public_url()}
+            "minProtocol": proto.MIN_PROTOCOL, "features": list(proto.FEATURES), "hosting": bool(r["host_enabled"]), "direct": bool(r["host_enabled"] and r["direct_enabled"]), "publicUrl": public_url()}
 
 
 def _push_state(link_id: str) -> None:
@@ -418,8 +445,8 @@ def _apply_state(link_id: str, msg: dict) -> None:
     except LinkError:
         ui = ""
     hosting = 1 if msg.get("hosting") is True else 0
-    db.run("UPDATE hub_links SET confirmed_peer=?, peer_name=?, peer_version=?, peer_hosting=?, peer_ui_url=?, last_seen=? WHERE id=?",
-           (1 if msg.get("confirmed") is True else 0, name, version, hosting, ui, time.time(), link_id))
+    db.run("UPDATE hub_links SET confirmed_peer=?, peer_name=?, peer_version=?, peer_hosting=?, peer_direct=?, peer_ui_url=?, last_seen=? WHERE id=?",
+           (1 if msg.get("confirmed") is True else 0, name, version, hosting, 1 if msg.get("direct") is True and hosting else 0, ui, time.time(), link_id))
     if hosting != r["peer_hosting"]:   # l'autre hub vient d'accepter (ou de refuser) nos équipes : on les lui renvoie
         from . import link_guests
         link_guests.forget(link_id)
@@ -462,6 +489,17 @@ async def _recv(ws_recv, timeout: float, limit: int = proto.MAX_MESSAGE) -> dict
 
 def _int(v, default: int = 0) -> int:
     return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 1000 else default
+
+
+async def _answer(chan: Channel, msg: dict) -> None:
+    from . import link_relay
+    try:
+        await chan.send(await link_relay.handle(chan.link_id, msg))
+    except Exception:   # noqa: BLE001 : la réponse d'erreur part quand même, sans détail interne
+        try:
+            await chan.send({"type": "res", "id": str(msg.get("id", ""))[:64], "status": 502, "ctype": "application/json", "body": base64.b64encode(b'{"detail":"Erreur interne du hub"}').decode()})
+        except Exception:
+            pass
 
 
 # ------------------------------------------------------------------ canal : côté appelé (reçoit la connexion de l'autre hub)
@@ -554,6 +592,7 @@ async def _serve_channel(chan: Channel, recv) -> None:
         await _loop_channel(chan, recv)
     finally:
         sync.cancel()
+        chan.fail_all()
 
 
 async def _loop_channel(chan: Channel, recv) -> None:
@@ -564,6 +603,10 @@ async def _loop_channel(chan: Channel, recv) -> None:
             await chan.send({"type": "pong"})
         elif kind == "state":
             _apply_state(chan.link_id, msg)
+        elif kind == "req":   # une personne de l'autre hub travaille chez nous : on rejoue sa requête dans nos routes (voir link_relay)
+            asyncio.create_task(_answer(chan, msg))
+        elif kind == "res":
+            chan.resolve(msg)
         elif kind == "teams":
             from . import link_guests
             await chan.send(link_guests.apply_in(chan.link_id, msg))

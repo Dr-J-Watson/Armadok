@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS hub_links (
   host_enabled INTEGER NOT NULL DEFAULT 0,
   direct_enabled INTEGER NOT NULL DEFAULT 0,
   peer_hosting INTEGER NOT NULL DEFAULT 0,
+  peer_direct INTEGER NOT NULL DEFAULT 0,
   peer_ui_url TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS link_shared_groups (
@@ -322,7 +323,7 @@ MIGRATIONS = {
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
     "groups": [("link_id", "TEXT NOT NULL DEFAULT ''"), ("peer_ref", "TEXT NOT NULL DEFAULT ''")],   # équipe d'un hub lié (reçue, jamais modifiable ici)
     "hub_identity": [("public_url", "TEXT NOT NULL DEFAULT ''")],
-    "hub_links": [("host_enabled", "INTEGER NOT NULL DEFAULT 0"), ("direct_enabled", "INTEGER NOT NULL DEFAULT 0"), ("peer_hosting", "INTEGER NOT NULL DEFAULT 0"), ("peer_ui_url", "TEXT NOT NULL DEFAULT ''")],
+    "hub_links": [("host_enabled", "INTEGER NOT NULL DEFAULT 0"), ("direct_enabled", "INTEGER NOT NULL DEFAULT 0"), ("peer_hosting", "INTEGER NOT NULL DEFAULT 0"), ("peer_direct", "INTEGER NOT NULL DEFAULT 0"), ("peer_ui_url", "TEXT NOT NULL DEFAULT ''")],
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
     "project_templates": [("shared", "INTEGER NOT NULL DEFAULT 1"), ("folder_id", "INTEGER")],   # folder_id : dossier d'organisation (kind « templates » de project_folders ; vide = à la racine)   # 0 = privé (son auteur seulement), 1 = partagé ; les modèles d'avant ce réglage restent partagés
     "image_checks": [("latest_tag", "TEXT NOT NULL DEFAULT ''"), ("notified_tag", "TEXT NOT NULL DEFAULT ''")],   # latest_tag : version plus récente trouvée au registre

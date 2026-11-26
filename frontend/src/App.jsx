@@ -19,6 +19,7 @@ import Accounts from './pages/Accounts.jsx'
 import Node from './pages/Node.jsx'
 import Nodes from './pages/Nodes.jsx'
 import Rights from './pages/Rights.jsx'
+import GuestSetup from './pages/GuestSetup.jsx'
 import Help from './pages/Help.jsx'
 import Monitoring from './pages/Monitoring.jsx'
 import Docker from './pages/Docker.jsx'
@@ -249,6 +250,7 @@ export default function App() {
 
   useDocTitle(user)
   if (!ready) return <Loading />
+  if (window.location.pathname === '/guest-setup') return <GuestSetup />   // page publique : l'invité d'un hub lié y définit son mot de passe (lien à usage unique)
   if (!user) return <Login />
   const admin = user.role === 'admin'
   const suspended = node?.status === 'suspended' && !node.emergency

@@ -162,8 +162,10 @@ function NameModal({ name, onClose }) {
 }
 
 // Équipes d'une liaison : celles de CE hub que l'on partage, l'accueil de celles de l'autre hub, et les invités qui en résultent.
-function TeamsModal({ l, onClose }) {
+function TeamsModal({ l: l0, onClose }) {
   const { toast } = useUi(); const qc = useQueryClient()
+  const all = useQuery({ queryKey: ['links'], queryFn: () => api.get('/admin/links'), refetchInterval: 5000 })
+  const l = (all.data?.links || []).find((x) => x.id === l0.id) || l0   // toujours l'état à jour de la liaison
   const q = useQuery({ queryKey: ['link-teams', l.id], queryFn: () => api.get(`/admin/links/${l.id}/teams`) })
   const gq = useQuery({ queryKey: ['link-guests-of', l.id], queryFn: () => api.get(`/admin/links/${l.id}/guests`), refetchInterval: 10000 })
   const [sel, setSel] = useState(null); const [code, setCode] = useState(''); const [busy, setBusy] = useState(''); const [err, setErr] = useState('')
@@ -189,6 +191,9 @@ function TeamsModal({ l, onClose }) {
             <Btn small kind={d.hostEnabled ? 'danger' : 'primary'} busy={busy === 'host'} disabled={!okCode(code)} onClick={() => run('host', () => api.patch(`/admin/links/${l.id}`, { hostEnabled: !d.hostEnabled, code }), d.hostEnabled ? 'Accueil retiré : les invités ont été supprimés' : 'Accueil autorisé')}>{d.hostEnabled ? 'Retirer l\'accueil (supprime les invités)' : 'Autoriser l\'accueil'}</Btn>
             <span className="muted small">{d.hostEnabled ? 'Les équipes reçues deviennent des groupes, leurs membres des invités sans mot de passe, plafonnés, qui disparaissent avec la liaison.' : 'Tant que ce n\'est pas autorisé, rien n\'est créé ici.'}</span>
           </div>
+          {d.hostEnabled && <div className="row" style={{ gap: 8, alignItems: 'center', marginTop: 8 }}>
+            <Btn small kind={l.directEnabled ? 'danger' : undefined} busy={busy === 'direct'} disabled={!okCode(code)} onClick={() => run('direct', () => api.patch(`/admin/links/${l.id}`, { directEnabled: !l.directEnabled, code }), l.directEnabled ? 'Connexion directe retirée : mots de passe des invités effacés' : 'Connexion directe autorisée')}>{l.directEnabled ? 'Retirer la connexion directe' : 'Autoriser la connexion directe'}</Btn>
+            <span className="muted small">{l.directEnabled ? 'Les invités peuvent définir un mot de passe (et une 2FA obligatoire) propre à ce hub, avec un lien à usage unique.' : 'Les invités passent uniquement par leur hub d\'origine.'}</span></div>}
           {d.received.length > 0 && <div style={{ marginTop: 8 }}>{d.received.map((t) => <div key={t.id} className="small"><b>{t.name}</b> · {t.members.length} invité{t.members.length > 1 ? 's' : ''} · {t.grants ? `${t.grants} attribution${t.grants > 1 ? 's' : ''}` : <span className="muted">aucun droit encore : donnez-lui un rôle dans « Droits »</span>}</div>)}</div>}
         </div>
         {gq.data && gq.data.length > 0 && <div>

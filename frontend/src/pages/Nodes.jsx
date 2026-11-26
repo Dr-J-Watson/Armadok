@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, DoorOpen, ShieldAlert, ShieldCheck, Zap } from 'lucide-react'
+import { Boxes, DoorOpen, Link2, ShieldAlert, ShieldCheck, Zap } from 'lucide-react'
 import { api } from '../api.js'
 import { useAuth } from '../auth.jsx'
 import { useNode } from '../node.jsx'
-import { Badge, Btn, Empty, Field, Info, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
+import { Badge, Btn, CopyBtn, Empty, Field, Info, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
 import Backups from '../components/Backups.jsx'
 import NodeBackups from '../components/NodeBackups.jsx'
 import Links from '../components/Links.jsx'
@@ -89,9 +89,47 @@ function NodesList() {
             </tr>)
         })}</tbody></table></div>
       {q.data.length === 0 && <div className="card"><Empty><Boxes size={30} /><div>Aucun nœud.</div></Empty></div>}
+      <LinkedEncarts />
       {em && <EmergencyModal node={em} onClose={() => setEm(null)} onDone={(id) => { setEm(null); refresh(); open(id) }} />}
       {act && <ActionModal node={act} onClose={() => setAct(null)} onDone={() => { setAct(null); refresh() }} />}
     </>
+  )
+}
+
+// Un encart par hub lié : ses nœuds, tels qu'ils sont ouverts à vos équipes. Ce que l'on peut y faire est décidé par ce hub-là ; qui, chez vous, y a accès se règle dans « Liaisons → Équipes ».
+function LinkedEncarts() {
+  const { linkedBlocks, setNode, node } = useNode(); const nav = useNavigate(); const [pwd, setPwd] = useState(null)
+  if (!linkedBlocks || linkedBlocks.length === 0) return null
+  return (
+    <>{pwd && <SetupLinkModal b={pwd} onClose={() => setPwd(null)} />}{linkedBlocks.map((b) => (
+      <div key={b.linkId} style={{ marginTop: 18 }}>
+        <div className="row wrap" style={{ gap: 8, marginBottom: 8 }}><h3 style={{ margin: 0 }}><Link2 size={15} style={{ verticalAlign: -2 }} /> Hub {b.hub || 'lié'} {b.error ? <Badge kind="warn">{b.error}</Badge> : <Badge kind="ok">en ligne</Badge>}</h3>
+          {b.direct && !b.error && <Btn small className="right" title="Définir un mot de passe pour vous connecter directement sur ce hub, sans passer par celui-ci. Le mot de passe se tape sur le domaine de l'autre hub." onClick={() => setPwd(b)}><ShieldCheck size={13} /> Mot de passe pour ce hub</Btn>}</div>
+        {b.nodes.length === 0 ? <div className="card"><div className="muted small">{b.error || 'Aucun nœud ouvert à vos équipes sur ce hub pour l\'instant : ses administrateurs doivent leur donner des droits.'}</div></div> : (
+          <div className="card flush"><table className="t"><thead><tr><th>Nœud</th><th>Votre rôle</th><th /></tr></thead>
+            <tbody>{b.nodes.map((n) => (
+              <tr key={n.id}><td><div className="row"><NodeAvatar node={n} size={30} /><b>{n.name}</b></div></td><td>{n.roleLabel || n.role}</td>
+                <td className="actions"><Btn small disabled={n.id === node?.id} onClick={() => { setNode(n.id); nav('/') }}><DoorOpen size={13} /> {n.id === node?.id ? 'Ouvert' : 'Ouvrir'}</Btn></td></tr>))}</tbody></table></div>)}
+        <div className="muted small" style={{ marginTop: 6 }}>Les droits sur ces nœuds sont ceux que le hub {b.hub || 'lié'} accorde à vos équipes.</div>
+      </div>))}</>
+  )
+}
+
+// Mode direct : le hub d'accueil donne un lien à usage unique (10 minutes) ; le mot de passe se tape sur SON domaine, jamais ici.
+function SetupLinkModal({ b, onClose }) {
+  const [out, setOut] = useState(null); const [err, setErr] = useState('')
+  useEffect(() => { api.post(`/linked-setup/${b.linkId}`).then(setOut).catch((e) => setErr(e.message)) }, [b.linkId])
+  const link = out ? (out.url || out.token) : ''
+  return (
+    <Modal small title={`Mot de passe pour le hub ${b.hub || 'lié'}`} onClose={onClose} footer={<Btn kind="primary" onClick={onClose}>Fermer</Btn>}>
+      <div className="col">
+        {err ? <div className="banner err">{err}</div> : !out ? <Loading /> : <>
+          <div className="banner info">Ouvrez ce lien <b>dans la prochaine dizaine de minutes</b> : il sert une seule fois, et c'est <b>sur le site de {b.hub || 'ce hub'}</b> que vous choisirez votre mot de passe et enregistrerez votre application d'authentification. Ce hub-ci ne les verra jamais.</div>
+          {!out.url && <div className="banner warn">L'adresse de l'interface de ce hub n'est pas connue : ouvrez-le à son adresse habituelle puis ajoutez <span className="mono">/guest-setup#</span> suivi de ce code.</div>}
+          <div className="row" style={{ gap: 8 }}><input className="input mono grow" readOnly value={link} onFocus={(e) => e.target.select()} /><CopyBtn text={link} /></div>
+          {out.url && <a className="btn primary" href={out.url} target="_blank" rel="noopener noreferrer">Ouvrir sur le hub {b.hub || 'lié'}</a>}</>}
+      </div>
+    </Modal>
   )
 }
 

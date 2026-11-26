@@ -18,6 +18,8 @@ from .audit import audit
 MAX_TEAMS = 100
 MAX_GUESTS = 1000
 GUEST_PASSWORD = "!invité"   # jamais un hash valide : aucune connexion par mot de passe tant que l'invité n'a pas défini le sien (mode direct)
+MIN_INTERVAL = 2.0           # secondes minimum entre deux annonces d'équipes acceptées d'une même liaison
+_last_in: dict[str, float] = {}
 _sent: dict[str, str] = {}   # dernière composition envoyée à chaque liaison (on ne renvoie que ce qui change)
 
 
@@ -91,6 +93,10 @@ def apply_in(link_id: str, msg: dict) -> dict:
     r = hl.get(link_id)
     if not r or not hl.usable(r) or not r["host_enabled"] or not has_feature(r, "guests"):
         return {"type": "teams_ack", "accepted": False}
+    now = time.monotonic()
+    if now - _last_in.get(link_id, -99) < MIN_INTERVAL:   # un hub qui renvoie ses équipes en rafale ne doit pas faire travailler la base sans fin
+        return {"type": "teams_ack", "accepted": False, "reason": "trop rapproché"}
+    _last_in[link_id] = now
     raw = msg.get("teams")
     if not isinstance(raw, list) or len(raw) > MAX_TEAMS:
         return {"type": "teams_ack", "accepted": False, "reason": "données invalides"}
@@ -165,8 +171,46 @@ def _delete_guest(uid: int) -> None:
     auth.bump_sessions(uid)
     db.run("DELETE FROM group_members WHERE user_id=?", (uid,))
     db.run("DELETE FROM grants WHERE subject_type='user' AND subject_id=?", (uid,))
-    db.run("DELETE FROM users WHERE id=? AND source='guest'", (uid,))
+    try:
+        db.run("DELETE FROM users WHERE id=? AND source='guest'", (uid,))
+    except Exception:   # noqa: BLE001 : une référence qui retient le compte ne doit jamais le laisser actif
+        db.run("UPDATE users SET disabled=1, guest_blocked=1, guest_direct=0, password_hash=? WHERE id=?", (GUEST_PASSWORD, uid))
     events.publish("session", user=uid)
+
+
+def direct_login_allowed(row) -> bool:
+    """Un invité peut-il se connecter avec SON mot de passe sur ce hub ? Il l'a défini, la liaison est vivante, et ce hub accepte ce mode pour cette liaison."""
+    if not row or row["source"] != "guest" or not row["guest_direct"] or row["guest_blocked"]:
+        return False
+    r = hl.get(row["guest_link"])
+    return bool(r and r["status"] == "paired" and r["host_enabled"] and r["direct_enabled"] and _allowed(r))
+
+
+def clear_direct(link_id: str) -> None:
+    """La connexion directe est retirée : mot de passe et 2FA propres aux invités effacés, sessions ouvertes invalidées."""
+    for u in db.rows("SELECT id FROM users WHERE guest_link=? AND guest_direct=1", (link_id,)):
+        db.run("UPDATE users SET guest_direct=0, password_hash=?, totp_secret=NULL, totp_enabled=0, recovery_codes='' WHERE id=?", (GUEST_PASSWORD, u["id"]))
+        auth.bump_sessions(u["id"])
+        events.publish("session", user=u["id"])
+
+
+SETUP_TTL = 10 * 60
+
+
+def issue_setup(link_id: str, ref: str) -> str:
+    """Hôte : un lien à usage unique (10 minutes) pour qu'un invité définisse SON mot de passe et sa 2FA ici, sur le domaine de ce hub. Jamais le mot de passe lui-même ne circule."""
+    r = hl.get(link_id)
+    if not r or not hl.usable(r) or not r["host_enabled"] or not r["direct_enabled"]:
+        raise hl.LinkError("Ce hub n'autorise pas la connexion directe pour cette liaison", 403)
+    u = db.one("SELECT * FROM users WHERE guest_link=? AND guest_ref=? AND source='guest'", (link_id, ref))
+    if not u or u["disabled"] or u["guest_blocked"]:
+        raise hl.LinkError("Votre compte invité n'est pas actif sur ce hub", 403)
+    import secrets as _s
+    token = "gst_" + _s.token_urlsafe(32)
+    db.run("DELETE FROM guest_setup_tokens WHERE user_id=?", (u["id"],))
+    db.run("INSERT INTO guest_setup_tokens(token_hash,user_id,expires_at) VALUES(?,?,?)", (hl.hash_code(token), u["id"], time.time() + SETUP_TTL))
+    audit("lien", "admin.link.guest.setup_link", f"{u['username']} ({link_id})")
+    return token
 
 
 def purge(link_id: str) -> None:
