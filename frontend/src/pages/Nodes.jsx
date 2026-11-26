@@ -8,6 +8,7 @@ import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Field, Info, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
 import Backups from '../components/Backups.jsx'
 import NodeBackups from '../components/NodeBackups.jsx'
+import Links from '../components/Links.jsx'
 import { CONN, NodeAvatar } from '../components/NodeSwitcher.jsx'
 import { Countdown } from '../components/Countdown.jsx'
 import { fmtDate } from '../lib/util.js'
@@ -19,8 +20,8 @@ export default function Nodes() {
   return (
     <>
       <div className="page-head"><div><h1>Tous les nœuds</h1><p>{tab === 'backups' ? 'Sauvegardes : le hub en entier, ou les fichiers d\'un nœud au choix (selon votre accès).' : 'Vue de la plateforme. Entrer chez un utilisateur exige un motif et une double authentification, et son propriétaire en est toujours informé.'}</p></div></div>
-      <div className="row" style={{ marginBottom: 14 }}><Tabs value={tab} onChange={(t) => setParams(t === 'nodes' ? {} : { tab: t })} tabs={[{ id: 'nodes', label: 'Nœuds' }, { id: 'backups', label: 'Backup et sauvegardes' }]} /></div>
-      {tab === 'backups' ? <BackupsTab /> : <NodesList />}
+      <div className="row" style={{ marginBottom: 14 }}><Tabs value={tab} onChange={(t) => setParams(t === 'nodes' ? {} : { tab: t })} tabs={[{ id: 'nodes', label: 'Nœuds et liaisons' }, { id: 'backups', label: 'Backup et sauvegardes' }]} /></div>
+      {tab === 'backups' ? <BackupsTab /> : <><NodesList /><Links /></>}
     </>
   )
 }

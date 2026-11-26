@@ -60,6 +60,40 @@ CREATE TABLE IF NOT EXISTS node_members (
   created_at REAL NOT NULL,
   PRIMARY KEY (node_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS hub_identity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  hub_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS hub_links (
+  id TEXT PRIMARY KEY,
+  peer_hub_id TEXT NOT NULL DEFAULT '',
+  peer_name TEXT NOT NULL DEFAULT '',
+  peer_key TEXT NOT NULL DEFAULT '',
+  peer_url TEXT NOT NULL DEFAULT '',
+  we_call INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','paired','revoked')),
+  confirmed_local INTEGER NOT NULL DEFAULT 0,
+  confirmed_peer INTEGER NOT NULL DEFAULT 0,
+  grace_hours INTEGER NOT NULL DEFAULT 12,
+  label TEXT NOT NULL DEFAULT '',
+  peer_version TEXT NOT NULL DEFAULT '',
+  peer_protocol INTEGER NOT NULL DEFAULT 0,
+  protocol INTEGER NOT NULL DEFAULT 0,
+  features TEXT NOT NULL DEFAULT '',
+  last_seen REAL,
+  last_error TEXT NOT NULL DEFAULT '',
+  code_hash TEXT,
+  code_expires REAL,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL,
+  revoked_at REAL,
+  revoked_by TEXT NOT NULL DEFAULT '',
+  peer_notified INTEGER NOT NULL DEFAULT 0
+);
 CREATE TABLE IF NOT EXISTS node_workers (
   node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
   public_key TEXT NOT NULL,

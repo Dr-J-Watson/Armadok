@@ -831,6 +831,36 @@ http:
       middlewares: [chain-public-api]   # sans filtre IP
 ```
 
+### 🔗 Liaison entre deux hubs (branche `develop`, en construction)
+
+**Tous les nœuds → Nœuds et liaisons → Liaisons avec d'autres hubs** (super-administrateurs, 2FA exigée pour chaque action). Chaque hub reste **seul maître de ses utilisateurs, de ses droits et de ses nœuds** : la liaison établit seulement *qui est l'autre hub* et *si la connexion est vivante*. La liaison est toujours entre **deux** hubs : si B est lié à A et à C, A et C ne se voient pas.
+
+1. Le hub A clique sur **Inviter un hub** : un code à usage unique, valable 15 minutes (stocké en empreinte, jamais en clair), avec l'adresse de A.
+2. Le hub B clique sur **Rejoindre un hub** et colle l'invitation : B appelle A, les deux échangent leurs clés publiques Ed25519.
+3. **Les deux administrateurs comparent l'empreinte** affichée (identique des deux côtés) et confirment chacun avec leur code 2FA : c'est ce qui protège contre quelqu'un qui s'interposerait pendant l'appairage. Rien n'est actif avant les deux confirmations.
+4. Le hub qui a rejoint entretient ensuite une connexion WebSocket signée vers l'autre. **Un seul des deux hubs a donc besoin d'être joignable.** Le hub appelé prouve son identité autant que l'appelant (signatures dans les deux sens, nonces des deux côtés, messages qui nomment les deux hubs et le sens : rien ne se rejoue).
+
+**Versions différentes.** Chaque hub annonce la plage de protocoles qu'il parle ; on utilise le plus récent commun, avec les seules fonctions que les deux comprennent. Si les plages ne se recouvrent plus, la liaison le dit (« versions incompatibles ») : mettez à jour le plus ancien des deux.
+
+**Délai de grâce** (par liaison, 12 h par défaut, 0 à 720 h, modifiable avec la 2FA) : si la connexion est coupée, ce que la liaison apporte (comptes invités, dans les étapes suivantes) reste valable ce temps-là, puis cesse. **Révoquer** coupe tout de suite et prévient l'autre hub ; s'il est injoignable, il l'apprend à sa prochaine connexion.
+
+**Ouvrir le chemin `/api/link`** : comme pour les workers, seul ce chemin doit être joignable par l'autre hub (jamais le reste de l'interface). Avec un filtre IP sur le routeur du hub, ajoutez un routeur dédié, sans le filtre :
+
+```yaml
+http:
+  routers:
+    armadok-link:
+      rule: "Host(`hub.exemple.fr`) && PathPrefix(`/api/link`)"
+      priority: 100
+      entryPoints: [websecure]
+      service: armadok-svc          # le même service que le routeur du hub
+      tls:
+        certResolver: lehttp
+      middlewares: [chain-public-api]   # sans filtre IP
+```
+
+Le chemin n'est exploitable qu'avec un code valide (appairage, 15 minutes, une fois) ou la clé d'une liaison déjà confirmée. Aucune alerte n'est affichée si le chemin n'est pas ouvert : la liaison apparaît simplement « hors ligne », comme un worker déconnecté. L'adresse doit être en **HTTPS** (HTTP seulement avec `LINK_ALLOW_INSECURE=true`, pour des essais). **Sauvegarde :** la clé d'identité du hub (chiffrée par `ENCRYPTION_KEY`) fait partie de la base : ne restaurez pas la même sauvegarde sur deux machines qui resteraient liées.
+
 ### 💾 Sauvegardes complètes du hub
 
 **Tous les nœuds → Backup et sauvegardes** (super-administrateurs) : créer, **télécharger**, **téléverser** et **restaurer** une sauvegarde complète.

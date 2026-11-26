@@ -85,6 +85,7 @@ export const api = {
   get: (p, o) => raw('GET', p, undefined, true, o?.node),
   post: (p, b = {}, o) => raw('POST', p, b, true, o?.node),
   put: (p, b, o) => raw('PUT', p, b, true, o?.node),
+  patch: (p, b, o) => raw('PATCH', p, b, true, o?.node),
   del: (p, o) => raw('DELETE', p, undefined, true, o?.node),
 }
 export const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null)).toString()
