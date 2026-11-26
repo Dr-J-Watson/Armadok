@@ -12,6 +12,7 @@ import Links from '../components/Links.jsx'
 import { CONN, NodeAvatar } from '../components/NodeSwitcher.jsx'
 import { Countdown } from '../components/Countdown.jsx'
 import { fmtDate } from '../lib/util.js'
+import { CodeField } from '../components/CodeField.jsx'
 
 // Vue de la plateforme : deux onglets — les nœuds (accès d'urgence, actions rapides) et les sauvegardes complètes du hub.
 export default function Nodes() {
@@ -141,7 +142,7 @@ function EmergencyModal({ node, onClose, onDone }) {
       <div className="col gap-lg">
         <div className="banner err" style={{ margin: 0 }}><ShieldAlert size={18} /><div>Vous allez intervenir sur le nœud de {node.owners.map((o) => o.username).join(', ') || 'un utilisateur'}. <b>Il en sera informé</b> à sa prochaine connexion, avec votre motif et la liste de vos actions. La session dure <b>30 minutes</b>.</div></div>
         <Field label="Motif" help="Obligatoire (10 caractères minimum). Il sera montré au propriétaire."><textarea className="textarea" style={{ fontFamily: 'inherit' }} rows={3} autoFocus value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder="Ex : le propriétaire signale une panne et m'a demandé d'intervenir" /></Field>
-        <Field label="Code de double authentification" help="Le code à 6 chiffres de votre application d'authentification."><input className="input mono" style={{ maxWidth: 180, letterSpacing: 3, textAlign: 'center' }} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" /></Field>
+        <CodeField code={code} setCode={setCode} />
         {err && <div className="banner err" style={{ margin: 0 }}>{err}</div>}
       </div>
     </Modal>)
@@ -184,7 +185,7 @@ function ActionModal({ node, onClose, onDone }) {
           <Field label="Message au propriétaire (facultatif)" help="Ajouté à l'avis qu'il verra à sa prochaine connexion."><input className="input" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} /></Field>
           <div className="fgrid">
             <Field label={`Pour confirmer, tapez « ${node.name} »`}><input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} /></Field>
-            <Field label="Code de double authentification"><input className="input mono" style={{ letterSpacing: 3, textAlign: 'center' }} value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" placeholder="000000" /></Field></div>
+            <CodeField wide help="" code={code} setCode={setCode} /></div>
           {err && <div className="banner err" style={{ margin: 0 }}>{err}</div>}
         </>}
       </div>

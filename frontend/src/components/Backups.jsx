@@ -6,6 +6,7 @@ import { useAuth } from '../auth.jsx'
 import { Badge, Btn, CopyBtn, Empty, Field, Loading, Modal, useUi } from './ui.jsx'
 import { fmtSize } from '../lib/docker.js'
 import { fmtDate } from '../lib/util.js'
+import { CodeField } from './CodeField.jsx'
 
 const CHUNK = 2 * 1024 * 1024
 const SHORT = { database: 'Base de données', history: 'Historiques', home: 'Docker / Git', traefik: 'Fichiers Traefik' }
@@ -105,7 +106,7 @@ function CreateModal({ d, onClose, onDone }) {
         {protect && <div className="row wrap" style={{ gap: 8 }}><input className="input grow" type="password" autoComplete="new-password" placeholder="Mot de passe (8 caractères au moins)" value={pw} onChange={(e) => setPw(e.target.value)} /><input className="input grow" type="password" autoComplete="new-password" placeholder="Le confirmer" value={pw2} onChange={(e) => setPw2(e.target.value)} />
           {pw2 && pw !== pw2 && <span className="small" style={{ color: 'var(--err)' }}>Les deux mots de passe diffèrent.</span>}</div>}
         {protect && <><label className="row" style={{ gap: 8 }}><input type="checkbox" disabled={!d.hasEnvKey} checked={withKey} onChange={(e) => setWithKey(e.target.checked)} /><span><b>Inclure la clé de chiffrement</b> <span className="muted small">{d.hasEnvKey ? '(de quoi tout relire sans votre .env ; code 2FA requis)' : '(aucune ENCRYPTION_KEY définie : rien à inclure)'}</span></span></label>
-          {withKey && <Field label="Code de double authentification"><input className="input mono" style={{ maxWidth: 180, letterSpacing: 3, textAlign: 'center' }} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} /></Field>}</>}
+          {withKey && <CodeField help="" code={code} setCode={setCode} />}</>}
         {busy && <div className="muted small">Création en cours… la base fait plusieurs dizaines de Mo, cela peut prendre un moment.</div>}
         {err && <div className="banner err">{err}</div>}
       </div>
@@ -127,7 +128,7 @@ function DownloadModal({ b, onClose }) {
     <Modal small title="Télécharger la sauvegarde" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={code.replace(/\s/g, '').length < 6} onClick={go}><Download size={14} /> Télécharger</Btn></>}>
       <div className="col"><div className="mono small">{b.name} · {fmtSize(b.size)}</div>
         {!b.encrypted && <div className="banner warn">Cette sauvegarde n'est <b>pas protégée par un mot de passe</b> : quiconque obtient le fichier peut lire la base. Conservez-la en lieu sûr.</div>}
-        <Field label="Code de double authentification" help="Le code à 6 chiffres de votre application d'authentification."><input className="input mono" autoFocus style={{ maxWidth: 180, letterSpacing: 3, textAlign: 'center' }} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && code.replace(/\s/g, '').length >= 6) go() }} /></Field>
+        <CodeField autoFocus code={code} setCode={setCode} go={go} />
         {err && <div className="banner err">{err}</div>}</div>
     </Modal>
   )
@@ -172,7 +173,7 @@ function RestoreModal({ b, d, onClose }) {
           {info.keyStatus === 'different' && <div className="banner warn"><ShieldAlert size={16} /><span>La clé de chiffrement de cette sauvegarde est <b>différente</b> de celle de ce hub. {info.manifest.includesKey ? 'Elle est incluse : elle vous sera montrée à la fin.' : 'Sans la clé d\'origine, les secrets de la base resteront illisibles.'}</span></div>}
           {info.keyStatus === 'unknown' && <div className="banner info">La clé d'origine n'est pas connue pour cette sauvegarde (ancienne version). Si elle venait d'un autre hub, ses secrets pourraient rester illisibles.</div>}
           <div className="banner warn col" style={{ gap: 4 }}><div><b>Ce que cela fait :</b> une sauvegarde de l'état actuel est faite d'abord, puis les éléments cochés sont remplacés au prochain démarrage et <b>le hub redémarre</b> (quelques secondes sans service). Tout ce qui a changé depuis cette sauvegarde, utilisateurs et réglages compris, sera perdu.</div></div>
-          <Field label="Code de double authentification"><input className="input mono" style={{ maxWidth: 180, letterSpacing: 3, textAlign: 'center' }} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} /></Field>
+          <CodeField help="" code={code} setCode={setCode} />
           <Field label="Pour confirmer, retapez le nom de la sauvegarde"><input className="input mono" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={b.name} autoComplete="off" spellCheck={false} /></Field>
         </>}
         {err && <div className="banner err">{err}</div>}

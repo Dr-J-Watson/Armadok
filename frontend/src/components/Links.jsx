@@ -5,18 +5,12 @@ import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Field, Info, Loading, Modal, useUi } from './ui.jsx'
 import { Countdown } from './Countdown.jsx'
 import { fmtDate } from '../lib/util.js'
+import { CodeField, okCode } from './CodeField.jsx'
 
 const STATE = {
   invited: ['info', 'invitation en attente'], expired: ['', 'invitation expirée'], to_confirm: ['warn', 'à confirmer ici'], wait_peer: ['warn', 'attend l\'autre hub'],
   online: ['ok', 'en ligne'], offline: ['', 'hors ligne'], incompatible: ['err', 'versions incompatibles'], revoked: ['err', 'révoquée'],
 }
-const okCode = (c) => c.replace(/\s/g, '').length >= 6
-
-// Le champ de code 2FA, commun à toutes les actions qui engagent la sécurité d'une liaison.
-function CodeField({ code, setCode, go }) {
-  return <Field label="Code de double authentification" help="Le code à 6 chiffres de votre application d'authentification."><input className="input mono" autoFocus style={{ maxWidth: 180, letterSpacing: 3, textAlign: 'center' }} inputMode="numeric" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && okCode(code) && go) go() }} /></Field>
-}
-
 // Liaisons avec d'autres hubs : chaque hub garde ses utilisateurs, ses droits et ses nœuds ; ici on établit seulement « qui est l'autre » et si le lien est vivant.
 export default function Links() {
   const { toast, confirm } = useUi(); const qc = useQueryClient()
@@ -90,7 +84,7 @@ function InviteModal({ link, onClose }) {
       ) : (
         <div className="col">
           {!link && <Field label="Nom pour vous reconnaître (facultatif)"><input className="input" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Hub de l'agence" /></Field>}
-          <CodeField code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>)}
+          <CodeField autoFocus code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>)}
     </Modal>
   )
 }
@@ -108,7 +102,7 @@ function JoinModal({ onClose }) {
         <Field label="Invitation reçue" help="Collez l'invitation complète (adresse#code), ou seulement le code et renseignez l'adresse en dessous."><input className="input mono" autoFocus value={inv} onChange={(e) => setInv(e.target.value)} placeholder="https://armadok.exemple.fr#lnk_…" /></Field>
         {!hasUrl && <Field label="Adresse du hub (HTTPS)"><input className="input mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://armadok.exemple.fr" /></Field>}
         <Field label="Nom pour vous reconnaître (facultatif)"><input className="input" maxLength={80} value={label} onChange={(e) => setLabel(e.target.value)} /></Field>
-        <CodeField code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
+        <CodeField autoFocus code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
     </Modal>
   )
 }
@@ -122,7 +116,7 @@ function ConfirmModal({ l, onClose }) {
         <div className="banner info">Lisez cette empreinte à l'administrateur de <b>{l.peerName || 'l\'autre hub'}</b> (de vive voix, ou par un canal que vous connaissez déjà), ou comparez-la avec ce qu'il voit. <b>Elle doit être strictement identique des deux côtés.</b> Sinon, quelqu'un s'est glissé entre vous : révoquez.</div>
         <div className="mono" style={{ fontSize: 22, letterSpacing: 2, textAlign: 'center', padding: 10 }}>{l.fingerprint}</div>
         <div className="muted small">Rien n'est actif tant que les <b>deux</b> administrateurs n'ont pas confirmé.</div>
-        <CodeField code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
+        <CodeField autoFocus code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
     </Modal>
   )
 }
@@ -133,7 +127,7 @@ function RevokeModal({ l, onClose }) {
   return (
     <Modal small title={`Révoquer la liaison avec ${l.peerName || 'ce hub'}`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="danger" busy={busy} disabled={!okCode(code)} onClick={go}><Unplug size={14} /> Révoquer</Btn></>}>
       <div className="col"><div className="banner warn">La connexion est coupée tout de suite et l'autre hub est prévenu. Pour relier à nouveau ces deux hubs, il faudra refaire une invitation et comparer les empreintes.</div>
-        <CodeField code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
+        <CodeField autoFocus code={code} setCode={setCode} go={go} />{err && <div className="banner err">{err}</div>}</div>
     </Modal>
   )
 }
@@ -146,7 +140,7 @@ function GraceModal({ l, max, onClose }) {
     <Modal small title="Délai de grâce" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!ok || !okCode(code)} onClick={go}>Enregistrer</Btn></>}>
       <div className="col"><div className="muted small">Si la connexion avec <b>{l.peerName || 'cet hub'}</b> est coupée, ce qu'elle apporte (comptes invités…) reste valable ce nombre d'heures, puis cesse. <b>0</b> : dès la coupure. Plus c'est court, plus c'est sûr.</div>
         <Field label={`Heures (0 à ${max})`}><input className="input mono" style={{ maxWidth: 120 }} inputMode="numeric" value={h} onChange={(e) => setH(e.target.value)} /></Field>
-        <CodeField code={code} setCode={setCode} go={ok ? go : null} />{err && <div className="banner err">{err}</div>}</div>
+        <CodeField autoFocus code={code} setCode={setCode} go={ok ? go : null} />{err && <div className="banner err">{err}</div>}</div>
     </Modal>
   )
 }
