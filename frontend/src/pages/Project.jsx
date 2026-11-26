@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useParams, useSearchParams } from 'react-router-dom'
-import { Activity, Boxes, FileStack, SquareTerminal, Terminal, SlidersHorizontal, ExternalLink, FileText, FolderCode, GitBranch, Globe, HardDrive, Image as ImageIcon, Network as NetIcon, LayoutDashboard, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
+import { Activity, Boxes, FileStack, SquareTerminal, Terminal, SlidersHorizontal, ExternalLink, FileText, FolderCode, GitBranch, Globe, HardDrive, Image as ImageIcon, Network as NetIcon, LayoutDashboard, Pencil, Trash2, TriangleAlert, Undo2, Workflow } from 'lucide-react'
 import { api } from '../api.js'
 import { useNode } from '../node.jsx'
 import { Badge, Btn, Empty, Loading, Modal, Tabs, useUi } from '../components/ui.jsx'
@@ -13,6 +13,7 @@ import ProjectActions from '../components/ProjectActions.jsx'
 import SaveTemplate from '../components/SaveTemplate.jsx'
 import { ManageTemplates } from '../components/NewProject.jsx'
 import ProjectImages from '../components/ProjectImages.jsx'
+import ProjectRename from '../components/ProjectRename.jsx'
 import { publishNow } from '../lib/publish.js'
 import ContainerModal, { AccessPanel } from '../components/ContainerModal.jsx'
 import TerminalModal from '../components/TerminalModal.jsx'
@@ -30,7 +31,7 @@ const svcDot = (x) => (x.done ? SVC_DOT.absent : SVC_DOT[x.state])
 export default function Project() {
   const { id } = useParams(); const go = useGo(); const { hasModule, can, node, setNode } = useNode(); const [params, setParams] = useSearchParams()
   const q = useQuery({ queryKey: ['project', id], queryFn: () => api.get(`/projects/${id}`), refetchInterval: 10000 })
-  const stat = useProjectStats(); const { toast, confirm } = useUi(); const qc = useQueryClient(); const [kill, setKill] = useState(false); const [slot, setSlot] = useState(null); const [tpl, setTpl] = useState(false); const [mtpl, setMtpl] = useState(false)
+  const stat = useProjectStats(); const { toast, confirm } = useUi(); const qc = useQueryClient(); const [kill, setKill] = useState(false); const [slot, setSlot] = useState(null); const [tpl, setTpl] = useState(false); const [mtpl, setMtpl] = useState(false); const [ren, setRen] = useState(false)
   const unimport = useMutation({ mutationFn: () => api.del(`/projects/${id}`), onSuccess: () => { qc.invalidateQueries({ queryKey: ['projects'] }); toast('Projet retiré de la liste'); go('/projects') }, onError: (e) => toast(e.message, 'err') })
   const tab0 = params.get('tab') || 'overview'; const open = params.get('c')
   const set = (patch) => { const n = new URLSearchParams(params); Object.entries(patch).forEach(([k, v]) => (v == null ? n.delete(k) : n.set(k, v))); setParams(n, { replace: true }) }
@@ -48,7 +49,7 @@ export default function Project() {
   return (
     <>
       <div className="row wrap" style={{ marginBottom: 14, gap: 10 }}>
-        <div className="grow"><div className="row" style={{ gap: 10 }}><h1 style={{ margin: 0 }}>{p.name}</h1><Badge kind={kind}>{lab}</Badge>{p.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>
+        <div className="grow"><div className="row" style={{ gap: 10 }}><h1 style={{ margin: 0 }}>{p.name}</h1>{p.perms.edit && <Btn small kind="ghost" icon title="Renommer le projet (nom affiché et dossier)" aria-label="Renommer le projet" onClick={() => setRen(true)}><Pencil size={14} /></Btn>}<Badge kind={kind}>{lab}</Badge>{p.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>
           <div className="muted small mono">{p.path}</div><div ref={setSlot} style={{ marginTop: 6 }} /></div>
         <ComposeBar id={id} perms={p.perms} compose={p.compose} chipSlot={slot} onDone={() => q.refetch()} />
       </div>
@@ -100,6 +101,7 @@ export default function Project() {
               <div className="row wrap" style={{ gap: 6 }}>{l.hosts.map((h) => <a key={h} className="dk-chip" href={`https://${h}`} target="_blank" rel="noreferrer"><ExternalLink size={11} /> {h}</a>)}</div>
             </div>))}</div>)}
       </div>
+      {ren && <ProjectRename id={id} project={p} onClose={() => setRen(false)} />}
       {mtpl && <ManageTemplates onClose={() => setMtpl(false)} />}
       {tpl && <SaveTemplate id={id} name={p.name} onClose={() => setTpl(false)} />}
       {kill && <Destroy id={id} name={p.path.split('/').pop()} onClose={() => setKill(false)} onDone={() => { qc.invalidateQueries({ queryKey: ['projects'] }); go('/projects') }} />}

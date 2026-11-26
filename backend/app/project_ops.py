@@ -1582,8 +1582,29 @@ def p_create(a: dict) -> dict:
     return {"path": str(d), "name": name}
 
 
+def p_rename(a: dict) -> dict:
+    """Renomme le DOSSIER d'un projet, au même endroit (même dossier parent). Refusé pour une racine, vers un nom pris, ou pendant une commande en cours dans ce dossier.
+    L'appelant vérifie avant qu'aucun conteneur du projet n'existe (le nom Compose peut en dépendre)."""
+    d = safe_dir(a.get("dir"))
+    name = str(a.get("name") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,60}", name):
+        raise StoreError("Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)", 422)
+    if d in roots() or any(d == r.parent or d in r.parents for r in roots()):
+        raise StoreError("Ce dossier est une racine de projets (ou en contient une) : il ne se renomme pas", 409)
+    if name == d.name:
+        return {"path": str(d), "name": d.name}
+    target = d.parent / name
+    if target.exists() or target.is_symlink():
+        raise StoreError(f"Un dossier « {name} » existe déjà à cet endroit", 409)
+    with _jobs_lock:
+        if any(j["dir"] == str(d) and not j["done"] for j in _jobs.values()):
+            raise StoreError("Une commande tourne dans ce projet : attendez qu'elle se termine", 409)
+        os.rename(d, target)
+    return {"path": str(target), "name": name}
+
+
 OPS = {"p_make_targets": p_make_targets, "p_exec_make_run": p_exec_make_run, "p_chain": p_chain, "p_exec_steps": p_exec_steps, "p_create": p_create, "p_info": p_info, "p_discover": p_discover, "p_project": p_project, "p_tree": p_tree, "p_read": p_read, "p_write": p_write, "p_delete_file": p_delete_file,
-       "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy,
+       "p_history": p_history, "p_history_content": p_history_content, "p_validate": p_validate, "p_compose": p_compose, "p_job": p_job, "p_destroy": p_destroy, "p_rename": p_rename,
        "p_mkdir": p_mkdir, "p_move": p_move, "p_delete_dir": p_delete_dir, "p_pack": p_pack, "p_pack_read": p_pack_read, "p_upload": p_upload,
        "p_exec_term_open": p_exec_term_open, "p_exec_term_read": p_exec_term_read, "p_exec_term_write": p_exec_term_write, "p_exec_term_resize": p_exec_term_resize, "p_exec_term_close": p_exec_term_close, "p_git_status": p_git_status, "p_git_log": p_git_log, "p_git_run": p_git_run, "p_git_clone": p_git_clone}
 

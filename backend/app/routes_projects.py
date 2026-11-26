@@ -127,7 +127,8 @@ def summarize(ctx: NodeCtx, e: dict, cs: list[dict], links: dict[str, list[dict]
         elif status == "partial" and s["state"] in ("stopped", "absent") and not s["profiles"] and not s["done"]:
             alerts.append({"level": "warn", "text": f"Le service « {s['name']} » ne tourne pas"})
     hosts = sorted({h for s in services for h in s["hosts"]} | {h for c in extra for l in links.get(c["name"], []) for h in l["hosts"]})
-    return {"id": row["id"] if row else None, "path": e["path"], "name": e["name"], "composeProject": e["composeProject"], "file": e["file"], "error": e["error"],
+    shown = (row["display_name"] if row and "display_name" in row.keys() else "") or ""
+    return {"id": row["id"] if row else None, "path": e["path"], "name": shown or e["name"], "folder": e["name"], "displayName": shown, "composeProject": e["composeProject"], "file": e["file"], "error": e["error"],
             "state": row["state"] if row else "discovered", "tags": [t for t in (row["tags"] if row else "").split(",") if t], "services": services, "extra": [_slim(c) for c in extra],
             "status": status, "running": running, "total": len(expected), "alerts": alerts, "hosts": hosts, "containerIds": [c["id"] for c in cs],
             "access": docker_link.access_for(ctx, [l for s in services for l in s["links"]] + [l for c in extra for l in links.get(c["name"], [])], ctxs, totals=True) if access and hosts else None,
@@ -152,7 +153,7 @@ def projects(ctx: NodeCtx = Depends(proj_cap("projects.view"))):
         out[{"managed": "managed", "ignored": "ignored"}.get(row["state"] if row else "", "discovered")].append(s)
     for path, row in rows.items():   # géré mais plus trouvé : dossier supprimé ou racine retirée
         if path not in found and row["state"] == "managed":
-            out["managed"].append({"id": row["id"], "path": path, "name": row["name"], "state": "managed", "missing": True, "services": [], "extra": [], "hosts": [], "alerts": [{"level": "err", "text": "Le dossier de ce projet est introuvable"}],
+            out["managed"].append({"id": row["id"], "path": path, "name": row["display_name"] or row["name"], "folder": path.rsplit("/", 1)[-1], "displayName": row["display_name"], "state": "managed", "missing": True, "services": [], "extra": [], "hosts": [], "alerts": [{"level": "err", "text": "Le dossier de ce projet est introuvable"}],
                                    "status": "absent", "running": 0, "total": 0, "tags": [t for t in row["tags"].split(",") if t], "containerIds": [], "access": None})
     for lst in out.values():   # le dossier d'organisation de chaque projet (vide = racine)
         for x in lst:
@@ -688,6 +689,80 @@ def destroy(pid: int, body: DestroyBody, ctx: NodeCtx = Depends(proj_cap("projec
     db.run("DELETE FROM projects WHERE id=?", (pid,))
     ctx.audit("project.destroy", f"{row['name']} ({d})")
     return {"ok": True}
+
+
+# ------------------------------------------------------------------ renommer : nom affiché (la base seulement) et dossier (le disque)
+FOLDER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,60}")
+
+
+def label(row) -> str:
+    return row["display_name"] or row["name"]
+
+
+def _rename_plan(ctx: NodeCtx, row, folder: str) -> dict:
+    """Ce que changerait le renommage du dossier : le nom de projet Compose (s'il vient du dossier), les conteneurs qui l'empêchent et les volumes qui ne seraient plus repris."""
+    d = row["path"]
+    e = run(ctx, "p_project", {"dir": d, "files": _choice(row)})
+    containers = run(ctx, "d_containers", {"all": True})["containers"]
+    others = [x for x in run(ctx, "p_discover")["projects"] if x["path"] != e["path"]]
+    cs = assign([e] + others, containers).get(e["path"], [])
+    simple = lambda n: re.sub(r"[^a-z0-9_-]", "", n.lower())
+    before = e["composeProject"]
+    from_folder = before == simple(e["name"])   # sans « name: » dans le fichier compose, le nom Compose suit le dossier
+    after = simple(folder) if from_folder else before
+    vols = []
+    if before != after:
+        vols = [v["name"] for v in run(ctx, "d_volumes")["volumes"] if v["kind"] != "bind" and v.get("labels", {}).get("com.docker.compose.project") == before]
+    return {"folder": e["name"], "composeBefore": before, "composeAfter": after, "containers": [c["name"] for c in cs], "volumes": vols, "fromFolder": from_folder}
+
+
+@router.get("/{pid}/rename")
+def rename_check(pid: int, folder: str, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    ctx.need("projects.import")
+    row = _row(ctx, pid)
+    if not FOLDER_RE.fullmatch(folder or ""):
+        raise HTTPException(422, "Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)")
+    return _rename_plan(ctx, row, folder)
+
+
+class RenameBody(BaseModel):
+    displayName: str | None = Field(default=None, max_length=80)   # None = inchangé ; vide = revenir au nom du dossier
+    folder: str | None = Field(default=None, max_length=61)        # None = inchangé
+    acceptVolumes: bool = False                                    # les volumes de l'ancien nom Compose ne seront plus repris : confirmé par la personne
+
+
+@router.put("/{pid}/rename")
+def rename(pid: int, body: RenameBody, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+    """Renomme un projet : son nom affiché (ici seulement) et/ou son dossier sur le disque. Le dossier ne change que si aucun conteneur du projet n'existe ;
+    si le nom Compose en dépend, ses volumes nommés ne seraient plus repris : il faut le confirmer."""
+    row = _row(ctx, pid)
+    out = {"ok": True}
+    if body.folder is not None and body.folder != row["path"].rsplit("/", 1)[-1]:
+        ctx.need("projects.import")
+        if not FOLDER_RE.fullmatch(body.folder):
+            raise HTTPException(422, "Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)")
+        plan = _rename_plan(ctx, row, body.folder)
+        if plan["containers"]:
+            raise HTTPException(409, "Des conteneurs de ce projet existent encore : faites d'abord « Down » (le nom Compose peut changer avec le dossier)")
+        if plan["volumes"] and not body.acceptVolumes:
+            raise HTTPException(409, f"Le nom Compose passerait de « {plan['composeBefore']} » à « {plan['composeAfter']} » : ses volumes ({', '.join(plan['volumes'])}) ne seraient plus repris. Confirmez-le pour continuer")
+        try:
+            made = run(ctx, "p_rename", {"dir": row["path"], "name": body.folder})
+        except HTTPException as err:
+            if err.status_code == 400 and "non autorisée" in str(err.detail):
+                raise HTTPException(409, "Le worker de ce nœud est trop ancien pour renommer un dossier : mettez-le à jour")
+            raise
+        db.run("DELETE FROM projects WHERE node_id=? AND path=? AND id<>?", (ctx.id, made["path"], pid))   # une ancienne référence à ce chemin (dossier disparu puis recréé)
+        db.run("UPDATE projects SET path=?, name=? WHERE id=?", (made["path"], made["name"], pid))
+        ctx.audit("project.rename.folder", f"{row['name']} → {made['name']}" + (f" (nom Compose {plan['composeBefore']} → {plan['composeAfter']})" if plan["composeBefore"] != plan["composeAfter"] else ""))
+        out.update(path=made["path"], folder=made["name"])
+    if body.displayName is not None:
+        shown = " ".join(body.displayName.split())
+        if shown != row["display_name"]:
+            db.run("UPDATE projects SET display_name=? WHERE id=?", (shown, pid))
+            ctx.audit("project.rename", f"{label(row)} → {shown or '(nom du dossier)'}")
+        out["displayName"] = shown
+    return out
 
 
 # ------------------------------------------------------------------ labels Traefik ⇄ fichier
