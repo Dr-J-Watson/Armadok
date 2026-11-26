@@ -181,8 +181,14 @@ def delete_role(rid: int, p: Principal = Depends(current_user)):
 
 
 # ------------------------------------------------------------------ groupes
-def _my_group(p: Principal, gid: int):
+def _my_group(p: Principal, gid: int, edit: bool = True):
     g = db.one("SELECT * FROM groups WHERE id=?", (gid,))
+    if g and g["link_id"]:   # équipe d'un hub lié : n'importe quel administrateur de nœud peut lui donner des droits chez lui, personne ne la modifie ici
+        if edit:
+            raise HTTPException(409, "Cette équipe vient d'un hub lié : sa composition est gérée par l'autre hub (vous décidez seulement de ses droits ici)")
+        if not (p.is_admin or _admin_ctxs(p)):
+            raise HTTPException(404, "Groupe introuvable")
+        return g
     if not g or not (g["owner_id"] == p.id or p.is_admin):
         raise HTTPException(404, "Groupe introuvable")
     return g
@@ -190,14 +196,17 @@ def _my_group(p: Principal, gid: int):
 
 def _group_out(g) -> dict:
     members = db.rows("SELECT u.id, u.username FROM group_members m JOIN users u ON u.id=m.user_id WHERE m.group_id=? ORDER BY u.username", (g["id"],))
+    ext = db.one("SELECT peer_name FROM hub_links WHERE id=?", (g["link_id"],)) if g["link_id"] else None
     return {"id": g["id"], "name": g["name"], "description": g["description"], "members": [{"id": m["id"], "username": m["username"]} for m in members],
+            "external": {"linkId": g["link_id"], "hub": ext["peer_name"] if ext else ""} if g["link_id"] else None,
             "grants": db.one("SELECT COUNT(*) c FROM grants WHERE subject_type='group' AND subject_id=?", (g["id"],))["c"]}
 
 
 @router.get("/groups")
 def groups(p: Principal = Depends(current_user)):
     rows = db.rows("SELECT * FROM groups ORDER BY name")
-    return [_group_out(g) for g in rows if g["owner_id"] == p.id or p.is_admin]
+    ext_ok = p.is_admin or bool(_admin_ctxs(p))
+    return [_group_out(g) for g in rows if g["owner_id"] == p.id or p.is_admin or (g["link_id"] and ext_ok)]
 
 
 class GroupIn(BaseModel):
@@ -231,7 +240,7 @@ class MembersIn(BaseModel):
 def set_group_members(gid: int, body: MembersIn, p: Principal = Depends(current_user)):
     g = _my_group(p, gid)
     ids = set(body.userIds)
-    known = {r["id"] for r in db.rows("SELECT id FROM users WHERE disabled=0")}
+    known = {r["id"] for r in db.rows("SELECT id FROM users WHERE disabled=0 AND source<>'guest'")}
     if not ids <= known:
         raise HTTPException(422, "Utilisateur inconnu")
     before = {r["user_id"] for r in db.rows("SELECT user_id FROM group_members WHERE group_id=?", (gid,))}
@@ -300,11 +309,13 @@ def create_grant(body: GrantIn, p: Principal = Depends(current_user)):
     if body.subjectType not in ("user", "group"):
         raise HTTPException(422, "Type de destinataire invalide")
     if body.subjectType == "user":
-        u = db.one("SELECT id, disabled FROM users WHERE id=?", (body.subjectId,))
+        u = db.one("SELECT id, disabled, source FROM users WHERE id=?", (body.subjectId,))
         if not u or u["disabled"]:
             raise HTTPException(404, "Utilisateur introuvable")
+        if u["source"] == "guest":
+            raise HTTPException(409, "Un invité d'un hub lié reçoit ses droits par son équipe, jamais individuellement")
     else:
-        _my_group(p, body.subjectId)
+        _my_group(p, body.subjectId, edit=False)
     role = _visible_role(p, body.roleId)
     if role["builtin"] == "owner":
         raise HTTPException(400, "Le rôle de propriétaire ne s'attribue pas : il se transfère depuis la page du nœud")

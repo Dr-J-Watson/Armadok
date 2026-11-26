@@ -137,7 +137,8 @@ function GroupsTab() {
         <div className="card flush">{groups.data.map((g) => (
           <div className="rolerow" key={g.id}>
             <div className="row"><b className="grow">{g.name}</b><Badge>{g.members.length} membre{g.members.length > 1 ? 's' : ''}</Badge>{g.grants > 0 && <Badge kind="info">{g.grants} attribution{g.grants > 1 ? 's' : ''}</Badge>}
-              <Btn small onClick={() => setEdit(g)}><Pencil size={14} /> Membres</Btn><Btn small kind="danger" onClick={() => del(g)}><Trash2 size={14} /></Btn></div>
+              {g.external ? <Badge kind="warn" title="Équipe d'un hub lié : l'autre hub décide de qui en fait partie, vous décidez seulement de ses droits chez vous (onglet Attributions).">hub {g.external.hub || 'lié'}</Badge>
+                : <><Btn small onClick={() => setEdit(g)}><Pencil size={14} /> Membres</Btn><Btn small kind="danger" onClick={() => del(g)}><Trash2 size={14} /></Btn></>}</div>
             <div className="capchips">{g.members.length ? g.members.map((m) => <span className="capchip" key={m.id}>{m.username}</span>) : <span className="muted small">Aucun membre</span>}</div>
           </div>))}</div>)}
       {edit && <GroupModal group={edit} onClose={() => setEdit(null)} onSaved={() => { refresh(); setEdit(null) }} />}

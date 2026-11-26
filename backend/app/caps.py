@@ -117,6 +117,13 @@ ALL = frozenset(CATALOG)
 OWNER_ONLY = frozenset({"node.transfer", "node.delete"})   # jamais délégués
 NOT_BY_DEFAULT = frozenset({"docker.exec", "projects.delete", "node.restore"})   # pas même pour un administrateur : seul le propriétaire les a d'office, un autre doit se les voir accorder
 
+# Un invité d'un hub lié n'a JAMAIS ces droits, quoi qu'on lui attribue : tout ce qui touche à la propriété du nœud, à ses membres, à sa connexion, à ses secrets,
+# à ses sauvegardes et à l'exécution de commandes reste réservé aux comptes de CE hub. (Zéro confiance : l'autre hub n'est pas là pour répondre de ce qui se passe ici.)
+GUEST_FORBIDDEN = frozenset(OWNER_ONLY | NOT_BY_DEFAULT | {
+    "node.settings", "node.connection", "node.members.view", "node.members.add", "node.members.edit", "node.members.remove", "node.domains.link",
+    "node.audit", "node.backup", "node.restore", "docker.exec", "projects.delete", "projects.env", "dns.provider", "dns.share", "dns.import", "alerts.manage",
+})
+
 _SITES = {k for k in ALL if k.startswith("sites.")}
 _DNS_ALL = {k for k in ALL if k.startswith("dns.")}
 _DNS_READ = {"dns.view", "dns.export", "dns.history.view", "dns.dnssec.view"}

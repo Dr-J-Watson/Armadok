@@ -282,7 +282,7 @@ def test_newer_peer_with_overlapping_range_negotiates_down(pj):
         async def recv(): return ws.receive_text()
         ready = asyncio.run(hub_link.client_handshake(send, recv, peer, me.hub_id, me.public))
         assert ready["type"] == "ready" and ready["protocol"] == proto.PROTOCOL            # on parle le plus récent COMMUN
-    assert hub_link.get(lid)["features"] == "state"                                         # seulement ce que les deux comprennent
+    assert hub_link.get(lid)["features"] == "guests,state"                                         # seulement ce que les deux comprennent
 
 
 # ------------------------------------------------------------------ révocation, grâce

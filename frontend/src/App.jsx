@@ -37,7 +37,7 @@ import { Keys, SHORTCUTS, SHORTCUT_NOTE } from './lib/shortcuts.jsx'
 import { Badge, Btn, Empty, Field, Loading, Modal, useUi, Info } from './components/ui.jsx'
 
 // Titre de l'onglet du navigateur : « Page · Armadok » sur CHAQUE page (une fiche projet pose le sien).
-const PAGE_TITLES = { '/': 'Accueil', '/sites': 'Sites', '/middlewares': 'Middlewares', '/projects': 'Projets', '/docker': 'Docker', '/dns': 'Domaines', '/accounts': 'Comptes DNS', '/node': 'Ce nœud', '/rights': 'Droits', '/monitoring': 'Surveillance', '/traefik': 'Traefik avancé', '/team': 'Équipe', '/nodes': 'Tous les nœuds', '/help': 'Aide' }
+const PAGE_TITLES = { '/': 'Accueil', '/sites': 'Sites', '/middlewares': 'Middlewares', '/projects': 'Projets', '/docker': 'Docker', '/dns': 'Domaines', '/accounts': 'Comptes DNS', '/node': 'Ce nœud', '/rights': 'Droits', '/monitoring': 'Surveillance', '/traefik': 'Traefik avancé', '/team': 'Équipes', '/nodes': 'Tous les nœuds', '/help': 'Aide' }
 function useDocTitle(user) {
   const { pathname } = useLocation()
   useEffect(() => {
@@ -285,7 +285,7 @@ export default function App() {
           {canManage && link(certsBad ? '/traefik?tab=certs' : '/traefik', <Wrench size={17} />, 'Traefik avancé', 'Édition complète de la configuration : routeurs, services, middlewares, TLS et fichiers.', certsBad ? `${certsBad} site${certsBad > 1 ? 's' : ''} avec un certificat à régler` : null)}
         </NavGroup>
         <NavGroup id="platform" label="Plateforme" show={admin} {...grp}>
-          {link('/team', <Users size={17} />, 'Équipe', 'Les comptes de cette interface : rôles, quota de nœuds, double authentification.')}
+          {link('/team', <Users size={17} />, 'Équipes', 'Les comptes de cette interface : rôles, quota de nœuds, double authentification.')}
           {link('/nodes', <Boxes size={17} />, 'Tous les nœuds', 'Vue super-admin de tous les nœuds : accès d\'urgence (tracé et notifié) et actions rapides.')}
         </NavGroup>
         <div style={{ flex: 1 }} />

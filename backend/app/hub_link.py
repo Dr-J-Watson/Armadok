@@ -290,10 +290,20 @@ def confirm(link_id: str, user: str) -> dict:
     return public(get(link_id))
 
 
-def update(link_id: str, user: str, grace_hours: int | None = None, label: str | None = None) -> dict:
+def update(link_id: str, user: str, grace_hours: int | None = None, label: str | None = None, host: bool | None = None, direct: bool | None = None) -> dict:
     r = get(link_id)
     if not r:
         raise LinkError("Liaison introuvable", 404)
+    if host is not None and bool(host) != bool(r["host_enabled"]):
+        db.run("UPDATE hub_links SET host_enabled=? WHERE id=?", (1 if host else 0, link_id))
+        audit(user, "admin.link.host", f"{link_id} {'accueil autorisé' if host else 'accueil retiré'}")
+        _push_state(link_id)
+        if not host:
+            from . import link_guests
+            link_guests.purge(link_id)
+    if direct is not None and bool(direct) != bool(r["direct_enabled"]):
+        db.run("UPDATE hub_links SET direct_enabled=? WHERE id=?", (1 if direct else 0, link_id))
+        audit(user, "admin.link.direct", f"{link_id} {'connexion directe autorisée' if direct else 'connexion directe retirée'}")
     if grace_hours is not None:
         if not 0 <= grace_hours <= proto.MAX_GRACE_HOURS:
             raise LinkError(f"Le délai de grâce va de 0 à {proto.MAX_GRACE_HOURS} heures")
@@ -311,6 +321,8 @@ def revoke(link_id: str, user: str) -> dict:
         raise LinkError("Liaison introuvable", 404)
     db.run("UPDATE hub_links SET status='revoked', revoked_at=?, revoked_by=?, code_hash=NULL, code_expires=NULL WHERE id=?", (time.time(), user, link_id))
     audit(user, "admin.link.revoke", link_id)
+    from . import link_guests
+    link_guests.purge(link_id)
     ch = _chans.get(link_id)
     if ch:   # prévenu tout de suite ; sinon (connexion tombée) le hub appelant retentera de le lui dire pendant sept jours
         ch.post({"type": "revoke"})
@@ -369,10 +381,23 @@ def online(link_id: str) -> bool:
     return link_id in _chans
 
 
+def public_url() -> str:
+    identity()
+    return db.one("SELECT public_url FROM hub_identity WHERE id=1")["public_url"]
+
+
+def set_public_url(url: str) -> str:
+    """L'adresse par laquelle les utilisateurs ouvrent l'interface de CE hub (annoncée à l'autre hub pour ses liens)."""
+    url = clean_url(url) if (url or "").strip() else ""
+    identity()
+    db.run("UPDATE hub_identity SET public_url=? WHERE id=1", (url,))
+    return url
+
+
 def my_state(r) -> dict:
     me = identity()
     return {"type": "state", "confirmed": bool(r["confirmed_local"]), "name": me.name, "version": VERSION, "protocol": proto.PROTOCOL,
-            "minProtocol": proto.MIN_PROTOCOL, "features": list(proto.FEATURES)}
+            "minProtocol": proto.MIN_PROTOCOL, "features": list(proto.FEATURES), "hosting": bool(r["host_enabled"]), "publicUrl": public_url()}
 
 
 def _push_state(link_id: str) -> None:
@@ -388,8 +413,17 @@ def _apply_state(link_id: str, msg: dict) -> None:
         return
     name = clean_text(msg.get("name"), 80) or r["peer_name"]
     version = clean_text(msg.get("version"), 40)
-    db.run("UPDATE hub_links SET confirmed_peer=?, peer_name=?, peer_version=?, last_seen=? WHERE id=?",
-           (1 if msg.get("confirmed") is True else 0, name, version, time.time(), link_id))
+    try:
+        ui = clean_url(msg.get("publicUrl") or "") if msg.get("publicUrl") else ""
+    except LinkError:
+        ui = ""
+    hosting = 1 if msg.get("hosting") is True else 0
+    db.run("UPDATE hub_links SET confirmed_peer=?, peer_name=?, peer_version=?, peer_hosting=?, peer_ui_url=?, last_seen=? WHERE id=?",
+           (1 if msg.get("confirmed") is True else 0, name, version, hosting, ui, time.time(), link_id))
+    if hosting != r["peer_hosting"]:   # l'autre hub vient d'accepter (ou de refuser) nos équipes : on les lui renvoie
+        from . import link_guests
+        link_guests.forget(link_id)
+        link_guests.sync_out(link_id)
 
 
 def _apply_revoke(link_id: str, by: str) -> None:
@@ -397,6 +431,8 @@ def _apply_revoke(link_id: str, by: str) -> None:
     if r and r["status"] != "revoked":
         db.run("UPDATE hub_links SET status='revoked', revoked_at=?, revoked_by=? WHERE id=?", (time.time(), by, link_id))
         audit("lien", "admin.link.revoked_by_peer", link_id)
+        from . import link_guests
+        link_guests.purge(link_id)
         reconcile_soon()
 
 
@@ -502,6 +538,25 @@ async def link_ws(ws: WebSocket):
 
 async def _serve_channel(chan: Channel, recv) -> None:
     """Boucle commune : l'autre hub parle (état, ping, révocation) ; tout type inconnu est ignoré (versions futures)."""
+    from . import link_guests
+    link_guests.forget(chan.link_id)
+
+    async def syncer():
+        while True:
+            try:
+                link_guests.sync_out(chan.link_id)
+            except Exception:   # noqa: BLE001 : un incident de synchro ne doit jamais couper la liaison
+                pass
+            await asyncio.sleep(15)
+
+    sync = asyncio.create_task(syncer())
+    try:
+        await _loop_channel(chan, recv)
+    finally:
+        sync.cancel()
+
+
+async def _loop_channel(chan: Channel, recv) -> None:
     while True:
         msg = await _recv(recv, proto.IDLE_LIMIT)
         kind = msg.get("type")
@@ -509,6 +564,9 @@ async def _serve_channel(chan: Channel, recv) -> None:
             await chan.send({"type": "pong"})
         elif kind == "state":
             _apply_state(chan.link_id, msg)
+        elif kind == "teams":
+            from . import link_guests
+            await chan.send(link_guests.apply_in(chan.link_id, msg))
         elif kind == "revoke":
             _apply_revoke(chan.link_id, "l'autre hub")
             return
@@ -621,6 +679,11 @@ async def _manage() -> None:
     global _wake
     _wake = asyncio.Event()
     while True:
+        try:
+            from . import link_guests
+            link_guests.enforce()
+        except Exception:   # noqa: BLE001 : l'application du délai de grâce ne doit jamais arrêter le gestionnaire
+            pass
         want = {r["id"] for r in db.rows("SELECT id FROM hub_links WHERE we_call=1 AND peer_url!='' AND (status='paired' OR (status='revoked' AND peer_notified=0 AND revoked_at>?))",
                                           (time.time() - 7 * 86400,))}
         for lid in list(_tasks):

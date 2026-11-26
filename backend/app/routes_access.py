@@ -54,7 +54,7 @@ def _check_user_fields(role):
 
 @router.get("/users")
 def list_users(_: Principal = Depends(admin_only)):
-    return [_user_out(r) for r in db.rows("SELECT * FROM users ORDER BY username")]
+    return [_user_out(r) for r in db.rows("SELECT * FROM users WHERE source<>'guest' ORDER BY username")]
 
 
 
@@ -153,9 +153,9 @@ def directory(p: Principal = Depends(current_user)):
     administrateur de la plateforme voit tout le monde ; les autres cherchent un compte par son nom exact (/users-lookup)."""
     if p.is_admin:
         return [{"id": r["id"], "username": r["username"]} for r in
-                db.rows("SELECT id, username FROM users WHERE disabled=0 AND id<>? ORDER BY username", (p.id,))]
+                db.rows("SELECT id, username FROM users WHERE disabled=0 AND source<>'guest' AND id<>? ORDER BY username", (p.id,))]
     return [{"id": r["id"], "username": r["username"]} for r in db.rows(
-        "SELECT id, username FROM users WHERE disabled=0 AND id<>? AND ("
+        "SELECT id, username FROM users WHERE disabled=0 AND source<>'guest' AND id<>? AND ("
         " id IN (SELECT m2.user_id FROM node_members m1 JOIN node_members m2 ON m2.node_id=m1.node_id WHERE m1.user_id=?)"
         " OR id IN (SELECT a.user_id FROM domain_access a JOIN domains d ON d.id=a.domain_id JOIN credentials c ON c.id=d.credential_id WHERE c.owner_id=?)"
         ") ORDER BY username LIMIT 300", (p.id, p.id, p.id))]
@@ -169,7 +169,7 @@ def lookup(username: str, p: Principal = Depends(current_user)):
     if len(recent) >= 20:
         raise HTTPException(429, "Trop de recherches, réessayez dans une minute")
     _lookups[p.id] = recent + [now]
-    r = db.one("SELECT id, username FROM users WHERE username=? AND disabled=0 AND id<>?", (username.strip(), p.id))
+    r = db.one("SELECT id, username FROM users WHERE username=? AND disabled=0 AND source<>'guest' AND id<>?", (username.strip(), p.id))
     if not r:
         raise HTTPException(404, "Utilisateur introuvable")
     return {"id": r["id"], "username": r["username"]}

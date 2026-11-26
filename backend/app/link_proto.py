@@ -19,7 +19,7 @@ import hashlib
 
 PROTOCOL = 1            # le plus récent que ce hub parle
 MIN_PROTOCOL = 1        # le plus ancien qu'il accepte encore
-FEATURES = ("state",)   # fonctions de ce hub (phases suivantes : « guests », « relay »)
+FEATURES = ("state", "guests")   # fonctions de ce hub : « state » (état de la liaison), « guests » (équipes partagées et comptes invités) ; « relay » viendra avec le relais
 MAX_MESSAGE = 1 * 1024 * 1024
 CODE_TTL = 15 * 60
 PING_EVERY = 20

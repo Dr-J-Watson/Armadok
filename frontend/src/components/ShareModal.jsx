@@ -24,7 +24,7 @@ export default function ShareModal({ domain, onClose }) {
   return (
     <Modal title={`Qui a accès à ${domain} ?`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} onClick={save}>Enregistrer</Btn></>}>
       <div className="col">
-        <div className="muted small">Vous et les administrateurs concernés gardent l'accès de gestion. Les droits sur les sites Traefik se règlent séparément dans « Équipe ».</div>
+        <div className="muted small">Vous et les administrateurs concernés gardent l'accès de gestion. Les droits sur les sites Traefik se règlent séparément dans « Équipes ».</div>
         {grants?.length === 0 && <div className="empty" style={{ padding: 20 }}>Personne d'autre n'a accès pour l'instant.</div>}
         {grants?.map((g, i) => (
           <div className="col" key={g.userId} style={{ gap: 6, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>

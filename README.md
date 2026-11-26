@@ -831,7 +831,7 @@ http:
       middlewares: [chain-public-api]   # sans filtre IP
 ```
 
-### 🔗 Liaison entre deux hubs (branche `develop`, en construction)
+### 🔗 Liaison entre deux hubs (branche `develop`, en construction : appairage, équipes et invités faits ; relais et connexion directe à suivre)
 
 **Tous les nœuds → Nœuds et liaisons → Liaisons avec d'autres hubs** (super-administrateurs, 2FA exigée pour chaque action). Chaque hub reste **seul maître de ses utilisateurs, de ses droits et de ses nœuds** : la liaison établit seulement *qui est l'autre hub* et *si la connexion est vivante*. La liaison est toujours entre **deux** hubs : si B est lié à A et à C, A et C ne se voient pas.
 
@@ -843,6 +843,8 @@ http:
 **Versions différentes.** Chaque hub annonce la plage de protocoles qu'il parle ; on utilise le plus récent commun, avec les seules fonctions que les deux comprennent. Si les plages ne se recouvrent plus, la liaison le dit (« versions incompatibles ») : mettez à jour le plus ancien des deux.
 
 **Délai de grâce** (par liaison, 12 h par défaut, 0 à 720 h, modifiable avec la 2FA) : si la connexion est coupée, ce que la liaison apporte (comptes invités, dans les étapes suivantes) reste valable ce temps-là, puis cesse. **Révoquer** coupe tout de suite et prévient l'autre hub ; s'il est injoignable, il l'apprend à sa prochaine connexion.
+
+**Équipes et comptes invités.** Dans « Liaisons → Équipes », le hub d'**origine** choisit lesquelles de **ses** équipes (groupes) il partage ; le hub d'**accueil** doit d'abord **autoriser l'accueil** (2FA). Chaque équipe reçue devient alors un groupe *externe* (non modifiable ici) et chaque membre un **compte invité** (`alice@hub-b`) : sans mot de passe, jamais administrateur de la plateforme, absent des listes d'utilisateurs et des annuaires, non ajoutable comme membre. **L'autre hub n'affirme que « qui est dans quelle équipe » :** les droits sur vos nœuds sont donnés à l'équipe par VOS administrateurs (page Droits), et un invité ne reçoit **jamais** propriété, membres, connexion, réglages du nœud, sauvegardes, `.env`, terminal ni suppression de projet, quoi qu'on lui attribue. Un membre retiré de toutes les équipes voit son compte supprimé ; une équipe retirée emporte ses attributions ; une liaison coupée (ou l'accueil retiré) supprime équipes et invités. Si la connexion tombe, les invités restent valables le **délai de grâce** de la liaison puis sont **suspendus** (sessions invalidées), et reprennent quand elle revient ; un invité « écarté » le reste. Page **Équipes** : les invités apparaissent à part, en lecture seule.
 
 **Ouvrir le chemin `/api/link`** : comme pour les workers, seul ce chemin doit être joignable par l'autre hub (jamais le reste de l'interface). Avec un filtre IP sur le routeur du hub, ajoutez un routeur dédié, sans le filtre :
 

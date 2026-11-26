@@ -194,6 +194,8 @@ def login(body: Login, request: Request, response: Response):
         ok = bcrypt.checkpw(body.password.encode()[:72], (row["password_hash"] if row else "").encode() or _dummy)
     except ValueError:
         ok = False
+    if row and row["source"] == "guest" and not row["guest_direct"]:   # invité d'un hub lié sans mot de passe propre : il passe par son hub d'origine
+        ok = False
     if not (row and ok and not row["disabled"]):
         _fail(ip, name)
         _audit_failed(ip, body.username)

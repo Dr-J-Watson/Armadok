@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { KeyRound, Pencil, Plus, Trash2 } from 'lucide-react'
+import { KeyRound, Link2, Pencil, Plus, Trash2 } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, Field, Info, Loading, Modal, Switch, useUi } from '../components/ui.jsx'
 import { fmtDate } from '../lib/util.js'
@@ -18,7 +18,7 @@ export default function Team() {
   if (users.isLoading) return <Loading />
   return (
     <>
-      <div className="page-head"><div><h1>Équipe</h1><p>Qui peut se connecter, et ce que chacun peut faire.</p></div><Btn kind="primary" className="right" onClick={() => setEdit({ ...empty })}><Plus size={15} /> Nouvel utilisateur</Btn></div>
+      <div className="page-head"><div><h1>Équipes</h1><p>Qui peut se connecter, et ce que chacun peut faire.</p></div><Btn kind="primary" className="right" onClick={() => setEdit({ ...empty })}><Plus size={15} /> Nouvel utilisateur</Btn></div>
       <div className="card flush"><table className="t"><thead><tr><th>Utilisateur</th><th>Rôle<Info>Administrateur : gère les comptes et voit tous les nœuds. Utilisateur : n'accède qu'à ce qu'on lui partage ou à ses propres nœuds.</Info></th><th>2FA<Info>Double authentification (code à 6 chiffres). Facultative, mais obligatoire pour l'accès d'urgence d'un administrateur au nœud d'un autre.</Info></th><th>Peut ajouter des domaines<Info>Peut brancher ses propres comptes DNS (OVH, DuckDNS) et domaines, partout. Sans ce droit, un administrateur ou propriétaire de nœud peut quand même en ajouter, mais seulement pour son nœud.</Info></th><th>Nœuds<Info>Nombre de nœuds (Traefik distants) qu'il peut créer. Il en devient propriétaire et gère lui-même ses membres.</Info></th><th>Créé</th><th /></tr></thead>
         <tbody>{users.data.map((u) => (
           <tr key={u.id} style={{ opacity: u.disabled ? .5 : 1 }}>
@@ -31,6 +31,7 @@ export default function Team() {
             <td className="actions"><Btn small kind="ghost" onClick={() => setEdit(u)}><Pencil size={13} /> Modifier</Btn>
               {u.source !== 'env' && <>{u.twoFactor && <Btn small kind="ghost" title="Réinitialiser la double authentification (appareil perdu)" onClick={() => resetMfa(u)}>Réinit. 2FA</Btn>}<Btn small kind="ghost" icon title="Nouveau mot de passe" onClick={() => setPw(u)}><KeyRound size={14} /></Btn><Btn small kind="ghost" icon onClick={() => remove(u)}><Trash2 size={14} /></Btn></>}</td>
           </tr>))}</tbody></table></div>
+      <LinkedGuests />
       <div className="card" style={{ marginTop: 18 }}><h3 style={{ marginBottom: 10 }}>Comment fonctionnent les droits</h3>
         <ul className="muted" style={{ margin: 0, paddingLeft: 18, lineHeight: 1.7 }}>
           <li><b>Administrateur</b> : tout voir et modifier (Traefik, utilisateurs, domaines du compte principal). Il ne voit <u>pas</u> les clés ni les domaines que d'autres utilisateurs ont ajoutés, sauf s'ils les partagent avec lui.</li>
@@ -75,4 +76,20 @@ function PwModal({ user, onClose }) {
   const go = () => api.post(`/users/${user.id}/password`, { password: p }).then(() => { toast('Mot de passe changé'); onClose() }).catch((e) => toast(e.message, 'err'))
   return <Modal small title={`Mot de passe de ${user.username}`} onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" disabled={p.length < 12} onClick={go}>Changer</Btn></>}>
     <Field label="Nouveau mot de passe" help="12 caractères minimum"><input className="input" type="password" value={p} onChange={(e) => setP(e.target.value)} autoFocus autoComplete="new-password" /></Field></Modal>
+}
+
+// Les personnes des hubs liés qui ont un compte invité ici (seulement celles des équipes que l'autre hub a partagées, une fois l'accueil autorisé) : lecture seule, la gestion est dans « Nœuds et liaisons ».
+function LinkedGuests() {
+  const q = useQuery({ queryKey: ['link-guests'], queryFn: () => api.get('/admin/links/guests'), refetchInterval: 15000 })
+  if (!q.data || q.data.length === 0) return null
+  return (
+    <>{q.data.map((l) => (
+      <div key={l.linkId} style={{ marginTop: 18 }}>
+        <h3 style={{ marginBottom: 8 }}><Link2 size={15} style={{ verticalAlign: -2 }} /> Invités du hub {l.hub || 'lié'}</h3>
+        <div className="card flush"><table className="t"><thead><tr><th>Invité<Info>Compte créé automatiquement pour une personne d'un hub lié. Il n'a pas de mot de passe ici : elle passe par son hub d'origine. Ses droits viennent de son équipe (page Droits), plafonnés ; il disparaît avec la liaison.</Info></th><th>Équipes</th><th>État</th></tr></thead>
+          <tbody>{l.guests.map((g) => (
+            <tr key={g.id}><td><b>{g.username}</b></td><td>{g.teams.map((t) => <Badge key={t}>{t}</Badge>)}</td>
+              <td>{g.blocked ? <Badge kind="err">écarté</Badge> : g.suspended ? <Badge kind="warn">suspendu (liaison coupée)</Badge> : <Badge kind="ok">actif</Badge>}{g.direct && <> <Badge kind="info">mot de passe propre</Badge></>}</td></tr>))}</tbody></table></div>
+      </div>))}</>
+  )
 }

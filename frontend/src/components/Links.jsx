@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Unplug } from 'lucide-react'
+import { Link2, Pencil, Plus, RefreshCw, ShieldCheck, Trash2, Unplug, Users } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Btn, CopyBtn, Empty, Field, Info, Loading, Modal, useUi } from './ui.jsx'
 import { Countdown } from './Countdown.jsx'
@@ -54,6 +54,7 @@ export default function Links() {
                 <td className="actions">
                   {l.state === 'to_confirm' && <Btn small kind="primary" onClick={() => setModal({ kind: 'confirm', l })}><ShieldCheck size={13} /> Comparer et confirmer</Btn>}
                   {l.status === 'invited' && <Btn small onClick={() => setModal({ kind: 'renew', l })}><RefreshCw size={13} /> Nouveau code</Btn>}
+                  {['online', 'offline', 'incompatible'].includes(l.state) && <Btn small onClick={() => setModal({ kind: 'teams', l })}><Users size={13} /> Équipes</Btn>}
                   {l.status === 'paired' && <Btn small kind="danger" onClick={() => setModal({ kind: 'revoke', l })}><Unplug size={13} /> Révoquer</Btn>}
                   {l.status !== 'paired' && <Btn small kind="ghost" icon title="Retirer de la liste" aria-label="Retirer" onClick={() => del(l)}><Trash2 size={13} /></Btn>}
                 </td>
@@ -65,6 +66,7 @@ export default function Links() {
       {modal?.kind === 'confirm' && <ConfirmModal l={modal.l} onClose={() => { setModal(null); refresh() }} />}
       {modal?.kind === 'revoke' && <RevokeModal l={modal.l} onClose={() => { setModal(null); refresh() }} />}
       {modal?.kind === 'grace' && <GraceModal l={modal.l} max={d.maxGraceHours} onClose={() => { setModal(null); refresh() }} />}
+      {modal?.kind === 'teams' && <TeamsModal l={modal.l} onClose={() => { setModal(null); refresh() }} />}
       {modal?.kind === 'name' && <NameModal name={d.identity.name} onClose={() => { setModal(null); refresh() }} />}
     </div>
   )
@@ -75,7 +77,7 @@ function InviteModal({ link, onClose }) {
   const [url, setUrl] = useState(window.location.origin)
   const go = async () => {
     setBusy(true); setErr('')
-    try { const r = link ? await api.post(`/admin/links/${link.id}/invite/renew`, { code }) : await api.post('/admin/links/invite', { code, label }); setOut(r) } catch (e) { setErr(e.message) } finally { setBusy(false) }
+    try { const r = link ? await api.post(`/admin/links/${link.id}/invite/renew`, { code }) : await api.post('/admin/links/invite', { code, label, url }); setOut(r) } catch (e) { setErr(e.message) } finally { setBusy(false) }
   }
   const invitation = out ? `${url.replace(/\/+$/, '')}#${out.code}` : ''
   return (
@@ -155,6 +157,49 @@ function NameModal({ name, onClose }) {
   return (
     <Modal small title="Nom de ce hub" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!v.trim()} onClick={go}>Enregistrer</Btn></>}>
       <div className="col"><Field label="Comment les autres hubs vous voient"><input className="input" autoFocus maxLength={80} value={v} onChange={(e) => setV(e.target.value)} /></Field>{err && <div className="banner err">{err}</div>}</div>
+    </Modal>
+  )
+}
+
+// Équipes d'une liaison : celles de CE hub que l'on partage, l'accueil de celles de l'autre hub, et les invités qui en résultent.
+function TeamsModal({ l, onClose }) {
+  const { toast } = useUi(); const qc = useQueryClient()
+  const q = useQuery({ queryKey: ['link-teams', l.id], queryFn: () => api.get(`/admin/links/${l.id}/teams`) })
+  const gq = useQuery({ queryKey: ['link-guests-of', l.id], queryFn: () => api.get(`/admin/links/${l.id}/guests`), refetchInterval: 10000 })
+  const [sel, setSel] = useState(null); const [code, setCode] = useState(''); const [busy, setBusy] = useState(''); const [err, setErr] = useState('')
+  const refresh = () => { q.refetch(); gq.refetch(); qc.invalidateQueries({ queryKey: ['links'] }); qc.invalidateQueries({ queryKey: ['link-guests'] }) }
+  if (q.isLoading) return <Modal title="Équipes" onClose={onClose}><Loading /></Modal>
+  const d = q.data; const shared = sel || new Set(d.mine.filter((t) => t.shared).map((t) => t.id))
+  const toggle = (id) => { const n = new Set(shared); n.has(id) ? n.delete(id) : n.add(id); setSel(n) }
+  const run = async (what, fn, ok) => { setBusy(what); setErr(''); try { await fn(); toast(ok); setCode(''); setSel(null); refresh() } catch (e) { setErr(e.message) } finally { setBusy('') } }
+  const peer = l.peerName || 'l\'autre hub'
+  return (
+    <Modal wide title={`Équipes · ${peer}`} onClose={onClose} footer={<Btn onClick={onClose}>Fermer</Btn>}>
+      <div className="col" style={{ gap: 18 }}>
+        <div>
+          <h3 style={{ margin: '0 0 6px' }}>Équipes de ce hub que vous partagez avec {peer}</h3>
+          <div className="muted small" style={{ marginBottom: 8 }}>Ces équipes (et leurs membres) sont annoncées à {peer}. Ses administrateurs leur donnent des droits <b>chez lui</b> : vous ne décidez pas de ce qu'elles peuvent y faire, seulement qui a la possibilité d'y aller. {d.peerHosting ? <Badge kind="ok">{peer} accueille vos équipes</Badge> : <Badge kind="warn">{peer} n'accueille pas encore vos équipes</Badge>}</div>
+          {d.mine.length === 0 ? <div className="muted small">Aucune équipe ici. Créez-en dans « Droits → Groupes ».</div> : d.mine.map((t) => (
+            <label key={t.id} className="row" style={{ gap: 8, padding: '3px 0' }}><input type="checkbox" checked={shared.has(t.id)} onChange={() => toggle(t.id)} /> <b>{t.name}</b> <span className="muted small">{t.members} membre{t.members > 1 ? 's' : ''}</span></label>))}
+          <div style={{ marginTop: 8 }}><Btn kind="primary" small busy={busy === 'teams'} disabled={!okCode(code) || !sel} onClick={() => run('teams', () => api.put(`/admin/links/${l.id}/teams`, { groupIds: [...shared], code }), 'Équipes partagées enregistrées')}>Enregistrer le partage</Btn></div>
+        </div>
+        <div>
+          <h3 style={{ margin: '0 0 6px' }}>Accueillir les équipes de {peer} sur ce hub</h3>
+          <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+            <Btn small kind={d.hostEnabled ? 'danger' : 'primary'} busy={busy === 'host'} disabled={!okCode(code)} onClick={() => run('host', () => api.patch(`/admin/links/${l.id}`, { hostEnabled: !d.hostEnabled, code }), d.hostEnabled ? 'Accueil retiré : les invités ont été supprimés' : 'Accueil autorisé')}>{d.hostEnabled ? 'Retirer l\'accueil (supprime les invités)' : 'Autoriser l\'accueil'}</Btn>
+            <span className="muted small">{d.hostEnabled ? 'Les équipes reçues deviennent des groupes, leurs membres des invités sans mot de passe, plafonnés, qui disparaissent avec la liaison.' : 'Tant que ce n\'est pas autorisé, rien n\'est créé ici.'}</span>
+          </div>
+          {d.received.length > 0 && <div style={{ marginTop: 8 }}>{d.received.map((t) => <div key={t.id} className="small"><b>{t.name}</b> · {t.members.length} invité{t.members.length > 1 ? 's' : ''} · {t.grants ? `${t.grants} attribution${t.grants > 1 ? 's' : ''}` : <span className="muted">aucun droit encore : donnez-lui un rôle dans « Droits »</span>}</div>)}</div>}
+        </div>
+        {gq.data && gq.data.length > 0 && <div>
+          <h3 style={{ margin: '0 0 6px' }}>Invités</h3>
+          <table className="t"><tbody>{gq.data.map((g) => (
+            <tr key={g.id}><td><b>{g.username}</b></td><td>{g.teams.map((t) => <Badge key={t}>{t}</Badge>)}</td>
+              <td>{g.blocked ? <Badge kind="err">écarté</Badge> : g.suspended ? <Badge kind="warn">suspendu</Badge> : <Badge kind="ok">actif</Badge>}</td>
+              <td className="actions"><Btn small kind="ghost" disabled={g.blocked && !okCode(code)} onClick={() => run('b' + g.id, () => api.post(`/admin/links/${l.id}/guests/${g.id}/block`, { blocked: !g.blocked, code }), g.blocked ? 'Invité rétabli' : 'Invité écarté')}>{g.blocked ? 'Rétablir' : 'Écarter'}</Btn></td></tr>))}</tbody></table>
+        </div>}
+        <div><CodeField code={code} setCode={setCode} />{err && <div className="banner err">{err}</div>}<div className="muted small">Le code sert au partage, à l'accueil et au rétablissement d'un invité écarté.</div></div>
+      </div>
     </Modal>
   )
 }
