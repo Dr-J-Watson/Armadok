@@ -107,6 +107,8 @@ _group("projects", "Projets Compose", [
     ("projects.nolimit", "Transferts et suppressions sans limite de taille", "Sans ce droit : 500 fichiers par import, 100 Mo par fichier ou par téléchargement, suppression d'un dossier jusqu'à 300 fichiers ou 5 Mo. Pour un gestionnaire du nœud.", ("projects.files",)),
     ("projects.env", "Voir et modifier le .env du projet", "Le .env contient souvent des mots de passe et des clés.", ("projects.files",)),
     ("projects.git", "Gérer Git et le suivi des images", "Lier un dépôt, récupérer les changements, surveiller les nouvelles versions d'images.", ("projects.view",)),
+    ("projects.rename", "Renommer un projet (nom affiché)", "Le nom montré dans l'interface. Rien ne change sur le disque ni pour Compose.", ("projects.view",)),
+    ("projects.folder", "Renommer le dossier du projet sur le disque", "Déplace le dossier au même endroit sous un autre nom ; le nom du projet pour Compose peut en dépendre (ses volumes ne seraient plus repris).", ("projects.rename", "projects.deploy")),
     ("projects.delete", "Supprimer un projet et ses fichiers", "Efface le dossier du projet sur le disque : irréversible.", ("projects.deploy", "projects.files")),
 ])
 
@@ -121,7 +123,7 @@ NOT_BY_DEFAULT = frozenset({"docker.exec", "projects.delete", "node.restore"})  
 # à ses sauvegardes et à l'exécution de commandes reste réservé aux comptes de CE hub. (Zéro confiance : l'autre hub n'est pas là pour répondre de ce qui se passe ici.)
 GUEST_FORBIDDEN = frozenset(OWNER_ONLY | NOT_BY_DEFAULT | {
     "node.settings", "node.connection", "node.members.view", "node.members.add", "node.members.edit", "node.members.remove", "node.domains.link",
-    "node.audit", "node.backup", "node.restore", "docker.exec", "projects.delete", "projects.env", "dns.provider", "dns.share", "dns.import", "alerts.manage",
+    "node.audit", "node.backup", "node.restore", "docker.exec", "projects.delete", "projects.env", "projects.rename", "projects.folder", "dns.provider", "dns.share", "dns.import", "alerts.manage",
 })
 
 _SITES = {k for k in ALL if k.startswith("sites.")}
@@ -149,7 +151,7 @@ MFA_SENSITIVE = frozenset({
     "dns.provider", "dns.dnssec.edit", "dns.share", "dns.import",
     "alerts.manage",
     "docker.control", "docker.remove", "docker.exec",                           # couper des services, supprimer, terminal
-    "projects.deploy", "projects.edit", "projects.env", "projects.delete", "projects.git",
+    "projects.deploy", "projects.edit", "projects.env", "projects.delete", "projects.git", "projects.folder",
 })
 
 

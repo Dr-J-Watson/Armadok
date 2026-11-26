@@ -123,3 +123,21 @@ def test_api_rights_and_override(pj, sa, fakecli):  # noqa: F811
     finally:
         db.run("DELETE FROM project_actions WHERE project_id=?", (pid,))
         client.delete(f"/api/projects/{pid}", headers=h)
+
+
+def test_rename_rights_are_separate(pj, sa):  # noqa: F811
+    h = pj["h"]
+    pid = pid_of(pj, "blog")
+    role = client.post("/api/rights/roles", headers=sa["h_sa-owner"], json={"name": "Renomme seulement", "description": "", "caps": ["docker.view", "projects.view", "projects.rename"]})
+    assert role.status_code == 200, role.text
+    g = client.post("/api/rights/grants", headers=sa["h_sa-owner"], json={"subjectType": "user", "subjectId": sa["ids"]["sa-ops"], "roleId": role.json()["id"], "nodeId": h["X-Node"]}); assert g.status_code == 200, g.text
+    ho = {**login("sa-ops"), "X-Node": h["X-Node"]}
+    perms = client.get(f"/api/projects/{pid}", headers=ho).json()["perms"]
+    assert perms["rename"] and not perms["folder"]
+    assert client.put(f"/api/projects/{pid}/rename", headers=ho, json={"displayName": "Le blog"}).status_code == 200
+    assert client.get(f"/api/projects/{pid}/rename?folder=blog2", headers=ho).status_code == 403
+    assert client.put(f"/api/projects/{pid}/rename", headers=ho, json={"folder": "blog2"}).status_code == 403
+    assert (pj["base"] / "apps" / "blog").is_dir()
+    from app import caps
+    assert "projects.folder" in caps.MFA_SENSITIVE and set(caps.CATALOG["projects.folder"]["requires"]) == {"projects.rename", "projects.deploy"}
+    assert {"projects.rename", "projects.folder"} <= caps.GUEST_FORBIDDEN                            # jamais pour un invité d'un hub lié
