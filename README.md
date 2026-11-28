@@ -831,6 +831,42 @@ http:
       middlewares: [chain-public-api]   # sans filtre IP
 ```
 
+### 🔗 Liaison entre deux hubs (branche `develop`)
+
+**Tous les nœuds → Nœuds et liaisons → Liaisons avec d'autres hubs** (super-administrateurs, 2FA exigée pour chaque action). Chaque hub reste **seul maître de ses utilisateurs, de ses droits et de ses nœuds** : la liaison établit seulement *qui est l'autre hub* et *si la connexion est vivante*. La liaison est toujours entre **deux** hubs : si B est lié à A et à C, A et C ne se voient pas.
+
+1. Le hub A clique sur **Inviter un hub** : un code à usage unique, valable 15 minutes (stocké en empreinte, jamais en clair), avec l'adresse de A.
+2. Le hub B clique sur **Rejoindre un hub** et colle l'invitation : B appelle A, les deux échangent leurs clés publiques Ed25519.
+3. **Les deux administrateurs comparent l'empreinte** affichée (identique des deux côtés) et confirment chacun avec leur code 2FA : c'est ce qui protège contre quelqu'un qui s'interposerait pendant l'appairage. Rien n'est actif avant les deux confirmations.
+4. Le hub qui a rejoint entretient ensuite une connexion WebSocket signée vers l'autre. **Un seul des deux hubs a donc besoin d'être joignable.** Le hub appelé prouve son identité autant que l'appelant (signatures dans les deux sens, nonces des deux côtés, messages qui nomment les deux hubs et le sens : rien ne se rejoue).
+
+**Versions différentes.** Chaque hub annonce la plage de protocoles qu'il parle ; on utilise le plus récent commun, avec les seules fonctions que les deux comprennent. Si les plages ne se recouvrent plus, la liaison le dit (« versions incompatibles ») : mettez à jour le plus ancien des deux.
+
+**Délai de grâce** (par liaison, 12 h par défaut, 0 à 720 h, modifiable avec la 2FA) : si la connexion est coupée, ce que la liaison apporte (comptes invités, dans les étapes suivantes) reste valable ce temps-là, puis cesse. **Révoquer** coupe tout de suite et prévient l'autre hub ; s'il est injoignable, il l'apprend à sa prochaine connexion.
+
+**Équipes et comptes invités.** Dans « Liaisons → Équipes », le hub d'**origine** choisit lesquelles de **ses** équipes (groupes) il partage ; le hub d'**accueil** doit d'abord **autoriser l'accueil** (2FA). Chaque équipe reçue devient alors un groupe *externe* (non modifiable ici) et chaque membre un **compte invité** (`alice@hub-b`) : sans mot de passe, jamais administrateur de la plateforme, absent des listes d'utilisateurs et des annuaires, non ajoutable comme membre. **L'autre hub n'affirme que « qui est dans quelle équipe » :** les droits sur vos nœuds sont donnés à l'équipe par VOS administrateurs (page Droits), et un invité ne reçoit **jamais** propriété, membres, connexion, réglages du nœud, sauvegardes, `.env`, terminal ni suppression de projet, quoi qu'on lui attribue. Un membre retiré de toutes les équipes voit son compte supprimé ; une équipe retirée emporte ses attributions ; une liaison coupée (ou l'accueil retiré) supprime équipes et invités. Si la connexion tombe, les invités restent valables le **délai de grâce** de la liaison puis sont **suspendus** (sessions invalidées), et reprennent quand elle revient ; un invité « écarté » le reste. Page **Équipes** : les invités apparaissent à part, en lecture seule.
+
+**Travailler sur les nœuds de l'autre hub (relais).** Une personne d'une équipe partagée voit, dans le sélecteur de nœud et dans « Tous les nœuds » (un **encart par hub lié**), les nœuds où l'autre hub lui a donné des droits, et travaille dessus **depuis l'interface de son propre hub**. Le hub d'origine authentifie la personne puis transmet la requête ; le hub d'accueil la **rejoue dans ses propres routes**, au nom du compte invité : droits, plafond, politique 2FA et journal d'audit sont ceux de l'accueil, sans code propre à chaque fonction. L'accueil revérifie **à chaque requête** que la liaison est utilisable, l'accueil autorisé, l'invité actif, et que la route est dans une **liste fermée** (nœuds, Traefik, Docker, projets, observation : jamais comptes, droits, administration, sauvegardes, liaisons ni modèles ; HTTP seulement). Requêtes et réponses sont limitées à 3 Mo ; terminaux, journaux en direct, téléchargements par ticket et mises à jour en temps réel ne passent pas encore par une liaison (ils fonctionnent en connexion directe). Le niveau d'API relayée (`relay1`) est négocié comme le reste : des versions différentes mais compatibles fonctionnent ; sinon l'encart affiche « versions incompatibles » au lieu d'échouer au hasard.
+
+**Connexion directe (facultative).** L'accueil peut autoriser, par liaison, que ses invités aient **leur propre mot de passe sur son interface** (Liaisons → Équipes → « Autoriser la connexion directe », 2FA). La personne clique « Mot de passe pour ce hub » dans l'encart : l'accueil émet un **lien à usage unique de 10 minutes** ; elle y choisit son mot de passe **sur le domaine de l'accueil** et y enregistre une **double authentification obligatoire** (non retirable). Le hub d'origine voit passer le lien (il sert une seule fois : s'il ne s'ouvre pas tout de suite pour vous, redemandez-en un) mais **jamais le mot de passe ni le secret 2FA**. Ce mode marche même si le hub d'origine est hors ligne, tant que le **délai de grâce** n'est pas dépassé ; les droits restent ceux, plafonnés, de l'équipe. Retirer le mode efface mots de passe et 2FA des invités.
+
+**Ouvrir le chemin `/api/link`** : comme pour les workers, seul ce chemin doit être joignable par l'autre hub (jamais le reste de l'interface). Avec un filtre IP sur le routeur du hub, ajoutez un routeur dédié, sans le filtre :
+
+```yaml
+http:
+  routers:
+    armadok-link:
+      rule: "Host(`hub.exemple.fr`) && PathPrefix(`/api/link`)"
+      priority: 100
+      entryPoints: [websecure]
+      service: armadok-svc          # le même service que le routeur du hub
+      tls:
+        certResolver: lehttp
+      middlewares: [chain-public-api]   # sans filtre IP
+```
+
+Le chemin n'est exploitable qu'avec un code valide (appairage, 15 minutes, une fois) ou la clé d'une liaison déjà confirmée. Aucune alerte n'est affichée si le chemin n'est pas ouvert : la liaison apparaît simplement « hors ligne », comme un worker déconnecté. L'adresse doit être en **HTTPS** (HTTP seulement avec `LINK_ALLOW_INSECURE=true`, pour des essais). **Sauvegarde :** la clé d'identité du hub (chiffrée par `ENCRYPTION_KEY`) fait partie de la base : ne restaurez pas la même sauvegarde sur deux machines qui resteraient liées.
+
 ### 💾 Sauvegardes complètes du hub
 
 **Tous les nœuds → Backup et sauvegardes** (super-administrateurs) : créer, **télécharger**, **téléverser** et **restaurer** une sauvegarde complète.

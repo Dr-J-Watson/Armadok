@@ -60,6 +60,58 @@ CREATE TABLE IF NOT EXISTS node_members (
   created_at REAL NOT NULL,
   PRIMARY KEY (node_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS hub_identity (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  hub_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  public_key TEXT NOT NULL,
+  private_key TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  public_url TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS hub_links (
+  id TEXT PRIMARY KEY,
+  peer_hub_id TEXT NOT NULL DEFAULT '',
+  peer_name TEXT NOT NULL DEFAULT '',
+  peer_key TEXT NOT NULL DEFAULT '',
+  peer_url TEXT NOT NULL DEFAULT '',
+  we_call INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'invited' CHECK (status IN ('invited','paired','revoked')),
+  confirmed_local INTEGER NOT NULL DEFAULT 0,
+  confirmed_peer INTEGER NOT NULL DEFAULT 0,
+  grace_hours INTEGER NOT NULL DEFAULT 12,
+  label TEXT NOT NULL DEFAULT '',
+  peer_version TEXT NOT NULL DEFAULT '',
+  peer_protocol INTEGER NOT NULL DEFAULT 0,
+  protocol INTEGER NOT NULL DEFAULT 0,
+  features TEXT NOT NULL DEFAULT '',
+  last_seen REAL,
+  last_error TEXT NOT NULL DEFAULT '',
+  code_hash TEXT,
+  code_expires REAL,
+  created_by TEXT NOT NULL DEFAULT '',
+  created_at REAL NOT NULL,
+  revoked_at REAL,
+  revoked_by TEXT NOT NULL DEFAULT '',
+  peer_notified INTEGER NOT NULL DEFAULT 0,
+  host_enabled INTEGER NOT NULL DEFAULT 0,
+  direct_enabled INTEGER NOT NULL DEFAULT 0,
+  peer_hosting INTEGER NOT NULL DEFAULT 0,
+  peer_direct INTEGER NOT NULL DEFAULT 0,
+  peer_ui_url TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS link_shared_groups (
+  link_id TEXT NOT NULL REFERENCES hub_links(id) ON DELETE CASCADE,
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  PRIMARY KEY (link_id, group_id)
+);
+CREATE TABLE IF NOT EXISTS guest_setup_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at REAL NOT NULL,
+  totp_secret TEXT,
+  used_at REAL
+);
 CREATE TABLE IF NOT EXISTS node_workers (
   node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
   public_key TEXT NOT NULL,
@@ -259,7 +311,9 @@ MIGRATIONS = {
     "users": [("totp_secret", "TEXT"), ("totp_enabled", "INTEGER NOT NULL DEFAULT 0"),
               ("totp_last_step", "INTEGER NOT NULL DEFAULT 0"), ("recovery_codes", "TEXT NOT NULL DEFAULT ''"),
               ("max_nodes", "INTEGER NOT NULL DEFAULT 0"),
-              ("token_version", "INTEGER NOT NULL DEFAULT 0")],   # +1 = toutes les sessions ouvertes de la personne sont invalidées  # 0 = ne peut pas créer de nœud, -1 = illimité
+              ("token_version", "INTEGER NOT NULL DEFAULT 0"),
+              ("guest_link", "TEXT NOT NULL DEFAULT ''"), ("guest_ref", "TEXT NOT NULL DEFAULT ''"), ("guest_blocked", "INTEGER NOT NULL DEFAULT 0"),
+              ("guest_suspended", "INTEGER NOT NULL DEFAULT 0"), ("guest_direct", "INTEGER NOT NULL DEFAULT 0")],   # guest_* : invités d'un hub lié (source = 'guest')   # +1 = toutes les sessions ouvertes de la personne sont invalidées  # 0 = ne peut pas créer de nœud, -1 = illimité
     "log_offsets": [("head", "TEXT NOT NULL DEFAULT ''")],
     "nodes": [("ban_limit", "INTEGER"), ("ban_overflow", "TEXT NOT NULL DEFAULT ''"), ("mfa_caps", "TEXT NOT NULL DEFAULT ''"), ("deleted_at", "REAL"), ("prometheus_url", "TEXT NOT NULL DEFAULT ''"), ("webhook_url", "TEXT NOT NULL DEFAULT ''"),
               ("modules", "TEXT NOT NULL DEFAULT 'traefik'"),
@@ -267,6 +321,9 @@ MIGRATIONS = {
               ("addresses_seen", "TEXT NOT NULL DEFAULT ''"),   # adresses annoncées par le worker lui-même (WORKER_ADDRESSES)
               ("traefik_via", "TEXT NOT NULL DEFAULT ''")],   # nœud dont le Traefik publie les sites de CE nœud (ex. le hub, pour un worker « Docker seul »)   # adresses de la machine (IP, noms) : relier ses conteneurs au Traefik d'un AUTRE nœud   # ce que le nœud sait faire : traefik, docker (annoncé par le worker ; calculé pour le nœud local)
     "credentials": [("provider", "TEXT NOT NULL DEFAULT 'ovh'"), ("secret", "TEXT"), ("options", "TEXT")],  # secret : jeton chiffré des fournisseurs sans clés OVH
+    "groups": [("link_id", "TEXT NOT NULL DEFAULT ''"), ("peer_ref", "TEXT NOT NULL DEFAULT ''")],   # équipe d'un hub lié (reçue, jamais modifiable ici)
+    "hub_identity": [("public_url", "TEXT NOT NULL DEFAULT ''")],
+    "hub_links": [("host_enabled", "INTEGER NOT NULL DEFAULT 0"), ("direct_enabled", "INTEGER NOT NULL DEFAULT 0"), ("peer_hosting", "INTEGER NOT NULL DEFAULT 0"), ("peer_direct", "INTEGER NOT NULL DEFAULT 0"), ("peer_ui_url", "TEXT NOT NULL DEFAULT ''")],
     "domains": [("extra", "TEXT NOT NULL DEFAULT ''")],
     "project_templates": [("shared", "INTEGER NOT NULL DEFAULT 1"), ("folder_id", "INTEGER")],   # folder_id : dossier d'organisation (kind « templates » de project_folders ; vide = à la racine)   # 0 = privé (son auteur seulement), 1 = partagé ; les modèles d'avant ce réglage restent partagés
     "image_checks": [("latest_tag", "TEXT NOT NULL DEFAULT ''"), ("notified_tag", "TEXT NOT NULL DEFAULT ''")],   # latest_tag : version plus récente trouvée au registre

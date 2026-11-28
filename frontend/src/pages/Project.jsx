@@ -49,7 +49,7 @@ export default function Project() {
   return (
     <>
       <div className="row wrap" style={{ marginBottom: 14, gap: 10 }}>
-        <div className="grow"><div className="row" style={{ gap: 10 }}><h1 style={{ margin: 0 }}>{p.name}</h1>{p.perms.edit && <Btn small kind="ghost" icon title="Renommer le projet (nom affiché et dossier)" aria-label="Renommer le projet" onClick={() => setRen(true)}><Pencil size={14} /></Btn>}<Badge kind={kind}>{lab}</Badge>{p.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>
+        <div className="grow"><div className="row" style={{ gap: 10 }}><h1 style={{ margin: 0 }}>{p.name}</h1>{(p.perms.rename || p.perms.folder) && <Btn small kind="ghost" icon title="Renommer le projet (nom affiché et dossier)" aria-label="Renommer le projet" onClick={() => setRen(true)}><Pencil size={14} /></Btn>}<Badge kind={kind}>{lab}</Badge>{p.tags.map((t) => <Badge key={t}>{t}</Badge>)}</div>
           <div className="muted small mono">{p.path}</div><div ref={setSlot} style={{ marginTop: 6 }} /></div>
         <ComposeBar id={id} perms={p.perms} compose={p.compose} chipSlot={slot} onDone={() => q.refetch()} />
       </div>

@@ -195,6 +195,8 @@ def _make_ctx(p: Principal, row) -> NodeCtx | None:
     if extra and role in ("dns", "custom"):   # des droits attribués en plus : la personne devient « personnalisée » (le DNS reste acquis)
         role = "custom"
     granted = capmod.closure(base | extra)
+    if p.source == "guest":   # invité d'un hub lié : plafonné, quels que soient les droits que ce hub lui a attribués
+        granted = capmod.closure(granted - capmod.GUEST_FORBIDDEN)
     blocked: frozenset = frozenset()
     required = capmod.parse_mfa(row["mfa_caps"])
     if required and not p.two_factor:   # ce nœud exige la double authentification pour ces droits : sans elle, ils n'existent pas (et ce qui en dépend non plus)
@@ -625,7 +627,7 @@ def _clean_hosts(raw: str) -> str:
 @router.post("/nodes/{nid}/members")
 def add_member(body: MemberIn, ctx: NodeCtx = Depends(_path_cap("node.members.add"))):
     _check_assignable(ctx, body.role)
-    u = db.one("SELECT id, role, disabled FROM users WHERE username=?", (body.username.strip(),))
+    u = db.one("SELECT id, role, disabled FROM users WHERE username=? AND source<>'guest'", (body.username.strip(),))
     if not u or u["disabled"]:
         raise HTTPException(404, "Utilisateur introuvable")
     if ctx.node["kind"] == "local" and u["role"] == "admin":

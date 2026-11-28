@@ -47,7 +47,7 @@ export default function CommandPalette({ onClose, openWizard }) {
     if (hasDocker && can('docker.view')) add('Pages', 'Docker', 'Conteneurs, images, réseaux, volumes', Container, () => nav('/docker'))
     add('Pages', 'Domaines (DNS)', 'Enregistrements chez OVH', Globe, () => nav('/dns'))
     if (user.canAddDomains || can('node.domains.link')) add('Pages', 'Comptes DNS', 'OVH, DuckDNS, domaines en DNS local', Cloud, () => nav('/accounts'))
-    if (user.role === 'admin') add('Pages', 'Équipe', 'Comptes, rôles, double authentification', Users, () => nav('/team'))
+    if (user.role === 'admin') add('Pages', 'Équipes', 'Comptes, rôles, double authentification', Users, () => nav('/team'))
     if (can('middlewares.view')) add('Pages', 'Middlewares', 'Protections : créer, couper, voir qui les utilise', Layers, () => nav('/middlewares'))
     if (canNode) add('Pages', 'Réglages du nœud', 'Nom, adresses par défaut, membres', Server, () => nav('/node'))
     if (canManage) add('Pages', 'Traefik avancé', 'Routeurs, services, middlewares, TLS', Wrench, () => nav('/traefik'))

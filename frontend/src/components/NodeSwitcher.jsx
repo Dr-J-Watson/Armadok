@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Check, ChevronsUpDown, LayoutGrid, Plus, Settings2 } from 'lucide-react'
+import { Check, ChevronsUpDown, LayoutGrid, Link2, Plus, Settings2 } from 'lucide-react'
 import { ROLES, useNode } from '../node.jsx'
 import { useAuth } from '../auth.jsx'
 import NewNode from './NewNode.jsx'
@@ -17,7 +17,7 @@ export function NodeAvatar({ node, size = 32 }) {
 }
 
 export default function NodeSwitcher() {
-  const { nodes, node, setNode, canNode, fullView, setFullView } = useNode(); const canManage = canNode; const { user } = useAuth(); const sw = useSwitchNode(); const nav = useNavigate()
+  const { nodes, node, setNode, canNode, fullView, setFullView, linkedBlocks } = useNode(); const canManage = canNode; const { user } = useAuth(); const sw = useSwitchNode(); const nav = useNavigate()
   const [open, setOpen] = useState(false); const [creating, setCreating] = useState(false); const ref = useRef(null)
   const owned = nodes.filter((n) => n.kind === 'remote' && n.role === 'owner').length
   const canCreate = user.maxNodes !== 0 && (user.maxNodes < 0 || owned < user.maxNodes)
@@ -45,15 +45,17 @@ export default function NodeSwitcher() {
       {open && (
         <div className="nodemenu" role="listbox">
           <div className="muted small" style={{ padding: '6px 10px 4px' }}>{nodes.length > 1 ? 'Changer de nœud (g puis 1-9, g n / g p)' : 'Votre nœud'}</div>
-          {nodes.map((n, idx) => (
-            <button key={n.id} role="option" aria-selected={n.id === node.id} className={'nodeopt ' + (n.id === node.id ? 'active' : '')} onClick={() => pick(n.id)}>
+          {nodes.map((n, idx) => (<Fragment key={n.id}>
+            {n.kind === 'linked' && nodes[idx - 1]?.linkId !== n.linkId && <div className="muted small" style={{ padding: '8px 10px 2px', display: 'flex', gap: 6, alignItems: 'center' }}><Link2 size={12} /> Hub {n.hub || 'lié'}</div>}
+            <button role="option" aria-selected={n.id === node.id} className={'nodeopt ' + (n.id === node.id ? 'active' : '')} onClick={() => pick(n.id)}>
               <NodeAvatar node={n} size={28} />
-              <span className="grow"><b className="ellipsis">{n.name}</b><span className="muted small">{n.roleLabel || ROLES[n.role]?.label} · {n.domains} domaine{n.domains > 1 ? 's' : ''}</span></span>
+              <span className="grow"><b className="ellipsis">{n.name}</b><span className="muted small">{n.roleLabel || ROLES[n.role]?.label}{n.kind === 'linked' ? '' : ` · ${n.domains} domaine${n.domains > 1 ? 's' : ''}`}</span></span>
               {n.kind === 'remote' && <span className={'dot ' + CONN[n.connection][0]} title={CONN[n.connection][1]} />}
               {n.emergency && <span className="badge err">urgence</span>}
               {n.status === 'suspended' && <span className="dot err" title="Suspendu" />}
               {n.id === node.id && <Check size={15} />}
-            {idx < 9 && <kbd className="kbd" title={`Raccourci : g puis ${idx + 1}`} style={{ marginLeft: 6 }}>{idx + 1}</kbd>}</button>))}
+            {idx < 9 && <kbd className="kbd" title={`Raccourci : g puis ${idx + 1}`} style={{ marginLeft: 6 }}>{idx + 1}</kbd>}</button></Fragment>))}
+          {(linkedBlocks || []).filter((b) => b.error).map((b) => <div key={b.linkId} className="muted small" style={{ padding: '6px 10px' }}><Link2 size={12} style={{ verticalAlign: -1 }} /> Hub {b.hub || 'lié'} : {b.error}</div>)}
           {(canManage || canCreate || nodes.length > 1) && <div className="sep" />}
           {canManage && <button className="nodeopt" onClick={() => { setOpen(false); nav('/node') }}><Settings2 size={16} /><span className="grow">Réglages du nœud</span></button>}
           {nodes.length > 1 && <button className={'nodeopt ' + (fullView ? 'active' : '')} role="option" aria-selected={fullView} title="Les listes (Docker, projets…) montrent tous vos nœuds d'un coup" onClick={() => { setOpen(false); setFullView(!fullView) }}><LayoutGrid size={16} /><span className="grow">Affichage complet<span className="muted small">Tous les nœuds à la fois</span></span>{fullView && <Check size={15} />}</button>}

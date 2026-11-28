@@ -25,13 +25,17 @@ export function NodeProvider({ children }) {
   const { user } = useAuth()
   const nodes = useQuery({ queryKey: ['nodes'], queryFn: () => api.get('/nodes'), enabled: !!user, staleTime: 30000,
     refetchInterval: (q) => (liveState() === 'live' ? 300000 : q.state.data?.some((n) => n.kind === 'remote' && n.connection !== 'online') ? 10000 : 60000) })
+  // Les nœuds des hubs liés accessibles à cette personne (vide si aucune de ses équipes n'est partagée) : un bloc par liaison, jamais d'erreur bloquante.
+  const linked = useQuery({ queryKey: ['linked-nodes'], queryFn: () => api.get('/linked-nodes').catch(() => []), enabled: !!user, staleTime: 20000, refetchInterval: 30000 })
   const root = useQueryClient()
   useEffect(() => { if (user) startLive(); else stopLive() }, [user?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => onLive((topics) => { // la liste des nœuds vit hors du cache par nœud : on la recharge ici
     if (topics.some((t) => t.t === 'all' || t.t === 'nodes' || t.t === 'node' || t.t === 'notices')) root.invalidateQueries({ queryKey: ['nodes'] })
   }), [root])
   const [pref, setPref] = useState(saved)
-  const list = nodes.data || []
+  const own = nodes.data || []
+  const linkedBlocks = linked.data || []
+  const list = useMemo(() => [...own, ...linkedBlocks.flatMap((b) => b.nodes || [])], [nodes.data, linked.data]) // eslint-disable-line react-hooks/exhaustive-deps
   const node = list.find((n) => n.id === pref) || list[0] || null
   setNodeHeader(node?.id) // avant le rendu des enfants : leurs premières requêtes visent le bon nœud
   // Nœud sans Traefik dont les sites passent par un autre : ses pages Traefik sont celles de cet autre nœud, filtrées (ou non) sur ses conteneurs.
@@ -52,16 +56,16 @@ export function NodeProvider({ children }) {
     const hasModule = (m) => modules.includes(m)
     const NODE_ADMIN = ['node.settings', 'node.members.view', 'node.connection', 'node.audit', 'node.domains.view']
     return {
-      nodes: list, node, role, loading: nodes.isLoading, can, caps, modules, hasModule, traefikVia: viaNode ? { node: viaNode, scope: scopeOn, setScope } : null, fullView: fullView && list.length > 1, setFullView,
+      nodes: list, ownNodes: own, linkedBlocks, node, role, loading: nodes.isLoading, can, caps, modules, hasModule, traefikVia: viaNode ? { node: viaNode, scope: scopeOn, setScope } : null, fullView: fullView && list.length > 1, setFullView,
       hasTraefik: !!role && can('sites.view') && hasModule('traefik'),   // voit les sites de ce nœud (et le nœud a Traefik)
       hasDocker: !!role && hasModule('docker'),                // le nœud gère Docker (les droits fins viennent avec les pages Docker)
       canManage: can('traefik.all'),                           // voit et agit sur tout Traefik (pas seulement ses domaines)
-      canNode: NODE_ADMIN.some(can),                           // accède à la page « Ce nœud »
+      canNode: node?.kind !== 'linked' && NODE_ADMIN.some(can),                           // accède à la page « Ce nœud »
       canRights: list.some((n) => (n.caps || []).includes('node.members.edit')),   // peut gérer des droits quelque part
       setNode: (id) => { try { localStorage.setItem('node', id) } catch { /* */ } setPref(id) },
       reload: () => nodes.refetch(),
     }
-  }, [nodes.data, node?.id, nodes.isLoading, viaNode?.id, scopeOn, fullView]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [nodes.data, linked.data, node?.id, nodes.isLoading, viaNode?.id, scopeOn, fullView]) // eslint-disable-line react-hooks/exhaustive-deps
   if (user && nodes.isLoading) return <Loading />
   return <Ctx.Provider value={value}><QueryClientProvider key={`${node?.id || ''}:${viaNode?.id || ''}:${scopeOn}:${fullView}`} client={client}>{children}</QueryClientProvider></Ctx.Provider>
 }

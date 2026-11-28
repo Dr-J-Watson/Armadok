@@ -347,7 +347,7 @@ def detail(pid: int, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
                     "effective": choice or e.get("defaultFiles", []), "running": any(c["state"] == "running" for c in cs)}
     s["access"] = docker_link.access_for(ctx, [l for sv in s["services"] for l in sv["links"]], getattr(links, "ctxs", {}))
     s["perms"] = {"import": ctx.can("projects.import"), "deploy": ctx.can("projects.deploy"), "files": ctx.can("projects.files"), "edit": ctx.can("projects.edit"), "env": ctx.can("projects.env"), "nolimit": ctx.can("projects.nolimit"),
-                  "git": ctx.can("projects.git"), "delete": ctx.can("projects.delete"), "logs": ctx.can("docker.logs"), "control": ctx.can("docker.control"), "exec": ctx.can("docker.exec")}
+                  "git": ctx.can("projects.git"), "delete": ctx.can("projects.delete"), "rename": ctx.can("projects.rename"), "folder": ctx.can("projects.folder"), "logs": ctx.can("docker.logs"), "control": ctx.can("docker.control"), "exec": ctx.can("docker.exec")}
     return s
 
 
@@ -717,8 +717,7 @@ def _rename_plan(ctx: NodeCtx, row, folder: str) -> dict:
 
 
 @router.get("/{pid}/rename")
-def rename_check(pid: int, folder: str, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
-    ctx.need("projects.import")
+def rename_check(pid: int, folder: str, ctx: NodeCtx = Depends(proj_cap("projects.folder"))):
     row = _row(ctx, pid)
     if not FOLDER_RE.fullmatch(folder or ""):
         raise HTTPException(422, "Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)")
@@ -732,13 +731,13 @@ class RenameBody(BaseModel):
 
 
 @router.put("/{pid}/rename")
-def rename(pid: int, body: RenameBody, ctx: NodeCtx = Depends(proj_cap("projects.edit"))):
+def rename(pid: int, body: RenameBody, ctx: NodeCtx = Depends(proj_cap("projects.view"))):
     """Renomme un projet : son nom affiché (ici seulement) et/ou son dossier sur le disque. Le dossier ne change que si aucun conteneur du projet n'existe ;
     si le nom Compose en dépend, ses volumes nommés ne seraient plus repris : il faut le confirmer."""
     row = _row(ctx, pid)
     out = {"ok": True}
     if body.folder is not None and body.folder != row["path"].rsplit("/", 1)[-1]:
-        ctx.need("projects.import")
+        ctx.need("projects.folder")
         if not FOLDER_RE.fullmatch(body.folder):
             raise HTTPException(422, "Nom de dossier invalide (lettres, chiffres, « - », « _ » et « . »)")
         plan = _rename_plan(ctx, row, body.folder)
@@ -759,6 +758,7 @@ def rename(pid: int, body: RenameBody, ctx: NodeCtx = Depends(proj_cap("projects
     if body.displayName is not None:
         shown = " ".join(body.displayName.split())
         if shown != row["display_name"]:
+            ctx.need("projects.rename")
             db.run("UPDATE projects SET display_name=? WHERE id=?", (shown, pid))
             ctx.audit("project.rename", f"{label(row)} → {shown or '(nom du dossier)'}")
         out["displayName"] = shown

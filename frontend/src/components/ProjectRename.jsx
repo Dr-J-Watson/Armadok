@@ -11,7 +11,7 @@ export default function ProjectRename({ id, project: p, onClose }) {
   const { toast } = useUi(); const qc = useQueryClient()
   const [shown, setShown] = useState(p.displayName || ''); const [folder, setFolder] = useState(p.folder)
   const [plan, setPlan] = useState(null); const [checking, setChecking] = useState(false); const [accept, setAccept] = useState(false); const [busy, setBusy] = useState(false); const [err, setErr] = useState('')
-  const canFolder = p.perms.import
+  const canFolder = p.perms.folder; const canName = p.perms.rename
   const folderChanged = canFolder && folder.trim() !== p.folder
   const validFolder = FOLDER_RE.test(folder.trim())
 
@@ -24,11 +24,12 @@ export default function ProjectRename({ id, project: p, onClose }) {
   }, [folder]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const blocked = folderChanged && (!validFolder || checking || !plan || plan.containers.length > 0 || (plan.volumes.length > 0 && !accept))
-  const changed = folderChanged || shown.trim() !== (p.displayName || '')
+  const nameChanged = canName && shown.trim() !== (p.displayName || '')
+  const changed = folderChanged || nameChanged
   const go = async () => {
     setBusy(true); setErr('')
     try {
-      await api.put(`/projects/${id}/rename`, { displayName: shown.trim(), ...(folderChanged ? { folder: folder.trim(), acceptVolumes: accept } : {}) })
+      await api.put(`/projects/${id}/rename`, { ...(nameChanged ? { displayName: shown.trim() } : {}), ...(folderChanged ? { folder: folder.trim(), acceptVolumes: accept } : {}) })
       qc.invalidateQueries({ queryKey: ['projects'] }); qc.invalidateQueries({ queryKey: ['project', String(id)] })
       toast('Projet renommé'); onClose()
     } catch (e) { setErr(e.message) } finally { setBusy(false) }
@@ -36,8 +37,8 @@ export default function ProjectRename({ id, project: p, onClose }) {
   return (
     <Modal small title="Renommer le projet" onClose={onClose} footer={<><Btn onClick={onClose}>Annuler</Btn><Btn kind="primary" busy={busy} disabled={!changed || blocked} onClick={go}>Renommer</Btn></>}>
       <div className="col">
-        <Field label="Nom affiché" help="Le nom montré dans Armadok. Vide : le nom du dossier. Rien ne change sur le disque.">
-          <input className="input" autoFocus maxLength={80} value={shown} placeholder={folder.trim() || p.folder} onChange={(e) => setShown(e.target.value)} /></Field>
+        <Field label="Nom affiché" help={canName ? 'Le nom montré dans Armadok. Vide : le nom du dossier. Rien ne change sur le disque.' : 'Droit « Renommer un projet » requis.'}>
+          <input className="input" autoFocus disabled={!canName} maxLength={80} value={shown} placeholder={folder.trim() || p.folder} onChange={(e) => setShown(e.target.value)} /></Field>
         {canFolder && <Field label="Dossier" help={`Le dossier sur le disque, au même endroit : ${p.path.slice(0, p.path.length - p.folder.length)}…`}>
           <input className="input mono" maxLength={61} value={folder} onChange={(e) => { setErr(''); setFolder(e.target.value) }} spellCheck={false} autoComplete="off" /></Field>}
         {folderChanged && !validFolder && <div className="banner err" style={{ margin: 0 }}>Nom de dossier invalide : lettres, chiffres, « - », « _ » et « . », sans espace.</div>}
