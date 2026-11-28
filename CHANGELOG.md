@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.19.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.18.0...v1.19.0) (2026-11-28)
+
+
+### Nouveautés
+
+* **2fa:** champ de code commun, propose d'activer la 2FA quand elle ne l'est pas ([7d23975](https://github.com/Dr-J-Watson/Armadok/commit/7d23975dd5909c231deeaba69455d8649c691d0d))
+* **droits:** droits dédiés au renommage d'un projet et de son dossier, interdits aux invités ([6a5f780](https://github.com/Dr-J-Watson/Armadok/commit/6a5f780a20724ea0af167b5e5939d4f7df3f36c0))
+* **liaisons:** équipes partagées et comptes invités ([cb7357f](https://github.com/Dr-J-Watson/Armadok/commit/cb7357fc7ff91cadf21edff4fe60a6f869f546d1))
+* **liaisons:** identité du hub, appairage à code unique et canal signé entre deux hubs ([d3c73d4](https://github.com/Dr-J-Watson/Armadok/commit/d3c73d4fb7e2c5d426a5ab4e3e2b062070e1fc7f))
+* **liaisons:** relais des requêtes et connexion directe des invités ([e1b092e](https://github.com/Dr-J-Watson/Armadok/commit/e1b092ed5992c05fb4ab8bc645f9b07adf7025a7))
+* **projets:** renommer un projet (nom affiché et dossier) ([d7dfcf4](https://github.com/Dr-J-Watson/Armadok/commit/d7dfcf41d20398e43eb0ff9b24d234d1fb049ff0))
+* **projets:** renommer un projet (nom affiché et dossier) ([6195781](https://github.com/Dr-J-Watson/Armadok/commit/6195781e62a4a9215bd652671cec2db0dccf9c57))
+
 ## [1.18.0](https://github.com/Dr-J-Watson/Armadok/compare/v1.17.0...v1.18.0) (2026-11-25)
 
 
